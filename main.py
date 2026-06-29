@@ -8,8 +8,8 @@ from telegram.ext import ApplicationBuilder, CallbackQueryHandler, CommandHandle
 
 from app import App
 from jobs.executor import JobExecutor
-from telegram.handler import TelegramHandler
-from telegram.sender import TelegramSender
+from tg.handler import TelegramHandler
+from tg.sender import TelegramSender
 
 logger = logging.getLogger(__name__)
 KST = ZoneInfo("Asia/Seoul")
@@ -86,8 +86,10 @@ def main():
     tg.add_handler(CommandHandler("start", handler.cmd_start))
     tg.add_handler(CommandHandler("dashboard", handler.cmd_dashboard))
     tg.add_handler(CommandHandler("status", handler.cmd_status))
+    tg.add_handler(CommandHandler("balance", handler.cmd_balance))
     tg.add_handler(CommandHandler("plan", handler.cmd_plan))
     tg.add_handler(CommandHandler("setting", handler.cmd_setting))
+    tg.add_handler(CommandHandler("set_t", handler.cmd_set_t))
     tg.add_handler(CommandHandler("history", handler.cmd_history))
     tg.add_handler(CommandHandler("sync", handler.cmd_sync))
     tg.add_handler(CommandHandler("split", handler.cmd_split))
@@ -96,11 +98,7 @@ def main():
     tg.add_handler(CommandHandler("cycle_done", handler.cmd_cycle_done))
     tg.add_handler(CommandHandler("pause", handler.cmd_pause))
     tg.add_handler(CommandHandler("resume", handler.cmd_resume))
-    tg.add_handler(CommandHandler("job1", lambda u, c: handler.cmd_job(u, c, "job1")))
-    tg.add_handler(CommandHandler("job2", lambda u, c: handler.cmd_job(u, c, "job2")))
-    tg.add_handler(CommandHandler("job3", lambda u, c: handler.cmd_job(u, c, "job3")))
-    tg.add_handler(CommandHandler("job4", lambda u, c: handler.cmd_job(u, c, "job4")))
-    tg.add_handler(CommandHandler("briefing", lambda u, c: handler.cmd_job(u, c, "morning_briefing")))
+    tg.add_handler(CommandHandler("run", handler.cmd_run))
     tg.add_handler(CallbackQueryHandler(handler.handle_callback))
     tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handler.handle_message))
 

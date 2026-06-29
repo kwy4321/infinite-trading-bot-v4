@@ -11,6 +11,49 @@ from broker.rate_limiter import RateLimiter
 logger = logging.getLogger(__name__)
 
 
+def _money(val, currency: str = "usd") -> float:
+    """Parse Toss Price / amount fields (decimal strings or {krw, usd})."""
+    if val is None:
+        return 0.0
+    if isinstance(val, (int, float)):
+        return float(val)
+    if isinstance(val, str):
+        try:
+            return float(val)
+        except ValueError:
+            return 0.0
+    if isinstance(val, dict):
+        cur = currency.lower()
+        raw = val.get(cur)
+        if raw in (None, "") and cur == "usd":
+            raw = val.get("us")
+        if raw in (None, ""):
+            raw = val.get("krw") or val.get("kr")
+        if raw in (None, ""):
+            for key in ("total", "us", "kr"):
+                nested = val.get(key)
+                if isinstance(nested, dict):
+                    return _money(nested, currency)
+        if raw in (None, ""):
+            return 0.0
+        return float(raw)
+    return 0.0
+
+
+def _pct(val) -> float | None:
+    if val is None:
+        return None
+    if isinstance(val, dict):
+        for key in ("rate", "rateAfterCost", "profitRate"):
+            if key in val and val[key] not in (None, ""):
+                return float(val[key]) * 100
+        return None
+    try:
+        return float(val) * 100
+    except (TypeError, ValueError):
+        return None
+
+
 class TossClient:
     def __init__(self, auth: TossAuth, account_seq: str, limiter: RateLimiter, dry_run: bool = False):
         self.auth = auth
@@ -50,26 +93,41 @@ class TossClient:
         result = data.get("result", data)
         return float(result.get("lastPrice", 0))
 
+    def get_holdings_overview(self) -> dict | None:
+        if self.dry_run:
+            return None
+        data = self._request("GET", "/holdings", "ASSET", account=True)
+        return data.get("result", data)
+
+    def get_buying_power(self, currency: str = "USD") -> dict:
+        if self.dry_run:
+            return {}
+        data = self._request(
+            "GET",
+            "/buying-power",
+            "ORDER_INFO",
+            account=True,
+            params={"currency": currency.upper()},
+        )
+        return data.get("result", data)
+
     def get_holdings_item(self, symbol: str) -> dict:
         if self.dry_run:
             return {"qty": 0, "avg_price": 0.0, "current_price": 0.0, "api_cash_usd": 0.0}
-        data = self._request("GET", "/holdings", "ASSET", account=True)
-        result = data.get("result", data)
-        items = result.get("items", [])
+        overview = self.get_holdings_overview() or {}
+        items = overview.get("items", [])
         qty, avg, mkt = 0, 0.0, 0.0
         for item in items:
             if item.get("symbol", "").upper() == symbol.upper():
                 qty = int(float(item.get("quantity", 0)))
                 cost = item.get("cost", {})
-                avg = float(cost.get("averagePrice", 0) or 0)
-                mkt = float(item.get("marketValue", 0) or 0)
+                avg = float(cost.get("averagePrice", 0) or item.get("averagePurchasePrice", 0) or 0)
+                mkt = _money(item.get("marketValue"), "usd")
+                if mkt == 0:
+                    mkt = float(item.get("lastPrice", 0) or 0) * qty
                 break
-        api_cash = 0.0
-        overview = result.get("marketValue", {})
-        if isinstance(overview, dict) and overview.get("usd"):
-            pass
         price = self.get_price(symbol) if mkt == 0 and qty > 0 else (mkt / qty if qty else 0)
-        return {"qty": qty, "avg_price": avg, "current_price": price, "api_cash_usd": api_cash}
+        return {"qty": qty, "avg_price": avg, "current_price": price, "api_cash_usd": 0.0}
 
     def place_limit_order(self, symbol: str, side: str, price: float, qty: int) -> bool:
         if self.dry_run:

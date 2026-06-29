@@ -1,7 +1,5 @@
 """Inline keyboard builders."""
 
-import datetime
-
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from config.settings import SPLIT_OPTIONS, SYMBOLS
@@ -16,6 +14,18 @@ def plan_premium_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+def plan_action_keyboard(symbols: list[str], premium: int) -> InlineKeyboardMarkup:
+    rows = []
+    exec_row = [
+        InlineKeyboardButton(f"🚀 {sym}", callback_data=f"EXEC:{sym}:{premium}")
+        for sym in symbols
+    ]
+    if exec_row:
+        rows.append(exec_row)
+    rows.extend(plan_premium_keyboard().inline_keyboard)
+    return InlineKeyboardMarkup(rows)
+
+
 def symbol_picker(prefix: str) -> InlineKeyboardMarkup:
     row = [InlineKeyboardButton(s, callback_data=f"{prefix}:{s}") for s in SYMBOLS]
     return InlineKeyboardMarkup([row])
@@ -23,14 +33,20 @@ def symbol_picker(prefix: str) -> InlineKeyboardMarkup:
 
 def setting_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔀 종목", callback_data="set_ticker"),
-         InlineKeyboardButton("💰 원금", callback_data="set_seed")],
-        [InlineKeyboardButton("💵 예수금", callback_data="set_cash"),
-         InlineKeyboardButton("🍰 분할", callback_data="set_split")],
-        [InlineKeyboardButton("📐 액면분할", callback_data="open_split"),
-         InlineKeyboardButton("📒 회차", callback_data="open_cycles")],
-        [InlineKeyboardButton("📅 월별", callback_data="open_monthly"),
-         InlineKeyboardButton("📊 대시보드", callback_data="open_dashboard")],
+        [InlineKeyboardButton("🔀 종목", callback_data="set_ticker")],
+        [InlineKeyboardButton("💰 원금", callback_data="set_seed")],
+        [InlineKeyboardButton("💵 예수금", callback_data="set_cash")],
+        [InlineKeyboardButton("🍰 분할", callback_data="set_split")],
+    ])
+
+
+def run_job_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📈 익절", callback_data="RUN:job1"),
+         InlineKeyboardButton("🔄 체결정리", callback_data="RUN:job2")],
+        [InlineKeyboardButton("🛒 매수", callback_data="RUN:job3"),
+         InlineKeyboardButton("📊 일일리포트", callback_data="RUN:job4")],
+        [InlineKeyboardButton("🌅 아침브리핑", callback_data="RUN:briefing")],
     ])
 
 
@@ -48,16 +64,6 @@ def split_confirm_keyboard(ticker: str, ratio: float) -> InlineKeyboardMarkup:
         InlineKeyboardButton("✅ 적용", callback_data=f"SPLIT_APPLY:{ticker}:{ratio}"),
         InlineKeyboardButton("❌ 취소", callback_data="SPLIT_CANCEL"),
     ]])
-
-
-def monthly_keyboard(year: int = None) -> InlineKeyboardMarkup:
-    year = year or datetime.date.today().year
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("TQQQ", callback_data=f"MONTHLY:{year}:TQQQ"),
-         InlineKeyboardButton("SOXL", callback_data=f"MONTHLY:{year}:SOXL")],
-        [InlineKeyboardButton("전체", callback_data=f"MONTHLY:{year}:ALL"),
-         InlineKeyboardButton(f"{year - 1}년", callback_data=f"MONTHLY:{year - 1}:ALL")],
-    ])
 
 
 def split_count_keyboard(ticker: str) -> InlineKeyboardMarkup:

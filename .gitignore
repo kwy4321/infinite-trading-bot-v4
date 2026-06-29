@@ -9,6 +9,9 @@ data/backups/*
 !data/backups/.gitkeep
 data/accounts/*/state.json
 data/accounts/*/orders.json
+data/accounts/*/cycles.json
+data/accounts/*/*.json
+!data/backups/.gitkeep
 *.zip
 .idea/
 .vscode/

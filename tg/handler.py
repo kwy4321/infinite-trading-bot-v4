@@ -11,17 +11,20 @@ from telegram.ext import ContextTypes
 from app import App
 from jobs.executor import JobExecutor
 from strategy.split_handler import apply_split, calc_adjustment, format_preview, parse_ratio
-from telegram.dashboard_formatter import format_dashboard
-from telegram.keyboards import (
-    monthly_keyboard,
-    plan_premium_keyboard,
+from config.settings import SYMBOLS
+from tg.help_text import HELP_MESSAGE
+from tg.balance_formatter import format_balance
+from tg.dashboard_formatter import format_dashboard
+from tg.keyboards import (
+    plan_action_keyboard,
+    run_job_keyboard,
     setting_keyboard,
     split_confirm_keyboard,
     split_count_keyboard,
     split_ratio_keyboard,
     symbol_picker,
 )
-from telegram.sender import TelegramSender
+from tg.sender import TelegramSender
 
 logger = logging.getLogger(__name__)
 
@@ -61,23 +64,11 @@ class TelegramHandler:
         paused = self.app.runtime.is_paused()
         dry = self.app.settings.dry_run or not self.app.settings.has_toss
         api = "🧪 DRY_RUN" if dry else "🟢 Toss API"
-        msg = (
-            "🖥️ <b>라오어 무한매수 4.0</b> (v1.0)\n\n"
+        header = (
             f"봇: {'⏸️ 정지' if paused else '▶️ 가동'} | API: {api}\n"
             f"미증시: {market} | 종목: TQQQ + SOXL\n\n"
-            "<b>명령어</b>\n"
-            "/dashboard — 전체 현황\n"
-            "/status — 종목 상태\n"
-            "/plan — 주문 계획\n"
-            "/setting — 설정\n"
-            "/sync — API 잔고(수량·평단만)\n"
-            "/split — 액면분할\n"
-            "/cycles /monthly — 회차·월별\n"
-            "/cycle_done TQQQ — 수동 졸업\n"
-            "/pause /resume — 자동 Job\n"
-            "/job1~4 — Job 수동 실행"
         )
-        await update.message.reply_text(msg, parse_mode="HTML")
+        await update.message.reply_text(header + HELP_MESSAGE, parse_mode="HTML")
 
     async def cmd_dashboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
@@ -98,32 +89,89 @@ class TelegramHandler:
         )
         self.app.cycles.ensure_current(symbol, st["principal"])
         live = self.app.cycles.calc_unrealized_pnl(symbol, st["qty"], st["avg_price"], price)
-        cycle_line = ""
+
+        lines = [f"📊 <b>[{symbol}] 상세</b>\n"]
+
         if live:
             sign = "+" if live["cycle_pnl_usd"] >= 0 else ""
-            cycle_line = (
-                f"회차 {live['cycle_no']} ({live['started_at']}~)\n"
-                f"회차 손익: {sign}${live['cycle_pnl_usd']:,.2f} ({sign}{live['cycle_pnl_pct']:.2f}%)\n"
+            lines.append(
+                f"<b>회차</b> {live['cycle_no']}회 ({live['started_at']}~)\n"
+                f"  손익 {sign}${live['cycle_pnl_usd']:,.2f} ({sign}{live['cycle_pnl_pct']:.2f}%)\n"
             )
-        profit = 0.0
-        if st["avg_price"] > 0 and price > 0:
-            profit = (price - st["avg_price"]) / st["avg_price"] * 100
-        msg = (
-            f"📊 <b>[{symbol}]</b>\n{cycle_line}"
-            f"T={st['T']:.4f} ({st['split_count']}분할) | {summary['mode']}\n"
-            f"1회매수 ${summary['one_buy_amount']:,.2f} | 별 {summary['star_pct']:+.2f}%\n"
-            f"기록: {st['qty']}주 @ ${st['avg_price']:.2f}\n"
-            f"API: {pos['qty']}주 @ ${pos['avg_price']:.2f} | 현재 ${price:.2f} ({profit:+.2f}%)\n"
-            f"예수금 ${st['cash']:,.2f} (수동)"
-        )
-        await update.message.reply_text(msg, parse_mode="HTML")
+        else:
+            lines.append("<b>회차</b> 진행 중 없음\n")
+
+        star_price = summary.get("star_price", 0.0)
+        lines += [
+            "<b>전략</b>",
+            f"  T={st['T']:.4f} ({st['split_count']}분할) | {summary['mode']}",
+            f"  별 {summary['star_pct']:+.2f}% (${star_price:.2f}) | 1회매수 ${summary['one_buy_amount']:,.2f}",
+            f"  익절 +{summary['take_profit_pct']:.0f}%\n",
+        ]
+
+        qty_match = st["qty"] == pos["qty"]
+        avg_match = abs(st["avg_price"] - pos["avg_price"]) < 0.01
+        sync_hint = "" if (qty_match and avg_match) else " ⚠️ /sync 필요"
+        lines += [
+            "<b>잔고</b>",
+            f"  기록 {st['qty']}주 @ ${st['avg_price']:.2f}",
+            f"  API  {pos['qty']}주 @ ${pos['avg_price']:.2f}{sync_hint}",
+        ]
+        if price > 0:
+            lines.append(f"  현재가 ${price:.2f}")
+        lines += [
+            f"  원금 ${st['principal']:,.0f} | 예수금 ${st['cash']:,.2f}",
+        ]
+
+        await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+    async def cmd_balance(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self._allowed(update):
+            return await self._deny(update)
+        if not self.app.settings.has_toss:
+            return await update.message.reply_text("⚠️ Toss API 키가 없습니다. .env 의 TOSS_CLIENT_ID/SECRET 확인")
+        if self.app.settings.dry_run:
+            return await update.message.reply_text(
+                "⚠️ DRY_RUN=true — 실제 계좌 조회 안 함.\n"
+                "잔고 확인: .env 에서 DRY_RUN=false 후\n"
+                "sudo systemctl restart infinite-trading-bot"
+            )
+        try:
+            await update.message.reply_text(format_balance(self.app), parse_mode="HTML")
+        except Exception as e:
+            logger.exception("Toss balance failed")
+            await update.message.reply_text(f"🚨 Toss API 조회 실패: {e}")
+
+    def _plan_symbols(self, context: ContextTypes.DEFAULT_TYPE, parts: list[str]) -> list[str]:
+        if len(parts) > 1 and parts[1].upper() in SYMBOLS:
+            return [parts[1].upper()]
+        return list(self.app.runtime.active_symbols())
+
+    def _render_plans(self, symbols: list[str], premium: int) -> str:
+        today = datetime.datetime.now(self.kst).strftime("%Y-%m-%d")
+        blocks = [f"🎯 <b>오늘 주문 계획</b> ({today}) | 할증 +{premium}%"]
+        for symbol in symbols:
+            st = self.app.state.load(symbol)
+            pos = self._pos(symbol)
+            plan = self.app.strategy.get_plan(
+                symbol, pos["current_price"], st["avg_price"], st["qty"], st["T"],
+                premium, st["cash"], st["split_count"], st["principal"],
+            )
+            blocks.append(self._format_plan(symbol, st, plan, premium))
+        return "\n\n".join(blocks)
 
     async def cmd_plan(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
             return await self._deny(update)
+        parts = update.message.text.split()
+        symbols = self._plan_symbols(context, parts)
+        premium = self.app.runtime.premium_default()
+        context.user_data["plan_symbols"] = symbols
+        msg = self._render_plans(symbols, premium)
         await update.message.reply_text(
-            "종목 선택:",
-            reply_markup=symbol_picker("PLAN_SYM"),
+            msg,
+            reply_markup=plan_action_keyboard(symbols, premium),
+            parse_mode="HTML",
         )
 
     async def cmd_setting(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -132,9 +180,12 @@ class TelegramHandler:
         symbol = self._symbol(context)
         st = self.app.state.load(symbol)
         msg = (
-            f"⚙️ <b>설정 — {symbol}</b>\n"
-            f"원금 ${st['principal']:,.0f} | 예수금 ${st['cash']:,.2f} (수동)\n"
-            f"분할 {st['split_count']} | 기본 할증 {self.app.runtime.premium_default()}%"
+            f"⚙️ <b>설정 — {symbol}</b>\n\n"
+            f"💰 <b>원금</b> ${st['principal']:,.0f}\n"
+            f"   회차 수익률 계산 기준\n"
+            f"💵 <b>예수금</b> ${st['cash']:,.2f}\n"
+            f"   매수 가능 현금 (수동 관리)\n\n"
+            f"🍰 분할 {st['split_count']} | 기본 할증 {self.app.runtime.premium_default()}%"
         )
         await update.message.reply_text(msg, reply_markup=setting_keyboard(), parse_mode="HTML")
 
@@ -162,16 +213,39 @@ class TelegramHandler:
     async def cmd_cycles(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
             return await self._deny(update)
+        parts = update.message.text.split()
+        if len(parts) > 1:
+            symbol = parts[1].upper()
+            if symbol in SYMBOLS or symbol == "ALL":
+                return await self._send_cycles(update.message, symbol)
         kb = symbol_picker("CYCLES")
         kb.inline_keyboard.append([InlineKeyboardButton("전체", callback_data="CYCLES:ALL")])
-        target = update.callback_query.message if update.callback_query else update.message
-        await target.reply_text("📒 회차 기록 — 종목:", reply_markup=kb)
+        await update.message.reply_text("📒 회차 기록 — 종목:", reply_markup=kb)
 
     async def cmd_monthly(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
             return await self._deny(update)
-        target = update.callback_query.message if update.callback_query else update.message
-        await target.reply_text("📅 월별 수익:", reply_markup=monthly_keyboard())
+        parts = update.message.text.split()
+        year = datetime.date.today().year
+        symbol = None
+        for part in parts[1:]:
+            token = part.upper()
+            if token in SYMBOLS:
+                symbol = token
+            elif token.isdigit() and len(token) == 4:
+                year = int(token)
+        msg = self.app.cycles.format_monthly_report(year, symbol)
+        await update.message.reply_text(msg, parse_mode="HTML")
+
+    async def cmd_run(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self._allowed(update):
+            return await self._deny(update)
+        await update.message.reply_text(
+            "⏱️ <b>수동 실행</b>\n"
+            "스케줄과 동일한 Job입니다. 자동 실행은 /pause 로 멈출 수 있습니다.",
+            reply_markup=run_job_keyboard(),
+            parse_mode="HTML",
+        )
 
     async def cmd_cycle_done(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
@@ -194,7 +268,8 @@ class TelegramHandler:
     async def cmd_history(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
             return await self._deny(update)
-        symbol = self._symbol(context)
+        parts = update.message.text.split()
+        symbol = parts[1].upper() if len(parts) > 1 else self._symbol(context)
         sym_data = self.app.cycles.get_symbol_data(symbol)
         completed = sym_data.get("completed", [])
         if not completed:
@@ -206,6 +281,18 @@ class TelegramHandler:
                 f"#{c['cycle_no']} {c['ended_at']} {sign}${c['profit_usd']:,.2f} ({sign}{c['profit_pct']:.2f}%)"
             )
         await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+    async def cmd_set_t(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self._allowed(update):
+            return await self._deny(update)
+        try:
+            parts = update.message.text.split()
+            new_t = float(parts[1])
+            symbol = parts[2].upper() if len(parts) > 2 else self._symbol(context)
+            self.app.state.set_T(symbol, new_t)
+            await update.message.reply_text(f"✅ [{symbol}] T → {new_t}")
+        except (IndexError, ValueError):
+            await update.message.reply_text("사용법: /set_t 5.25 TQQQ")
 
     async def cmd_pause(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
@@ -219,11 +306,17 @@ class TelegramHandler:
         self.app.runtime.set_paused(False)
         await update.message.reply_text("▶️ 자동 Job 재개")
 
-    async def cmd_job(self, update: Update, context: ContextTypes.DEFAULT_TYPE, name: str):
-        if not self._allowed(update):
-            return await self._deny(update)
-        await update.message.reply_text(f"⏳ {name} 실행 중...")
-        if name == "morning_briefing":
+    async def _run_job(self, chat_id: int, context: ContextTypes.DEFAULT_TYPE, name: str):
+        labels = {
+            "job1": "익절",
+            "job2": "체결정리",
+            "job3": "매수",
+            "job4": "일일리포트",
+            "briefing": "아침브리핑",
+        }
+        label = labels.get(name, name)
+        await context.bot.send_message(chat_id, f"⏳ {label} 실행 중...")
+        if name == "briefing":
             await self.executor.run_morning_briefing()
         else:
             await getattr(self.executor, f"run_{name}")()
@@ -235,28 +328,15 @@ class TelegramHandler:
         await query.answer()
         data = query.data
 
-        if data.startswith("PLAN_SYM:"):
-            context.user_data["plan_symbol"] = data.split(":")[1]
-            await query.edit_message_text(
-                f"[{context.user_data['plan_symbol']}] 할증률 선택:",
-                reply_markup=plan_premium_keyboard(),
-            )
-            return
-
         if data.startswith("PLAN:"):
             premium = int(data.split(":")[1])
-            symbol = context.user_data.get("plan_symbol", self._symbol(context))
-            st = self.app.state.load(symbol)
-            pos = self._pos(symbol)
-            plan = self.app.strategy.get_plan(
-                symbol, pos["current_price"], st["avg_price"], st["qty"], st["T"],
-                premium, st["cash"], st["split_count"], st["principal"],
+            symbols = context.user_data.get("plan_symbols", self.app.runtime.active_symbols())
+            msg = self._render_plans(symbols, premium)
+            await query.edit_message_text(
+                msg,
+                reply_markup=plan_action_keyboard(symbols, premium),
+                parse_mode="HTML",
             )
-            msg = self._format_plan(symbol, st, plan, premium)
-            kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("🚀 수동 주문", callback_data=f"EXEC:{symbol}:{premium}"),
-            ]])
-            await query.edit_message_text(msg, reply_markup=kb, parse_mode="HTML")
             return
 
         if data.startswith("EXEC:"):
@@ -279,7 +359,11 @@ class TelegramHandler:
         if data in ("set_seed", "set_cash"):
             context.user_data["awaiting"] = data
             context.user_data["awaiting_symbol"] = self._symbol(context)
-            await query.edit_message_text("숫자를 입력하세요.")
+            if data == "set_seed":
+                prompt = "💰 원금(회차 수익률 기준금)을 달러로 입력하세요."
+            else:
+                prompt = "💵 예수금(매수 가능 현금)을 달러로 입력하세요."
+            await query.edit_message_text(prompt)
             return
 
         if data == "set_split":
@@ -339,17 +423,10 @@ class TelegramHandler:
             await query.edit_message_text("취소됨")
             return
 
-        if data == "open_split":
-            await self.cmd_split(update, context)
-            return
-        if data == "open_cycles":
-            await self.cmd_cycles(update, context)
-            return
-        if data == "open_monthly":
-            await self.cmd_monthly(update, context)
-            return
-        if data == "open_dashboard":
-            await query.message.reply_text(format_dashboard(self.app), parse_mode="HTML")
+        if data.startswith("RUN:"):
+            job = data.split(":")[1]
+            await query.edit_message_reply_markup(reply_markup=None)
+            await self._run_job(query.message.chat_id, context, job)
             return
 
         if data.startswith("CYCLES:"):
@@ -357,18 +434,10 @@ class TelegramHandler:
             await self._send_cycles(query.message, symbol)
             return
 
-        if data.startswith("MONTHLY:"):
-            _, year_str, sym = data.split(":")
-            year = int(year_str)
-            sym_arg = None if sym == "ALL" else sym
-            msg = self.app.cycles.format_monthly_report(year, sym_arg)
-            await query.message.reply_text(msg, parse_mode="HTML")
-            return
-
     def _format_plan(self, symbol: str, st: dict, plan: dict, premium: int) -> str:
         msg = (
-            f"🎯 <b>[{symbol}]</b> T={st['T']:.4f} | 예수금 ${st['cash']:,.2f}\n"
-            f"모드 {plan['mode']} | 1회 ${plan['one_buy_amount']:,.2f} | +{premium}%\n"
+            f"<b>[{symbol}]</b> T={st['T']:.4f} ({st['split_count']}분할)\n"
+            f"모드 {plan['mode']} | 1회 ${plan['one_buy_amount']:,.2f} | 예수금 ${st['cash']:,.2f}\n"
             "────────────────\n"
         )
         orders = plan.get("buy_orders", []) + plan.get("sell_orders", [])
@@ -443,15 +512,7 @@ class TelegramHandler:
             return await self._deny(update)
         text = update.message.text.strip()
         if text.startswith("/set_t"):
-            try:
-                parts = text.split()
-                new_t = float(parts[1])
-                symbol = parts[2].upper() if len(parts) > 2 else self._symbol(context)
-                self.app.state.set_T(symbol, new_t)
-                await update.message.reply_text(f"✅ [{symbol}] T → {new_t}")
-            except (IndexError, ValueError):
-                await update.message.reply_text("예: /set_t 5.25 TQQQ")
-            return
+            return await self.cmd_set_t(update, context)
 
         awaiting = context.user_data.get("awaiting")
         if not awaiting:
@@ -477,11 +538,13 @@ class TelegramHandler:
             val = float(text)
             if awaiting == "set_seed":
                 self.app.state.set_principal(symbol, val)
-            elif awaiting == "set_cash":
+                context.user_data["awaiting"] = None
+                return await update.message.reply_text(f"✅ [{symbol}] 원금 ${val:,.0f}")
+            if awaiting == "set_cash":
                 self.app.state.set_cash(symbol, val)
                 context.user_data["awaiting"] = None
                 return await update.message.reply_text(f"✅ [{symbol}] 예수금 ${val:,.2f}")
-            elif awaiting == "set_split":
+            if awaiting == "set_split":
                 self.app.state.set_split_count(symbol, int(val))
             context.user_data["awaiting"] = None
             await update.message.reply_text("✅ 저장됨")

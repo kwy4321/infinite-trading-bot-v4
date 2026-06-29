@@ -97,3 +97,22 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup_and_run.ps1
 | `TELEGRAM_ALLOWED_CHAT_IDS` | 허용 chat ID (쉼표 구분) |
 | `TOSS_CLIENT_ID` / `TOSS_CLIENT_SECRET` | Toss Open API |
 | `DRY_RUN` | `true`면 실주문 없음 |
+
+## 텔레그램 명령어
+
+| 구분 | 명령 | 설명 |
+|------|------|------|
+| 현황 | `/dashboard` | 전체 요약 (포지션·회차) |
+| | `/status [종목]` | 전략·T·잔고 상세 |
+| | `/balance` | Toss API 계좌 잔고 (`DRY_RUN=false`) |
+| | `/plan [종목]` | 오늘 T 기준 주문 계획 |
+| | `/sync [종목]` | API 수량·평단 → 기록 반영 |
+| 설정 | `/setting` | 원금·예수금·분할 |
+| | `/split` | 액면분할 |
+| | `/set_t <값> [종목]` | T 수동 조정 |
+| 기록 | `/cycles [종목]` | 회차 기록 |
+| | `/monthly [종목] [연도]` | 월별 수익 |
+| | `/history [종목]` | 졸업 기록 |
+| | `/cycle_done [종목]` | 수동 졸업 |
+| 운영 | `/pause` `/resume` | 자동 Job 정지·재개 |
+| | `/run` | Job 수동 실행 |

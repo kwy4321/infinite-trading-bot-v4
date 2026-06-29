@@ -1,0 +1,14 @@
+.env
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+data/token_cache.json
+data/backups/*
+!data/backups/.gitkeep
+data/accounts/*/state.json
+data/accounts/*/orders.json
+*.zip
+.idea/
+.vscode/

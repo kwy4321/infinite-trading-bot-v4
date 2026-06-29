@@ -1,0 +1,103 @@
+"""Per-symbol JSON state (TQQQ / SOXL)."""
+
+import json
+import threading
+import datetime
+from pathlib import Path
+from typing import Optional
+
+from account.account import AccountPaths
+from config.settings import SYMBOLS
+
+DEFAULT_STATE = {
+    "symbol": "",
+    "mode": "normal",
+    "split_count": 40,
+    "principal": 10000.0,
+    "cash": 10000.0,
+    "T": 0.0,
+    "qty": 0,
+    "avg_price": 0.0,
+    "pending_buy_orders": [],
+    "pending_sell_orders": [],
+    "close_prices": [],
+    "split_log": [],
+    "last_order_date": "",
+    "last_updated": "",
+}
+
+
+class StateStore:
+    def __init__(self, paths: Optional[AccountPaths] = None):
+        self.paths = paths or AccountPaths()
+        self.paths.root.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.RLock()
+
+    def _default(self, symbol: str) -> dict:
+        s = dict(DEFAULT_STATE)
+        s["symbol"] = symbol.upper()
+        return s
+
+    def load(self, symbol: str) -> dict:
+        symbol = symbol.upper()
+        path = self.paths.symbol_state(symbol)
+        with self._lock:
+            if not path.exists():
+                state = self._default(symbol)
+                self._save_unlocked(symbol, state)
+                return state
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                return self._default(symbol)
+            merged = self._default(symbol)
+            merged.update(data)
+            merged["symbol"] = symbol
+            return merged
+
+    def save(self, symbol: str, state: dict) -> None:
+        symbol = symbol.upper()
+        state["symbol"] = symbol
+        state["last_updated"] = datetime.datetime.now().astimezone().isoformat()
+        with self._lock:
+            self._save_unlocked(symbol, state)
+
+    def _save_unlocked(self, symbol: str, state: dict) -> None:
+        path = self.paths.symbol_state(symbol)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2, ensure_ascii=False)
+
+    def set_cash(self, symbol: str, amount: float) -> dict:
+        state = self.load(symbol)
+        state["cash"] = max(0.0, float(amount))
+        self.save(symbol, state)
+        return state
+
+    def set_T(self, symbol: str, t_val: float) -> dict:
+        state = self.load(symbol)
+        state["T"] = float(t_val)
+        self.save(symbol, state)
+        return state
+
+    def set_split_count(self, symbol: str, count: int) -> dict:
+        state = self.load(symbol)
+        state["split_count"] = int(count)
+        self.save(symbol, state)
+        return state
+
+    def set_principal(self, symbol: str, amount: float) -> dict:
+        state = self.load(symbol)
+        state["principal"] = max(0.0, float(amount))
+        self.save(symbol, state)
+        return state
+
+    def sync_holdings(self, symbol: str, qty: int, avg_price: float) -> dict:
+        state = self.load(symbol)
+        state["qty"] = int(qty)
+        state["avg_price"] = float(avg_price)
+        self.save(symbol, state)
+        return state
+
+    def list_symbols(self):
+        return SYMBOLS

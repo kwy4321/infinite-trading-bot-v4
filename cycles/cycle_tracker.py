@@ -295,10 +295,10 @@ class CycleTracker:
         dot = "🟢" if usd >= 0 else "🔴"
 
         card = (
-            f"◆ <b>{symbol}</b>　·　🔢 <code>{completed['cycle_no']}회차</code>\n"
+            f"◆ <b>{symbol}</b>　·　🔢 <b>{completed['cycle_no']}회차</b>\n"
             f"📅 <i>{completed['started_at']} → {completed['ended_at']}</i>\n"
             f"🔁 <i>{trades}번 매매</i>\n"
-            f"{dot} <code>{sign}${usd:,.2f}</code>　<i>({sign}{pct:.2f}%)</i>{note_line}"
+            f"{dot} <b>{sign}${usd:,.2f}</b>　<i>({sign}{pct:.2f}%)</i>{note_line}"
         )
 
         return (

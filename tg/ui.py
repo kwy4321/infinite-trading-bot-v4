@@ -52,8 +52,9 @@ def market_status_label(status: str) -> str:
 
 
 def code(text: str) -> str:
-    """Monospace highlight — reads like a distinct color in Telegram."""
-    return f"<code>{text}</code>"
+    """숫자·값 강조. <blockquote> 카드 안에서는 <code>가 허용되지 않으므로
+    (Telegram: blockquote는 다른 엔티티를 포함할 수 없음) 볼드로 강조한다."""
+    return f"<b>{text}</b>"
 
 
 def dim(text: str) -> str:

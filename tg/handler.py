@@ -12,7 +12,7 @@ from app import App
 from jobs.executor import JobExecutor
 from strategy.split_handler import apply_split, calc_adjustment, format_preview, parse_ratio
 from config.settings import SYMBOLS
-from tg.help_text import HELP_MESSAGE
+from tg.ui import DIVIDER, help_block
 from tg.balance_formatter import format_balance
 from tg.plan_formatter import format_plans
 from tg.records_formatter import format_graduation_history, format_profit_summary
@@ -75,26 +75,35 @@ class TelegramHandler:
         market = "🟢 개장" if open_today else "🔴 휴장"
         paused = self.app.runtime.is_paused()
         dry = self.app.settings.dry_run or not self.app.settings.has_toss
-        api = "DRY_RUN" if dry else "LIVE"
-        bot = "⏸️ 정지" if paused else "▶️ 가동"
+        run_mode = "🧪 DRY" if dry else "💹 LIVE"
+        bot = "⏸️ 정지" if paused else "🤖 가동"
         header = (
-            f"🖥️ <b>라오어 무한매수 4.0</b>\n\n"
-            f"{bot} · {api} · 미증시 {market}\n\n"
+            f"🖥️ <b>라오어 무한매수 4.0</b>\n"
+            f"{DIVIDER}\n"
+            f"{bot}  │  {run_mode}  │  {market}\n\n"
         )
-        await update.message.reply_text(header + HELP_MESSAGE, parse_mode="HTML")
+        await update.message.reply_text(header + help_block(), parse_mode="HTML")
 
     async def cmd_dashboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
             return await self._deny(update)
-        await update.message.reply_text(format_dashboard(self.app), parse_mode="HTML")
+        try:
+            await update.message.reply_text(format_dashboard(self.app), parse_mode="HTML")
+        except Exception as e:
+            logger.exception("dashboard failed")
+            await update.message.reply_text(f"🚨 조회 실패: {e}")
 
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
             return await self._deny(update)
-        await update.message.reply_text(
-            format_status(self.app),
-            parse_mode="HTML",
-        )
+        try:
+            await update.message.reply_text(
+                format_status(self.app),
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.exception("status failed")
+            await update.message.reply_text(f"🚨 조회 실패: {e}")
 
     async def cmd_balance(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
@@ -128,12 +137,16 @@ class TelegramHandler:
         symbols = self._plan_symbols(context, parts)
         premium = self.app.runtime.premium_default()
         context.user_data["plan_symbols"] = symbols
-        msg = self._render_plans(symbols, premium)
-        await update.message.reply_text(
-            msg,
-            reply_markup=plan_action_keyboard(symbols, premium),
-            parse_mode="HTML",
-        )
+        try:
+            msg = self._render_plans(symbols, premium)
+            await update.message.reply_text(
+                msg,
+                reply_markup=plan_action_keyboard(symbols, premium),
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.exception("plan failed")
+            await update.message.reply_text(f"🚨 조회 실패: {e}")
 
     async def cmd_setting(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
@@ -141,32 +154,20 @@ class TelegramHandler:
         symbol = self._symbol(context)
         st = self.app.state.load(symbol)
         msg = (
-            f"⚙️ <b>설정 — {symbol}</b>\n\n"
-            f"💰 <b>원금</b> ${st['principal']:,.0f}\n"
-            f"   회차 수익률 계산 기준\n"
-            f"💵 <b>예수금</b> ${st['cash']:,.2f}\n"
-            f"   매수 가능 현금 (수동 관리)\n\n"
-            f"🍰 분할 {st['split_count']} | 기본 할증 {self.app.runtime.premium_default()}%"
+            f"⚙️ <b>설정</b>\n"
+            f"{DIVIDER}\n"
+            f"📦 종목  {symbol}\n\n"
+            f"💰 원금    ${st['principal']:,.0f}\n"
+            f"💵 예수금  ${st['cash']:,.2f}\n"
+            f"🍰 분할    {st['split_count']}\n"
+            f"➕ 할증    +{self.app.runtime.premium_default()}%"
         )
         await update.message.reply_text(msg, reply_markup=setting_keyboard(), parse_mode="HTML")
-
-    async def cmd_sync(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not self._allowed(update):
-            return await self._deny(update)
-        parts = update.message.text.split()
-        symbol = parts[1].upper() if len(parts) > 1 else self._symbol(context)
-        pos = self._pos(symbol)
-        st = self.app.state.sync_holdings(symbol, pos["qty"], pos["avg_price"])
-        await update.message.reply_text(
-            f"🔄 [{symbol}] API 반영\n"
-            f"수량 {st['qty']}주 | 평단 ${st['avg_price']:.2f}\n"
-            f"예수금 ${st['cash']:,.2f} (수동, 변경 없음)"
-        )
 
     async def cmd_split(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
             return await self._deny(update)
-        text = "📐 액면분할 — 종목 선택:"
+        text = "📐 액면분할  │  종목 선택"
         markup = symbol_picker("SPLIT_PICK")
         target = update.callback_query.message if update.callback_query else update.message
         await target.reply_text(text, reply_markup=markup)
@@ -202,8 +203,7 @@ class TelegramHandler:
         if not self._allowed(update):
             return await self._deny(update)
         await update.message.reply_text(
-            "⏱️ <b>수동 실행</b>\n"
-            "스케줄과 동일한 Job입니다. 자동 실행은 /pause 로 멈출 수 있습니다.",
+            f"▶️ <b>수동 실행</b>\n{DIVIDER}\n⏱️ 스케줄 Job을 직접 실행합니다.",
             reply_markup=run_job_keyboard(),
             parse_mode="HTML",
         )
@@ -252,13 +252,13 @@ class TelegramHandler:
         if not self._allowed(update):
             return await self._deny(update)
         self.app.runtime.set_paused(True)
-        await update.message.reply_text("⏸️ 정해진 시간 자동 실행을 멈췄어요.")
+        await update.message.reply_text("⏸️  자동 실행을 멈췄습니다.")
 
     async def cmd_resume(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
             return await self._deny(update)
         self.app.runtime.set_paused(False)
-        await update.message.reply_text("⏰ 정해진 시간 자동 실행을 다시 켰어요.")
+        await update.message.reply_text("⏰  자동 실행을 재개했습니다.")
 
     async def _run_job(self, chat_id: int, context: ContextTypes.DEFAULT_TYPE, name: str):
         label = JOB_LABELS.get(name, name)

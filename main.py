@@ -88,7 +88,6 @@ def main():
     tg.add_handler(CommandHandler("setting", handler.cmd_setting))
     tg.add_handler(CommandHandler("set_t", handler.cmd_set_t))
     tg.add_handler(CommandHandler("history", handler.cmd_history))
-    tg.add_handler(CommandHandler("sync", handler.cmd_sync))
     tg.add_handler(CommandHandler("split", handler.cmd_split))
     tg.add_handler(CommandHandler("cycles", handler.cmd_cycles))
     tg.add_handler(CommandHandler("monthly", handler.cmd_monthly))

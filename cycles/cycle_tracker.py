@@ -2,6 +2,7 @@
 
 import datetime
 import os
+import random
 import threading
 from collections import defaultdict
 from pathlib import Path
@@ -224,10 +225,56 @@ class CycleTracker:
             lines.append(f"{bar} <b>{mm}월</b> | {info['cycles']}회 | {sign}${info['profit_usd']:,.2f} ({sign}{info['profit_pct_on_buy']:.2f}%)")
         return "\n".join(lines)
 
+    _GRADUATION_VARIANTS = (
+        (15, (
+            ("🎉🚀  대졸업!", "라오어가 눈물 흘리며 박수칩니다 👏✨"),
+            ("🏆✨  만점 졸업!", "무한매수 교과서에 올릴 한 사이클 📖🔥"),
+            ("🎊🚀  대졸업!", "오늘 저녁은 스테이크 각 🥩🍾"),
+        )),
+        (5, (
+            ("🎓✨  졸업!", "깔끔하게 한 사이클 완주 🏁"),
+            ("✅🎓  졸업!", "차분한 승리 — 다음 타자 대기 ⚾✨"),
+            ("🎓  졸업!", "수익 실현 완료, 지갑이 한결 가벼워짐 💼😊"),
+        )),
+        (0, (
+            ("🎓  졸업", "플러스 마감 — 다음 회차 가즈아 💪"),
+            ("🎓  졸업", "0보다 크면 승리, 오늘도 이겼다 ✅"),
+            ("📈🎓  졸업", "조금씩 쌓인 게 오늘 졸업장 🎓"),
+        )),
+        (-5, (
+            ("🫠  졸업…", "살짝 아쉽지만, 무한매수는 무한이지 🔄"),
+            ("🫠  졸업…", "손해는 수업료… 다음이 진짜다 📚"),
+            ("😅🎓  졸업…", "마이너스 졸업도 졸업입니다 (?) 🎓"),
+        )),
+        (float("-inf"), (
+            ("😤  회차 종료", "이번 판은 접고 리벤지 각 🔥"),
+            ("💢  회차 종료", "실패는 데이터, 다음은 더 날카롭게 📉➡️📈"),
+            ("⚔️  회차 종료", "회차 스킵 — 다음 사이클이 기다림 🔥"),
+        )),
+    )
+
     def format_graduation_message(self, completed: dict, symbol: str) -> str:
-        sign = "+" if completed["profit_usd"] >= 0 else ""
+        pct = completed["profit_pct"]
+        usd = completed["profit_usd"]
+        sign = "+" if usd >= 0 else ""
+        trades = completed.get("buy_count", 0) + completed.get("sell_count", 0)
+        divider = "────────────────"
+
+        headline, tagline = self._GRADUATION_VARIANTS[-1][1][0]
+        for threshold, variants in self._GRADUATION_VARIANTS:
+            if pct >= threshold:
+                headline, tagline = random.choice(variants)
+                break
+
+        note = completed.get("note", "")
+        note_line = f"\n📝 {note}" if note else ""
+
         return (
-            f"🎓 <b>[{symbol}] {completed['cycle_no']}회차 졸업!</b>\n\n"
-            f"{completed['started_at']} ~ {completed['ended_at']}\n"
-            f"수익: {sign}${completed['profit_usd']:,.2f} ({sign}{completed['profit_pct']:.2f}%)"
+            f"{headline}\n"
+            f"{divider}\n\n"
+            f"📦 <b>{symbol}</b>  ·  🔢 {completed['cycle_no']}회차\n"
+            f"📅 {completed['started_at']} → {completed['ended_at']}\n"
+            f"🔁 {trades}번 매매\n"
+            f"💰 {sign}${usd:,.2f}  ({sign}{pct:.2f}%){note_line}\n\n"
+            f"<i>{tagline}</i>"
         )

@@ -1,6 +1,7 @@
 """Toss Open API HTTP client."""
 
 import logging
+import time
 import uuid
 
 import requests
@@ -60,6 +61,8 @@ class TossClient:
         self.account_seq = account_seq
         self.limiter = limiter
         self.dry_run = dry_run
+        self._holdings_cache: dict | None = None
+        self._holdings_cache_at: float = 0.0
 
     def _headers(self, with_account: bool = False) -> dict:
         h = {"Authorization": f"Bearer {self.auth.get_token()}"}
@@ -96,8 +99,14 @@ class TossClient:
     def get_holdings_overview(self) -> dict | None:
         if self.dry_run:
             return None
+        now = time.monotonic()
+        if self._holdings_cache is not None and now - self._holdings_cache_at < 10:
+            return self._holdings_cache
         data = self._request("GET", "/api/v1/holdings", "ASSET", account=True)
-        return data.get("result", data)
+        result = data.get("result", data)
+        self._holdings_cache = result
+        self._holdings_cache_at = now
+        return result
 
     def get_buying_power(self, currency: str = "USD") -> dict:
         if self.dry_run:

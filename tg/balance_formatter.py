@@ -3,11 +3,12 @@
 from broker.toss_client import _money
 from app import App
 from config.settings import SYMBOLS
+from tg.ui import section
 
 
 def format_balance(app: App) -> str:
     broker = app.broker
-    lines = ["💼 <b>계좌현황</b>", ""]
+    lines = [section("계좌현황", "💼"), ""]
 
     buying = broker.get_buying_power("USD")
     cash = float(buying.get("cashBuyingPower", 0) or 0) if buying else 0.0
@@ -20,11 +21,14 @@ def format_balance(app: App) -> str:
     display = tracked or items
 
     if display:
-        lines.append("<b>보유 종목</b>")
         for item in display:
             lines.append(_holding_row(item))
+            lines.append("")
     else:
-        lines.append("보유 종목 없음")
+        lines.append("📭 보유 종목 없음")
+
+    if lines and lines[-1] == "":
+        lines.pop()
 
     return "\n".join(lines)
 
@@ -42,8 +46,8 @@ def _holding_row(item: dict) -> str:
     if mkt == 0 and qty and last:
         mkt = qty * last
 
-    label = name if name and name.upper() != sym else sym
+    label = sym if name.upper() == sym else f"{sym}  {name}"
     return (
-        f"  {label}\n"
-        f"  {qty:g}주 · 평단 ${avg:.2f} · 평가 ${mkt:,.2f}"
+        f"📦 <b>{label}</b>\n"
+        f"📊 {qty:g}주  │  평단 ${avg:.2f}  │  💰 ${mkt:,.2f}"
     )

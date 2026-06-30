@@ -25,6 +25,9 @@ class Settings:
     dry_run: bool = field(default_factory=lambda: os.getenv("DRY_RUN", "false").lower() == "true")
     news_api_key: str = field(default_factory=lambda: os.getenv("NEWS_API_KEY", ""))
     summarizer_api_key: str = field(default_factory=lambda: os.getenv("SUMMARIZER_API_KEY", ""))
+    # 뉴스 요약 LLM: gemini | openai (키가 있을 때만 동작). 모델은 비우면 기본값(gemini-2.5-flash) 사용.
+    summarizer_provider: str = field(default_factory=lambda: os.getenv("SUMMARIZER_PROVIDER", "gemini").lower())
+    summarizer_model: str = field(default_factory=lambda: os.getenv("SUMMARIZER_MODEL", ""))
     # GCP e2-micro 등 소형 VM — 디스크·RAM 절약
     backup_enabled: bool = field(default_factory=lambda: os.getenv("BACKUP_ENABLED", "true").lower() == "true")
     backup_keep: int = field(default_factory=lambda: _int_env("BACKUP_KEEP", 5))

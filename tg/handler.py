@@ -107,6 +107,10 @@ class TelegramHandler:
     async def cmd_dashboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
             return await self._deny(update)
+        if not self.app.settings.has_toss and not self.app.settings.dry_run:
+            return await update.message.reply_text(
+                "⚠️ Toss API 키가 없습니다. .env 의 TOSS_CLIENT_ID/SECRET 확인"
+            )
         try:
             await update.message.reply_text(format_dashboard(self.app), parse_mode="HTML")
         except Exception as e:

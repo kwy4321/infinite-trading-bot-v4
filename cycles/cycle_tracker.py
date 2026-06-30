@@ -187,6 +187,32 @@ class CycleTracker:
             result[m] = {"cycles": info["cycles"], "profit_usd": profit, "profit_pct_on_buy": pct, "details": info["details"]}
         return result
 
+    def portfolio_stats(self) -> dict:
+        data = self._load_all()
+        realized_usd = 0.0
+        completed_cycles = 0
+        active_cycles = 0
+        per_symbol = {}
+        for sym in SYMBOLS:
+            s = self._get(data, sym)
+            sym_realized = sum(c.get("profit_usd", 0.0) for c in s.get("completed", []))
+            sym_completed = len(s.get("completed", []))
+            sym_active = 1 if s.get("current") else 0
+            realized_usd += sym_realized
+            completed_cycles += sym_completed
+            active_cycles += sym_active
+            per_symbol[sym] = {
+                "realized_usd": round(sym_realized, 2),
+                "completed_cycles": sym_completed,
+                "active": bool(sym_active),
+            }
+        return {
+            "realized_usd": round(realized_usd, 2),
+            "completed_cycles": completed_cycles,
+            "active_cycles": active_cycles,
+            "per_symbol": per_symbol,
+        }
+
     def format_cycles_report(self, symbol: str, qty: int, avg_price: float, current_price: float) -> str:
         sym = self.get_symbol_data(symbol)
         lines = [f"📒 <b>[{symbol}] 회차 기록</b>\n"]

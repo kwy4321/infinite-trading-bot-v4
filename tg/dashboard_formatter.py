@@ -1,8 +1,8 @@
-"""Text dashboard — alias for /status (진행상황)."""
+"""Text dashboard — records asset overview (/dashboard)."""
 
 from app import App
-from tg.status_formatter import format_status
+from tg.records_dashboard_formatter import format_records_dashboard
 
 
 def format_dashboard(app: App) -> str:
-    return format_status(app)
+    return format_records_dashboard(app)

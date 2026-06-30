@@ -53,6 +53,7 @@ def help_block() -> str:
 /set_t — 🎯 T 값 조정
 
 <b>📒 기록</b>
+/dashboard — 📒 자산·손익 대시보드
 /history — 🎓 종료 기록
 /monthly — 📅 수익현황
 

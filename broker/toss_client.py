@@ -122,6 +122,17 @@ class TossClient:
         )
         return data.get("result", data)
 
+    def get_exchange_rate(self, base: str = "USD", quote: str = "KRW") -> dict:
+        if self.dry_run:
+            return {}
+        data = self._request(
+            "GET",
+            "/api/v1/exchange-rate",
+            "MARKET_INFO",
+            params={"baseCurrency": base.upper(), "quoteCurrency": quote.upper()},
+        )
+        return data.get("result", data)
+
     def get_holdings_item(self, symbol: str) -> dict:
         if self.dry_run:
             return {"qty": 0, "avg_price": 0.0, "current_price": 0.0}

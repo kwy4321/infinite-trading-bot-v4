@@ -17,8 +17,8 @@ if [[ ! -d .venv ]]; then
 fi
 # shellcheck disable=SC1091
 source .venv/bin/activate
-pip install -U pip -q
-pip install -r requirements.txt -q
+pip install --no-cache-dir -U pip -q
+pip install --no-cache-dir -r requirements.txt -q
 
 if systemctl is-active --quiet infinite-trading-bot 2>/dev/null; then
   sudo systemctl restart infinite-trading-bot

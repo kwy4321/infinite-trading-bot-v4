@@ -1,14 +1,14 @@
 """무한매수 회차(사이클) 추적."""
 
-import json
+import datetime
 import os
 import threading
-import datetime
 from collections import defaultdict
-from typing import Optional, Union
 from pathlib import Path
+from typing import Optional, Union
 
-from config.settings import SYMBOLS
+from config.json_io import load_json, save_json
+from config.settings import SYMBOLS, get_settings
 
 CYCLES_FILE = "cycles.json"
 DEFAULT_DATA = os.path.join("data", "accounts", "default")
@@ -44,12 +44,11 @@ class CycleTracker:
 
     def _load_all(self) -> dict:
         with self._lock:
+            default = {s: _default_symbol_data() for s in SYMBOLS}
             if not os.path.exists(self.path):
-                return {s: _default_symbol_data() for s in SYMBOLS}
-            try:
-                with open(self.path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-            except (json.JSONDecodeError, OSError):
+                return default
+            data = load_json(Path(self.path), {})
+            if not isinstance(data, dict):
                 data = {}
             for s in SYMBOLS:
                 if s not in data:
@@ -60,10 +59,18 @@ class CycleTracker:
                     data[s] = base
             return data
 
+    def _trim_completed(self, data: dict) -> None:
+        limit = get_settings().max_completed_cycles
+        for s in SYMBOLS:
+            sym = self._get(data, s)
+            completed = sym.get("completed", [])
+            if len(completed) > limit:
+                sym["completed"] = completed[-limit:]
+
     def _save_all(self, data: dict) -> None:
         with self._lock:
-            with open(self.path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
+            self._trim_completed(data)
+            save_json(Path(self.path), data, compact=True)
 
     def _get(self, data: dict, symbol: str) -> dict:
         symbol = symbol.upper()

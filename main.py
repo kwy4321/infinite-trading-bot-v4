@@ -22,26 +22,23 @@ def _is_us_summer() -> bool:
 
 
 def _register_jobs(app_tg, executor: JobExecutor):
-    """Register KST daily jobs with summer/winter skip (same pattern as v0)."""
+    """Register KST daily jobs — LOC close aligned to US 16:00 ET."""
 
-    async def job1(ctx):
-        h = datetime.datetime.now(KST).hour
-        if _is_us_summer() and h != 17:
+    async def job3_summer(ctx):
+        now = datetime.datetime.now(KST)
+        if now.hour != 5 or now.minute != 0:
             return
-        if not _is_us_summer() and h != 18:
+        if not _is_us_summer():
             return
-        await executor.run_job1()
+        await executor.run_job3()
 
-    async def job2(ctx):
-        h = datetime.datetime.now(KST).hour
-        if _is_us_summer() and h != 23:
+    async def job3_winter(ctx):
+        now = datetime.datetime.now(KST)
+        if now.hour != 6 or now.minute != 0:
             return
-        if not _is_us_summer() and h not in (0, 23):
+        if _is_us_summer():
             return
-        await executor.run_job2()
-
-    async def job3(ctx):
-        await executor.run_job3(premium=10)
+        await executor.run_job3()
 
     async def job4(ctx):
         await executor.run_job4()
@@ -53,22 +50,21 @@ def _register_jobs(app_tg, executor: JobExecutor):
     chat_id = chat_ids[0] if chat_ids else None
 
     jq = app_tg.job_queue
-    jq.run_daily(briefing, time=datetime.time(7, 0, tzinfo=KST), chat_id=chat_id, name="briefing")
-    jq.run_daily(job1, time=datetime.time(17, 0, tzinfo=KST), chat_id=chat_id, name="job1_summer")
-    jq.run_daily(job1, time=datetime.time(18, 0, tzinfo=KST), chat_id=chat_id, name="job1_winter")
-    jq.run_daily(job2, time=datetime.time(23, 0, tzinfo=KST), chat_id=chat_id, name="job2_summer")
-    jq.run_daily(job2, time=datetime.time(0, 0, tzinfo=KST), chat_id=chat_id, name="job2_winter")
-    jq.run_daily(job3, time=datetime.time(5, 30, tzinfo=KST), chat_id=chat_id, name="job3")
+    if executor.app.settings.briefing_enabled:
+        jq.run_daily(briefing, time=datetime.time(7, 0, tzinfo=KST), chat_id=chat_id, name="briefing")
+    jq.run_daily(job3_summer, time=datetime.time(5, 0, tzinfo=KST), chat_id=chat_id, name="job3_summer")
+    jq.run_daily(job3_winter, time=datetime.time(6, 0, tzinfo=KST), chat_id=chat_id, name="job3_winter")
     jq.run_daily(job4, time=datetime.time(6, 15, tzinfo=KST), chat_id=chat_id, name="job4")
 
 
 def main():
+    application_app = App.create()
+    log_level = getattr(logging, application_app.settings.log_level, logging.WARNING)
     logging.basicConfig(
-        level=logging.INFO,
+        level=log_level,
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
     )
 
-    application_app = App.create()
     token = application_app.settings.telegram_bot_token
     if not token:
         logger.error("TELEGRAM_BOT_TOKEN 이 .env 에 없습니다.")
@@ -84,6 +80,7 @@ def main():
     sender.set_bot(tg.bot)
 
     tg.add_handler(CommandHandler("start", handler.cmd_start))
+    tg.add_handler(CommandHandler("help", handler.cmd_start))
     tg.add_handler(CommandHandler("dashboard", handler.cmd_dashboard))
     tg.add_handler(CommandHandler("status", handler.cmd_status))
     tg.add_handler(CommandHandler("balance", handler.cmd_balance))
@@ -107,7 +104,7 @@ def main():
     dry = application_app.settings.dry_run or not application_app.settings.has_toss
     mode = "DRY_RUN" if dry else "LIVE"
     logger.info("🚀 라오어 무한매수 4.0 v1.0 시작 (%s)", mode)
-    tg.run_polling()
+    tg.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":

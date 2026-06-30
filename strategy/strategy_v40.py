@@ -119,7 +119,7 @@ class InfiniteStrategyV40:
             plan["star_price"] = star_price
             if star_price > 0 and qty > 0:
                 q = max(1, math.floor(qty / 4))
-                self._append_sell(plan, star_price, q, "SELL_QUARTER", f"리버스 쿼터매도 ({q}주)")
+                self._append_sell(plan, star_price, q, "SELL_QUARTER", f"리버스 쿼터 LOC ({q}주)")
             if cash > 0 and current_price > 0:
                 bp = self.calc_buy_trigger_price(star_price) if star_price > 0 else current_price
                 self._append_buy(plan, bp, one_buy, "BUY_FULL", "리버스 쿼터매수")
@@ -150,10 +150,10 @@ class InfiniteStrategyV40:
             qtr = max(1, math.floor(qty / 4))
             rem = qty - qtr
             if star_price > 0:
-                self._append_sell(plan, star_price, qtr, "SELL_QUARTER", f"쿼터매도 ({qtr}주)")
+                self._append_sell(plan, star_price, qtr, "SELL_QUARTER", f"쿼터 LOC ({qtr}주)")
             tp = round(avg_price * (1.0 + take_profit_pct / 100.0), 2)
             if rem > 0:
-                self._append_sell(plan, tp, rem, None, f"익절 +{take_profit_pct}% ({rem}주)")
+                self._append_sell(plan, tp, rem, None, f"익절 LOC +{take_profit_pct}% ({rem}주)")
         return plan
 
     def summarize(self, ticker, current_price, avg_price, qty, t_val, cash, split_count):

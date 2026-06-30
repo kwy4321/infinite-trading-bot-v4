@@ -89,14 +89,14 @@ class TossClient:
     def get_price(self, symbol: str) -> float:
         if self.dry_run:
             return 0.0
-        data = self._request("GET", "/prices", "MARKET_DATA", params={"symbol": symbol.upper()})
+        data = self._request("GET", "/api/v1/prices", "MARKET_DATA", params={"symbol": symbol.upper()})
         result = data.get("result", data)
         return float(result.get("lastPrice", 0))
 
     def get_holdings_overview(self) -> dict | None:
         if self.dry_run:
             return None
-        data = self._request("GET", "/holdings", "ASSET", account=True)
+        data = self._request("GET", "/api/v1/holdings", "ASSET", account=True)
         return data.get("result", data)
 
     def get_buying_power(self, currency: str = "USD") -> dict:
@@ -104,7 +104,7 @@ class TossClient:
             return {}
         data = self._request(
             "GET",
-            "/buying-power",
+            "/api/v1/buying-power",
             "ORDER_INFO",
             account=True,
             params={"currency": currency.upper()},
@@ -113,7 +113,7 @@ class TossClient:
 
     def get_holdings_item(self, symbol: str) -> dict:
         if self.dry_run:
-            return {"qty": 0, "avg_price": 0.0, "current_price": 0.0, "api_cash_usd": 0.0}
+            return {"qty": 0, "avg_price": 0.0, "current_price": 0.0}
         overview = self.get_holdings_overview() or {}
         items = overview.get("items", [])
         qty, avg, mkt = 0, 0.0, 0.0
@@ -127,12 +127,13 @@ class TossClient:
                     mkt = float(item.get("lastPrice", 0) or 0) * qty
                 break
         price = self.get_price(symbol) if mkt == 0 and qty > 0 else (mkt / qty if qty else 0)
-        return {"qty": qty, "avg_price": avg, "current_price": price, "api_cash_usd": 0.0}
+        return {"qty": qty, "avg_price": avg, "current_price": price}
 
     def place_limit_order(self, symbol: str, side: str, price: float, qty: int) -> bool:
         if self.dry_run:
-            logger.info("[DRY_RUN] %s %s %s @ %s", side, qty, symbol, price)
+            logger.info("[DRY_RUN] LOC대체 LIMIT %s %s %s @ %s", side, qty, symbol, price)
             return True
+        # Toss: LOC 없음 → 장마감 직전 LIMIT+DAY (종가>=매도가 / 종가<=매수가 에 체결)
         body = {
             "symbol": symbol.upper(),
             "side": side.upper(),
@@ -142,14 +143,14 @@ class TossClient:
             "price": str(round(price, 2)),
             "clientOrderId": str(uuid.uuid4()),
         }
-        self._request("POST", "/orders", "ORDER", account=True, json=body)
+        self._request("POST", "/api/v1/orders", "ORDER", account=True, json=body)
         return True
 
     def is_us_market_open_today(self) -> bool:
         if self.dry_run:
             return True
         try:
-            data = self._request("GET", "/market-calendar/US", "MARKET_INFO")
+            data = self._request("GET", "/api/v1/market-calendar/US", "MARKET_INFO")
             result = data.get("result", data)
             today = result.get("today", {})
             return today.get("regularMarket") is not None

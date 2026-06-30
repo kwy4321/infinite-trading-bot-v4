@@ -6,9 +6,7 @@ from app import App
 def format_dashboard(app: App) -> str:
     lines = ["📊 <b>라오어 무한매수 4.0 대시보드</b>\n"]
     paused = app.runtime.is_paused()
-    dry = app.settings.dry_run or not app.settings.has_toss
-    api_mode = "DRY_RUN" if dry else "LIVE"
-    lines.append(f"봇: {'⏸️ 일시정지' if paused else '▶️ 가동'} | {api_mode}")
+    lines.append(f"상태: {'⏸️ 자동 실행 멈춤' if paused else '⏰ 자동 실행 중'}")
     lines.append(f"활성 종목: {', '.join(app.runtime.active_symbols())}\n")
 
     for sym in app.state.list_symbols():

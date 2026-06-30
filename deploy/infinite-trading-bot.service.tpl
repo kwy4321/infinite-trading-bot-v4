@@ -11,6 +11,9 @@ EnvironmentFile=@INSTALL_DIR@/.env
 ExecStart=@INSTALL_DIR@/.venv/bin/python main.py
 Restart=always
 RestartSec=10
+# GCP e2-micro (1GB RAM) — OOM 방지
+MemoryHigh=380M
+MemoryMax=450M
 StandardOutput=journal
 StandardError=journal
 

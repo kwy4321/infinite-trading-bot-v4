@@ -1,12 +1,12 @@
 """Per-symbol JSON state (TQQQ / SOXL)."""
 
-import json
 import threading
 import datetime
 from pathlib import Path
 from typing import Optional
 
 from account.account import AccountPaths
+from config.json_io import load_json, save_json
 from config.settings import SYMBOLS
 
 DEFAULT_STATE = {
@@ -46,11 +46,7 @@ class StateStore:
                 state = self._default(symbol)
                 self._save_unlocked(symbol, state)
                 return state
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-            except (json.JSONDecodeError, OSError):
-                return self._default(symbol)
+            data = load_json(path, self._default(symbol))
             merged = self._default(symbol)
             merged.update(data)
             merged["symbol"] = symbol
@@ -65,8 +61,7 @@ class StateStore:
 
     def _save_unlocked(self, symbol: str, state: dict) -> None:
         path = self.paths.symbol_state(symbol)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(state, f, indent=2, ensure_ascii=False)
+        save_json(path, state, compact=True)
 
     def set_cash(self, symbol: str, amount: float) -> dict:
         state = self.load(symbol)

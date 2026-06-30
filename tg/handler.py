@@ -15,6 +15,7 @@ from config.settings import SYMBOLS
 from tg.help_text import HELP_MESSAGE
 from tg.balance_formatter import format_balance
 from tg.dashboard_formatter import format_dashboard
+from tg.status_formatter import format_status
 from tg.keyboards import (
     plan_action_keyboard,
     run_job_keyboard,
@@ -27,6 +28,15 @@ from tg.keyboards import (
 from tg.sender import TelegramSender
 
 logger = logging.getLogger(__name__)
+
+JOB_LABELS = {
+    "job1": "장마감 LOC (job3와 동일)",
+    "job2": "(미사용)",
+    "job3": "장마감 LOC (매수·매도)",
+    "job4": "오늘 마무리",
+    "briefing": "아침 브리핑",
+    "morning_briefing": "아침 브리핑",
+}
 
 
 class TelegramHandler:
@@ -78,52 +88,10 @@ class TelegramHandler:
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
             return await self._deny(update)
-        parts = update.message.text.split()
-        symbol = parts[1].upper() if len(parts) > 1 else self._symbol(context)
-        st = self.app.state.load(symbol)
-        pos = self._pos(symbol)
-        price = pos["current_price"]
-        summary = self.app.strategy.summarize(
-            symbol, price, st["avg_price"], st["qty"], st["T"],
-            st["cash"], st["split_count"],
+        await update.message.reply_text(
+            format_status(self.app),
+            parse_mode="HTML",
         )
-        self.app.cycles.ensure_current(symbol, st["principal"])
-        live = self.app.cycles.calc_unrealized_pnl(symbol, st["qty"], st["avg_price"], price)
-
-        lines = [f"📊 <b>[{symbol}] 상세</b>\n"]
-
-        if live:
-            sign = "+" if live["cycle_pnl_usd"] >= 0 else ""
-            lines.append(
-                f"<b>회차</b> {live['cycle_no']}회 ({live['started_at']}~)\n"
-                f"  손익 {sign}${live['cycle_pnl_usd']:,.2f} ({sign}{live['cycle_pnl_pct']:.2f}%)\n"
-            )
-        else:
-            lines.append("<b>회차</b> 진행 중 없음\n")
-
-        star_price = summary.get("star_price", 0.0)
-        lines += [
-            "<b>전략</b>",
-            f"  T={st['T']:.4f} ({st['split_count']}분할) | {summary['mode']}",
-            f"  별 {summary['star_pct']:+.2f}% (${star_price:.2f}) | 1회매수 ${summary['one_buy_amount']:,.2f}",
-            f"  익절 +{summary['take_profit_pct']:.0f}%\n",
-        ]
-
-        qty_match = st["qty"] == pos["qty"]
-        avg_match = abs(st["avg_price"] - pos["avg_price"]) < 0.01
-        sync_hint = "" if (qty_match and avg_match) else " ⚠️ /sync 필요"
-        lines += [
-            "<b>잔고</b>",
-            f"  기록 {st['qty']}주 @ ${st['avg_price']:.2f}",
-            f"  API  {pos['qty']}주 @ ${pos['avg_price']:.2f}{sync_hint}",
-        ]
-        if price > 0:
-            lines.append(f"  현재가 ${price:.2f}")
-        lines += [
-            f"  원금 ${st['principal']:,.0f} | 예수금 ${st['cash']:,.2f}",
-        ]
-
-        await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
     async def cmd_balance(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
@@ -298,23 +266,16 @@ class TelegramHandler:
         if not self._allowed(update):
             return await self._deny(update)
         self.app.runtime.set_paused(True)
-        await update.message.reply_text("🛑 자동 Job 일시정지")
+        await update.message.reply_text("⏸️ 정해진 시간 자동 실행을 멈췄어요.")
 
     async def cmd_resume(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
             return await self._deny(update)
         self.app.runtime.set_paused(False)
-        await update.message.reply_text("▶️ 자동 Job 재개")
+        await update.message.reply_text("⏰ 정해진 시간 자동 실행을 다시 켰어요.")
 
     async def _run_job(self, chat_id: int, context: ContextTypes.DEFAULT_TYPE, name: str):
-        labels = {
-            "job1": "익절",
-            "job2": "체결정리",
-            "job3": "매수",
-            "job4": "일일리포트",
-            "briefing": "아침브리핑",
-        }
-        label = labels.get(name, name)
+        label = JOB_LABELS.get(name, name)
         await context.bot.send_message(chat_id, f"⏳ {label} 실행 중...")
         if name == "briefing":
             await self.executor.run_morning_briefing()

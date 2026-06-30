@@ -5,7 +5,7 @@ HELP_MESSAGE = """\
 
 <b>📊 현황</b>
 /dashboard — 전체 요약 (포지션·회차)
-/status [종목] — 전략·T·잔고 상세
+/status — 봇·계좌 (예수금)
 /balance — Toss API 계좌 잔고
 /plan [종목] — 오늘 T 기준 주문 계획
 /sync [종목] — API 수량·평단 → 기록 반영

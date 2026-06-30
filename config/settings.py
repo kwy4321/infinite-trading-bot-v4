@@ -24,6 +24,13 @@ class Settings:
     dry_run: bool = field(default_factory=lambda: os.getenv("DRY_RUN", "false").lower() == "true")
     news_api_key: str = field(default_factory=lambda: os.getenv("NEWS_API_KEY", ""))
     summarizer_api_key: str = field(default_factory=lambda: os.getenv("SUMMARIZER_API_KEY", ""))
+    # GCP e2-micro 등 소형 VM — 디스크·RAM 절약
+    backup_enabled: bool = field(default_factory=lambda: os.getenv("BACKUP_ENABLED", "true").lower() == "true")
+    backup_keep: int = field(default_factory=lambda: _int_env("BACKUP_KEEP", 5))
+    briefing_enabled: bool = field(default_factory=lambda: os.getenv("BRIEFING_ENABLED", "false").lower() == "true")
+    log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "WARNING").upper())
+    max_split_log: int = field(default_factory=lambda: _int_env("MAX_SPLIT_LOG", 30))
+    max_completed_cycles: int = field(default_factory=lambda: _int_env("MAX_COMPLETED_CYCLES", 50))
 
     @property
     def has_toss(self) -> bool:
@@ -39,6 +46,13 @@ def _parse_chat_ids() -> tuple:
     if not raw:
         return ()
     return tuple(int(x.strip()) for x in raw.split(",") if x.strip().lstrip("-").isdigit())
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
 
 
 def get_settings() -> Settings:

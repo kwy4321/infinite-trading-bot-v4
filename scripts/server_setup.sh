@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 서버 최초 1회: clone → venv → .env → systemd 등록
+# 서버 최초 1회: clone → venv → .env → systemd (GCP e2-micro 최적화)
 set -euo pipefail
 
 REPO_URL="${1:-}"
@@ -8,7 +8,7 @@ BRANCH="${3:-main}"
 
 usage() {
   echo "Usage: $0 <git-repo-url> [install-dir] [branch]"
-  echo "Example: $0 git@github.com:you/infinite-trading-bot-v4.git"
+  echo "Example: $0 https://github.com/kwy4321/infinite-trading-bot-v4.git"
   exit 1
 }
 
@@ -32,8 +32,8 @@ if [[ ! -d .venv ]]; then
 fi
 # shellcheck disable=SC1091
 source .venv/bin/activate
-pip install -U pip -q
-pip install -r requirements.txt -q
+pip install --no-cache-dir -U pip -q
+pip install --no-cache-dir -r requirements.txt -q
 
 mkdir -p data/accounts/default data/backups
 
@@ -45,6 +45,31 @@ if [[ ! -f .env ]]; then
   echo ""
 fi
 
+# journal 로그 용량 제한 (디스크 절약)
+if [[ ! -f /etc/systemd/journald.conf.d/bot-limit.conf ]]; then
+  sudo mkdir -p /etc/systemd/journald.conf.d
+  sudo tee /etc/systemd/journald.conf.d/bot-limit.conf >/dev/null <<'EOF'
+[Journal]
+SystemMaxUse=50M
+MaxRetentionSec=7day
+EOF
+  sudo systemctl restart systemd-journald || true
+fi
+
+# e2-micro 1GB RAM — swap 1G (없을 때만)
+if ! sudo swapon --show 2>/dev/null | grep -q '/swapfile'; then
+  if [[ ! -f /swapfile ]]; then
+    echo "Creating 1G swap (GCP free tier)..."
+    sudo fallocate -l 1G /swapfile 2>/dev/null || sudo dd if=/dev/zero of=/swapfile bs=1M count=1024 status=none
+    sudo chmod 600 /swapfile
+    sudo mkswap /swapfile
+  fi
+  sudo swapon /swapfile 2>/dev/null || true
+  if ! grep -q '/swapfile' /etc/fstab 2>/dev/null; then
+    echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab >/dev/null
+  fi
+fi
+
 SERVICE="/etc/systemd/system/infinite-trading-bot.service"
 sed -e "s|@INSTALL_DIR@|$INSTALL_DIR|g" -e "s|@RUN_USER@|$RUN_USER|g" \
   deploy/infinite-trading-bot.service.tpl | sudo tee "$SERVICE" >/dev/null
@@ -53,8 +78,9 @@ sudo systemctl daemon-reload
 sudo systemctl enable infinite-trading-bot
 
 echo ""
-echo "Setup complete."
+echo "Setup complete (lightweight mode for GCP free tier)."
 echo "  Install dir : $INSTALL_DIR"
+echo "  venv        : $INSTALL_DIR/.venv"
 echo "  Service     : infinite-trading-bot"
 echo ""
 echo "Next:"

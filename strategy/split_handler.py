@@ -40,6 +40,14 @@ def apply_split(state: dict, ratio: float, note: str = "") -> dict:
         "note": note or (f"{ratio:g}:1" if ratio >= 1 else f"1:{round(1/ratio):g}"),
     }
     state.setdefault("split_log", []).append(entry)
+    limit = 30
+    try:
+        from config.settings import get_settings
+        limit = get_settings().max_split_log
+    except Exception:
+        pass
+    if len(state["split_log"]) > limit:
+        state["split_log"] = state["split_log"][-limit:]
     return state
 
 

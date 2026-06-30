@@ -13,7 +13,7 @@ def format_plan_block(app: App, symbol: str, premium: int) -> str:
     price = resolve_price(app, symbol)
     plan = app.strategy.get_plan(
         symbol, price, st["avg_price"], st["qty"], st["T"],
-        premium, st["cash"], st["split_count"], st["principal"],
+        premium, st["principal"], st["split_count"], st.get("force_one", False),
     )
     strat = mode_label(plan["mode"])
 

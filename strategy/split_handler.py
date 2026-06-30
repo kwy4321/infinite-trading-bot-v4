@@ -58,5 +58,5 @@ def format_preview(symbol: str, preview: dict) -> str:
         f"📐 [{symbol}] {label} 미리보기\n\n"
         f"수량: {preview['old_qty']}주 → {preview['new_qty']}주\n"
         f"평단: ${preview['old_avg']:.4f} → ${preview['new_avg']:.4f}\n"
-        f"T값·예수금: 변경 없음"
+        f"T값·원금: 변경 없음"
     )

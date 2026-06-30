@@ -35,7 +35,7 @@ class JobExecutor:
         price = api["current_price"] or self.app.broker.get_price(symbol)
         plan = self.app.strategy.get_plan(
             symbol, price, st["avg_price"], st["qty"], st["T"],
-            premium, st["cash"], st["split_count"], st["principal"],
+            premium, st["principal"], st["split_count"], st.get("force_one", False),
         )
         filtered = filter_orders_for_phase(plan, phase)
         orders = filtered["buy_orders"] + filtered["sell_orders"]

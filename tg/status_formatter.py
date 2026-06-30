@@ -33,7 +33,9 @@ def format_status(app: App) -> str:
         app.cycles.ensure_current(sym, st["principal"])
         live = app.cycles.calc_unrealized_pnl(sym, st["qty"], st["avg_price"], price)
         strat = mode_label(
-            app.strategy.detect_mode(st["qty"], st["T"], st["split_count"]).value
+            app.strategy.resolve_mode(
+                st["qty"], st["T"], st["split_count"], st.get("force_one", False),
+            ).value
         )
 
         lines.append(f"📦 <b>{sym}</b>")
@@ -54,7 +56,7 @@ def format_status(app: App) -> str:
         else:
             lines.append("📊 보유  없음")
 
-        lines.append(f"💵 예수금  ${st['cash']:,.2f}")
+        lines.append(f"💰 원금  ${st['principal']:,.2f}")
         lines.append("")
 
     if dry:

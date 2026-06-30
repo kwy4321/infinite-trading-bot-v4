@@ -7,6 +7,7 @@ MODE_KO = {
     "NORMAL_EARLY": "🌅 전반전",
     "NORMAL_LATE": "🌇 후반전",
     "REVERSE": "🔄 리버스",
+    "FORCE_ONE": "⚡ 강제1회",
 }
 
 
@@ -47,7 +48,7 @@ def help_block() -> str:
 /plan — 📋 오늘 주문계획
 
 <b>⚙️ 설정</b>
-/setting — 💰 원금 · 예수금 · 분할
+/setting — 💰 원금 · 분할 · 큰수매수
 /split — 📐 액면분할
 /set_t — 🎯 T 값 조정
 

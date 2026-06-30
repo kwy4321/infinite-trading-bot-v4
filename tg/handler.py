@@ -55,15 +55,20 @@ class TelegramHandler:
 
     def _setting_text(self, symbol: str) -> str:
         st = self.app.state.load(symbol)
+        force = "🟢 ON" if st.get("force_one") else "⚪ OFF"
         return (
             f"⚙️ <b>설정</b>\n"
             f"{DIVIDER}\n"
             f"📦 종목  {symbol}\n\n"
-            f"💰 원금    ${st['principal']:,.0f}\n"
-            f"💵 예수금  ${st['cash']:,.2f}\n"
+            f"💰 원금  ${st['principal']:,.0f}\n"
             f"🍰 분할    {st['split_count']}\n"
-            f"📈 큰수매수  +{self.app.runtime.premium_default()}%"
+            f"📈 큰수매수  +{self.app.runtime.premium_default()}%\n"
+            f"⚡ 강제1회  {force}"
         )
+
+    def _setting_keyboard(self, symbol: str):
+        st = self.app.state.load(symbol)
+        return setting_keyboard(st.get("force_one", False))
 
     def _allowed(self, update: Update) -> bool:
         ids = self.app.settings.telegram_allowed_chat_ids
@@ -169,7 +174,7 @@ class TelegramHandler:
         symbol = self._symbol(context)
         await update.message.reply_text(
             self._setting_text(symbol),
-            reply_markup=setting_keyboard(),
+            reply_markup=self._setting_keyboard(symbol),
             parse_mode="HTML",
         )
 
@@ -304,7 +309,18 @@ class TelegramHandler:
             sym = self._symbol(context)
             await query.edit_message_text(
                 self._setting_text(sym),
-                reply_markup=setting_keyboard(),
+                reply_markup=self._setting_keyboard(sym),
+                parse_mode="HTML",
+            )
+            return
+
+        if data == "toggle_force_one":
+            sym = self._symbol(context)
+            st = self.app.state.load(sym)
+            self.app.state.set_force_one(sym, not st.get("force_one", False))
+            await query.edit_message_text(
+                self._setting_text(sym),
+                reply_markup=self._setting_keyboard(sym),
                 parse_mode="HTML",
             )
             return
@@ -320,14 +336,10 @@ class TelegramHandler:
             await query.edit_message_text(f"✅ 기본 종목 → {sym}")
             return
 
-        if data in ("set_seed", "set_cash"):
+        if data == "set_seed":
             context.user_data["awaiting"] = data
             context.user_data["awaiting_symbol"] = self._symbol(context)
-            if data == "set_seed":
-                prompt = "💰 원금(회차 수익률 기준금)을 달러로 입력하세요."
-            else:
-                prompt = "💵 예수금(매수 가능 현금)을 달러로 입력하세요."
-            await query.edit_message_text(prompt)
+            await query.edit_message_text("💰 원금(무한매수 기준금)을 달러로 입력하세요.")
             return
 
         if data == "set_split":
@@ -379,7 +391,7 @@ class TelegramHandler:
             apply_split(st, ratio, note="텔레그램 수동")
             self.app.state.save(ticker, st)
             await query.edit_message_text(
-                f"✅ [{ticker}] 반영\n{st['qty']}주 @ ${st['avg_price']:.4f}\nT·예수금 유지"
+                f"✅ [{ticker}] 반영\n{st['qty']}주 @ ${st['avg_price']:.4f}\nT·원금 유지"
             )
             return
 
@@ -423,7 +435,7 @@ class TelegramHandler:
         pos = self._pos(symbol)
         plan = self.app.strategy.get_plan(
             symbol, pos["current_price"], st["avg_price"], st["qty"], st["T"],
-            premium, st["cash"], st["split_count"], st["principal"],
+            premium, st["principal"], st["split_count"], st.get("force_one", False),
         )
         orders = plan.get("buy_orders", []) + plan.get("sell_orders", [])
         ok = 0
@@ -490,10 +502,6 @@ class TelegramHandler:
                 self.app.state.set_principal(symbol, val)
                 context.user_data["awaiting"] = None
                 return await update.message.reply_text(f"✅ [{symbol}] 원금 ${val:,.0f}")
-            if awaiting == "set_cash":
-                self.app.state.set_cash(symbol, val)
-                context.user_data["awaiting"] = None
-                return await update.message.reply_text(f"✅ [{symbol}] 예수금 ${val:,.2f}")
             if awaiting == "set_split":
                 self.app.state.set_split_count(symbol, int(val))
             context.user_data["awaiting"] = None

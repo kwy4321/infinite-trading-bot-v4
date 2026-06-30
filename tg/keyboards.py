@@ -31,13 +31,14 @@ def symbol_picker(prefix: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([row])
 
 
-def setting_keyboard() -> InlineKeyboardMarkup:
+def setting_keyboard(force_one: bool = False) -> InlineKeyboardMarkup:
+    force_label = "⚡ 강제1회 OFF" if force_one else "⚡ 강제1회 ON"
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔀 종목", callback_data="set_ticker")],
         [InlineKeyboardButton("💰 원금", callback_data="set_seed")],
-        [InlineKeyboardButton("💵 예수금", callback_data="set_cash")],
         [InlineKeyboardButton("🍰 분할", callback_data="set_split")],
         [InlineKeyboardButton("📈 큰수매수", callback_data="set_premium")],
+        [InlineKeyboardButton(force_label, callback_data="toggle_force_one")],
     ])
 
 

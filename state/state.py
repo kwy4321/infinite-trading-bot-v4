@@ -14,7 +14,7 @@ DEFAULT_STATE = {
     "mode": "normal",
     "split_count": 40,
     "principal": 10000.0,
-    "cash": 10000.0,
+    "force_one": False,
     "T": 0.0,
     "qty": 0,
     "avg_price": 0.0,
@@ -49,6 +49,9 @@ class StateStore:
             data = load_json(path, self._default(symbol))
             merged = self._default(symbol)
             merged.update(data)
+            if "principal" not in data and "cash" in data:
+                merged["principal"] = float(data["cash"])
+            merged.pop("cash", None)
             merged["symbol"] = symbol
             return merged
 
@@ -63,9 +66,9 @@ class StateStore:
         path = self.paths.symbol_state(symbol)
         save_json(path, state, compact=True)
 
-    def set_cash(self, symbol: str, amount: float) -> dict:
+    def set_principal(self, symbol: str, amount: float) -> dict:
         state = self.load(symbol)
-        state["cash"] = max(0.0, float(amount))
+        state["principal"] = max(0.0, float(amount))
         self.save(symbol, state)
         return state
 
@@ -81,9 +84,9 @@ class StateStore:
         self.save(symbol, state)
         return state
 
-    def set_principal(self, symbol: str, amount: float) -> dict:
+    def set_force_one(self, symbol: str, enabled: bool) -> dict:
         state = self.load(symbol)
-        state["principal"] = max(0.0, float(amount))
+        state["force_one"] = bool(enabled)
         self.save(symbol, state)
         return state
 

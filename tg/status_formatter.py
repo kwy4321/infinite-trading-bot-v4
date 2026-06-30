@@ -1,48 +1,59 @@
-"""Format /status — bot health + account cash only (/dashboard handles symbols)."""
+"""Format /status — strategy progress (진행상황)."""
 
 from app import App
 
 
-def _mode_label(app: App) -> str:
-    if app.runtime.is_paused():
-        return "⏸️ 정지"
-    if app.settings.dry_run or not app.settings.has_toss:
-        return "▶️ 가동 · DRY_RUN"
-    return "▶️ 가동 · LIVE"
-
-
 def format_status(app: App) -> str:
     market_open = app.broker.is_us_market_open_today()
-    market = "🟢 개장" if market_open else "🔴 휴장"
-    auto = "⏸️ 자동 실행 멈춤" if app.runtime.is_paused() else "⏰ 자동 실행 중"
-    symbols = ", ".join(app.runtime.active_symbols())
+    market = "개장" if market_open else "휴장"
+    paused = app.runtime.is_paused()
     dry = app.settings.dry_run or not app.settings.has_toss
+    mode = "DRY_RUN" if dry else "LIVE"
+    bot = "⏸️ 정지" if paused else "▶️ 가동"
+    auto = "⏸️ 멈춤" if paused else "⏰ 실행 중"
 
     lines = [
-        f"🤖 <b>상태</b>",
-        f"{_mode_label(app)} | 미증시 {market} | {auto}",
-        f"종목: {symbols}",
+        "📈 <b>진행상황</b>",
         "",
-        "💵 <b>계좌</b>",
+        f"봇 {bot} · {mode} · 자동 {auto}",
+        f"미증시 {market}",
+        "",
     ]
 
-    if not dry:
-        buying = app.broker.get_buying_power("USD")
-        raw = buying.get("cashBuyingPower") if buying else None
-        if raw is not None:
-            lines.append(f"달러 예수금: <b>${float(raw):,.2f}</b>")
+    for sym in app.state.list_symbols():
+        st = app.state.load(sym)
+        api = app.broker.get_holdings_item(sym)
+        price = api["current_price"] or app.broker.get_price(sym)
+        app.cycles.ensure_current(sym, st["principal"])
+        live = app.cycles.calc_unrealized_pnl(sym, st["qty"], st["avg_price"], price)
+
+        mode = app.strategy.detect_mode(st["qty"], st["T"], st["split_count"]).value
+
+        lines.append(f"<b>{sym}</b>")
+        lines.append(f"  T {st['T']:.2f} · {st['split_count']}분할 · {mode}")
+
+        if live:
+            sign = "+" if live["cycle_pnl_usd"] >= 0 else ""
+            lines.append(
+                f"  회차 {live['cycle_no']} · {sign}${live['cycle_pnl_usd']:,.0f} ({sign}{live['cycle_pnl_pct']:.1f}%)"
+            )
         else:
-            lines.append("달러 예수금: 조회 실패")
+            lines.append("  회차 —")
 
-    manual = " | ".join(
-        f"{sym} ${app.state.load(sym)['cash']:,.2f}"
-        for sym in app.state.list_symbols()
-    )
-    lines.append(f"전략 예수금: {manual}")
+        if st["qty"] > 0:
+            pct = ""
+            if st["avg_price"] > 0 and price > 0:
+                p = (price - st["avg_price"]) / st["avg_price"] * 100
+                pct = f" ({p:+.1f}%)"
+            price_txt = f"${price:.2f}" if price > 0 else "—"
+            lines.append(f"  {st['qty']}주 @ ${st['avg_price']:.2f} · 현재 {price_txt}{pct}")
+        else:
+            lines.append("  무포지션")
 
-    if dry:
-        lines.append("<i>LIVE 전환 시 달러 예수금 API 조회</i>")
-    else:
-        lines.append("<i>종목별 T·보유 → /dashboard</i>")
+        lines.append(f"  전략 예수금 ${st['cash']:,.2f}")
+        lines.append("")
+
+    if lines and lines[-1] == "":
+        lines.pop()
 
     return "\n".join(lines)

@@ -60,8 +60,20 @@ def main() -> int:
         cache_path.unlink()
         print("[1/5] 기존 token_cache.json 삭제")
 
+    print(f"client_id: {_token_hint(client_id)} (len={len(client_id)})")
+    print()
+
     auth = TossAuth(client_id, client_secret, cache_path, limiter)
-    t1 = auth.get_token()
+    try:
+        t1 = auth.get_token()
+    except Exception as exc:
+        print(f"[1/5] FAIL — 토큰 발급: {exc}")
+        print()
+        print("확인:")
+        print("  1) VM .env 의 TOSS_CLIENT_ID / TOSS_CLIENT_SECRET (PC .env 와 별개)")
+        print("  2) 따옴표·공백 없이 한 줄 (예: TOSS_CLIENT_ID=tsck_live_...)")
+        print("  3) 토스 Open API 콘솔에서 키 재발급·앱 활성 상태")
+        return 1
     cached = _read_cache(cache_path)
     if not cached or "expires_at" not in cached:
         print("[1/5] FAIL — cache 파일 생성 안 됨")

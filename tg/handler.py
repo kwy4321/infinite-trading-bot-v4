@@ -14,6 +14,8 @@ from strategy.split_handler import apply_split, calc_adjustment, format_preview,
 from config.settings import SYMBOLS
 from tg.help_text import HELP_MESSAGE
 from tg.balance_formatter import format_balance
+from tg.plan_formatter import format_plans
+from tg.records_formatter import format_graduation_history, format_profit_summary
 from tg.dashboard_formatter import format_dashboard
 from tg.status_formatter import format_status
 from tg.keyboards import (
@@ -73,10 +75,11 @@ class TelegramHandler:
         market = "🟢 개장" if open_today else "🔴 휴장"
         paused = self.app.runtime.is_paused()
         dry = self.app.settings.dry_run or not self.app.settings.has_toss
-        api = "🧪 DRY_RUN" if dry else "🟢 Toss API"
+        api = "DRY_RUN" if dry else "LIVE"
+        bot = "⏸️ 정지" if paused else "▶️ 가동"
         header = (
-            f"봇: {'⏸️ 정지' if paused else '▶️ 가동'} | API: {api}\n"
-            f"미증시: {market} | 종목: TQQQ + SOXL\n\n"
+            f"🖥️ <b>라오어 무한매수 4.0</b>\n\n"
+            f"{bot} · {api} · 미증시 {market}\n\n"
         )
         await update.message.reply_text(header + HELP_MESSAGE, parse_mode="HTML")
 
@@ -116,17 +119,7 @@ class TelegramHandler:
         return list(self.app.runtime.active_symbols())
 
     def _render_plans(self, symbols: list[str], premium: int) -> str:
-        today = datetime.datetime.now(self.kst).strftime("%Y-%m-%d")
-        blocks = [f"🎯 <b>오늘 주문 계획</b> ({today}) | 할증 +{premium}%"]
-        for symbol in symbols:
-            st = self.app.state.load(symbol)
-            pos = self._pos(symbol)
-            plan = self.app.strategy.get_plan(
-                symbol, pos["current_price"], st["avg_price"], st["qty"], st["T"],
-                premium, st["cash"], st["split_count"], st["principal"],
-            )
-            blocks.append(self._format_plan(symbol, st, plan, premium))
-        return "\n\n".join(blocks)
+        return format_plans(self.app, symbols, premium)
 
     async def cmd_plan(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
@@ -202,7 +195,7 @@ class TelegramHandler:
                 symbol = token
             elif token.isdigit() and len(token) == 4:
                 year = int(token)
-        msg = self.app.cycles.format_monthly_report(year, symbol)
+        msg = format_profit_summary(self.app, year, symbol)
         await update.message.reply_text(msg, parse_mode="HTML")
 
     async def cmd_run(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -238,17 +231,10 @@ class TelegramHandler:
             return await self._deny(update)
         parts = update.message.text.split()
         symbol = parts[1].upper() if len(parts) > 1 else self._symbol(context)
-        sym_data = self.app.cycles.get_symbol_data(symbol)
-        completed = sym_data.get("completed", [])
-        if not completed:
-            return await update.message.reply_text("완료된 회차가 없습니다.")
-        lines = [f"📜 <b>[{symbol}] 졸업 명예의 전당</b>\n"]
-        for c in reversed(completed[-20:]):
-            sign = "+" if c["profit_usd"] >= 0 else ""
-            lines.append(
-                f"#{c['cycle_no']} {c['ended_at']} {sign}${c['profit_usd']:,.2f} ({sign}{c['profit_pct']:.2f}%)"
-            )
-        await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+        await update.message.reply_text(
+            format_graduation_history(self.app, symbol),
+            parse_mode="HTML",
+        )
 
     async def cmd_set_t(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
@@ -394,20 +380,6 @@ class TelegramHandler:
             symbol = data.split(":")[1]
             await self._send_cycles(query.message, symbol)
             return
-
-    def _format_plan(self, symbol: str, st: dict, plan: dict, premium: int) -> str:
-        msg = (
-            f"<b>[{symbol}]</b> T={st['T']:.4f} ({st['split_count']}분할)\n"
-            f"모드 {plan['mode']} | 1회 ${plan['one_buy_amount']:,.2f} | 예수금 ${st['cash']:,.2f}\n"
-            "────────────────\n"
-        )
-        orders = plan.get("buy_orders", []) + plan.get("sell_orders", [])
-        if not orders:
-            msg += "주문 없음"
-        for o in orders:
-            icon = "🔹" if o["side"] == "BUY" else "🔸"
-            msg += f"{icon} {o['desc']} → ${o['price']:.2f} x{o['qty']}\n"
-        return msg
 
     async def _send_cycles(self, target, symbol: str):
         if symbol == "ALL":

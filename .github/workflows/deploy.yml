@@ -15,7 +15,18 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          command_timeout: 10m
+          script_stop: true
           script: |
             set -euo pipefail
-            cd "${{ secrets.DEPLOY_PATH }}"
+            DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
+            DEPLOY_PATH="${DEPLOY_PATH/#\~/$HOME}"
+            echo "Deploy path: $DEPLOY_PATH"
+            if [[ ! -d "$DEPLOY_PATH" ]]; then
+              echo "ERROR: directory not found: $DEPLOY_PATH"
+              echo "Set GitHub Secret DEPLOY_PATH=/home/ubuntu/infinite-trading-bot-v4"
+              exit 1
+            fi
+            cd "$DEPLOY_PATH"
             bash scripts/deploy.sh

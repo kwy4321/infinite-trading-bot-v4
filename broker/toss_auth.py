@@ -60,9 +60,14 @@ class TossAuth:
                 "client_id": self.client_id,
                 "client_secret": self.client_secret,
             },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
             timeout=15,
         )
-        res.raise_for_status()
+        if not res.ok:
+            raise requests.HTTPError(
+                f"Toss token failed ({res.status_code}): {res.text[:500]}",
+                response=res,
+            )
         body = res.json()
         token = body["access_token"]
         expires_in = int(body.get("expires_in", 3600))

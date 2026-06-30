@@ -25,6 +25,20 @@ def pnl_line(usd: float, pct: float) -> str:
     return f"{icon} {sign}${usd:,.0f}  ({sign}{pct:.1f}%)"
 
 
+MARKET_STATUS_KO = {
+    "regular": "🟢 장중",
+    "premarket": "🟡 프리마켓",
+    "afterhours": "🟡 애프터장",
+    "day": "🟡 주간거래",
+    "off_hours": "⏸️ 장외",
+    "closed": "🔴 휴장",
+}
+
+
+def market_status_label(status: str) -> str:
+    return MARKET_STATUS_KO.get(status, "⏸️ 장외")
+
+
 def help_block() -> str:
     return """\
 <b>📊 현황</b>

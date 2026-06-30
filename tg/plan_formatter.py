@@ -48,7 +48,7 @@ def format_plans(app: App, symbols: list[str], premium: int) -> str:
     today = datetime.datetime.now(kst).strftime("%Y-%m-%d")
     blocks = [
         section("오늘 주문계획", "📋"),
-        f"📅 {today}  │  ➕ 할증 {premium}%",
+        f"📅 {today}  │  📈 큰수매수 +{premium}%",
         "",
     ]
     for i, symbol in enumerate(symbols):

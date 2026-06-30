@@ -12,7 +12,7 @@ from app import App
 from jobs.executor import JobExecutor
 from strategy.split_handler import apply_split, calc_adjustment, format_preview, parse_ratio
 from config.settings import SYMBOLS
-from tg.ui import DIVIDER, help_block
+from tg.ui import DIVIDER, help_block, market_status_label
 from tg.balance_formatter import format_balance
 from tg.plan_formatter import format_plans
 from tg.records_formatter import format_graduation_history, format_profit_summary
@@ -20,6 +20,7 @@ from tg.dashboard_formatter import format_dashboard
 from tg.status_formatter import format_status
 from tg.keyboards import (
     plan_action_keyboard,
+    premium_keyboard,
     run_job_keyboard,
     setting_keyboard,
     split_confirm_keyboard,
@@ -52,6 +53,18 @@ class TelegramHandler:
     def _symbol(self, context: ContextTypes.DEFAULT_TYPE) -> str:
         return context.user_data.get("symbol") or self.app.runtime.default_symbol()
 
+    def _setting_text(self, symbol: str) -> str:
+        st = self.app.state.load(symbol)
+        return (
+            f"⚙️ <b>설정</b>\n"
+            f"{DIVIDER}\n"
+            f"📦 종목  {symbol}\n\n"
+            f"💰 원금    ${st['principal']:,.0f}\n"
+            f"💵 예수금  ${st['cash']:,.2f}\n"
+            f"🍰 분할    {st['split_count']}\n"
+            f"📈 큰수매수  +{self.app.runtime.premium_default()}%"
+        )
+
     def _allowed(self, update: Update) -> bool:
         ids = self.app.settings.telegram_allowed_chat_ids
         if not ids:
@@ -71,8 +84,10 @@ class TelegramHandler:
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
             return await self._deny(update)
-        open_today = self.app.broker.is_us_market_open_today()
-        market = "🟢 개장" if open_today else "🔴 휴장"
+        try:
+            market = market_status_label(self.app.broker.get_us_market_status())
+        except Exception:
+            market = market_status_label("off_hours")
         paused = self.app.runtime.is_paused()
         dry = self.app.settings.dry_run or not self.app.settings.has_toss
         run_mode = "🧪 DRY" if dry else "💹 LIVE"
@@ -141,7 +156,7 @@ class TelegramHandler:
             msg = self._render_plans(symbols, premium)
             await update.message.reply_text(
                 msg,
-                reply_markup=plan_action_keyboard(symbols, premium),
+                reply_markup=plan_action_keyboard(symbols),
                 parse_mode="HTML",
             )
         except Exception as e:
@@ -152,17 +167,11 @@ class TelegramHandler:
         if not self._allowed(update):
             return await self._deny(update)
         symbol = self._symbol(context)
-        st = self.app.state.load(symbol)
-        msg = (
-            f"⚙️ <b>설정</b>\n"
-            f"{DIVIDER}\n"
-            f"📦 종목  {symbol}\n\n"
-            f"💰 원금    ${st['principal']:,.0f}\n"
-            f"💵 예수금  ${st['cash']:,.2f}\n"
-            f"🍰 분할    {st['split_count']}\n"
-            f"➕ 할증    +{self.app.runtime.premium_default()}%"
+        await update.message.reply_text(
+            self._setting_text(symbol),
+            reply_markup=setting_keyboard(),
+            parse_mode="HTML",
         )
-        await update.message.reply_text(msg, reply_markup=setting_keyboard(), parse_mode="HTML")
 
     async def cmd_split(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
@@ -275,21 +284,29 @@ class TelegramHandler:
         await query.answer()
         data = query.data
 
-        if data.startswith("PLAN:"):
-            premium = int(data.split(":")[1])
-            symbols = context.user_data.get("plan_symbols", self.app.runtime.active_symbols())
-            msg = self._render_plans(symbols, premium)
+        if data.startswith("EXEC:"):
+            symbol = data.split(":")[1]
+            premium = self.app.runtime.premium_default()
+            await self._execute_manual(query.message.chat_id, symbol, premium, context)
+            await query.edit_message_reply_markup(reply_markup=None)
+            return
+
+        if data == "set_premium":
             await query.edit_message_text(
-                msg,
-                reply_markup=plan_action_keyboard(symbols, premium),
-                parse_mode="HTML",
+                "📈 큰수매수 할증 (현재가 대비):",
+                reply_markup=premium_keyboard(),
             )
             return
 
-        if data.startswith("EXEC:"):
-            _, symbol, premium_str = data.split(":")
-            await self._execute_manual(query.message.chat_id, symbol, int(premium_str), context)
-            await query.edit_message_reply_markup(reply_markup=None)
+        if data.startswith("PREMIUM:"):
+            pct = int(data.split(":")[1])
+            self.app.runtime.set_premium_default(pct)
+            sym = self._symbol(context)
+            await query.edit_message_text(
+                self._setting_text(sym),
+                reply_markup=setting_keyboard(),
+                parse_mode="HTML",
+            )
             return
 
         if data == "set_ticker":

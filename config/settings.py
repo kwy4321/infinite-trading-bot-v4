@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data" / "accounts" / "default"
 SYMBOLS = ("TQQQ", "SOXL")
 SPLIT_OPTIONS = (20, 30, 40, 50, 60)
+PREMIUM_OPTIONS = (5, 10, 15, 20)
 
 
 @dataclass

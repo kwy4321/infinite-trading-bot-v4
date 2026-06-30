@@ -27,7 +27,9 @@ class JobExecutor:
             return []
         return self.app.runtime.active_symbols()
 
-    async def run_for_symbol(self, symbol: str, phase: JobPhase, premium: int = 10) -> str:
+    async def run_for_symbol(self, symbol: str, phase: JobPhase, premium: int | None = None) -> str:
+        if premium is None:
+            premium = self.app.runtime.premium_default()
         st = self.app.state.load(symbol)
         api = self.app.broker.get_holdings_item(symbol)
         price = api["current_price"] or self.app.broker.get_price(symbol)
@@ -77,7 +79,9 @@ class JobExecutor:
             await self._notify(grad_msg, html=True)
         return msg
 
-    async def run_phase(self, phase: JobPhase, premium: int = 10) -> None:
+    async def run_phase(self, phase: JobPhase, premium: int | None = None) -> None:
+        if premium is None:
+            premium = self.app.runtime.premium_default()
         if not self.app.broker.is_us_market_open_today() and phase != JobPhase.JOB4_REPORT:
             await self._notify("📅 오늘은 미국 휴장이라 자동 실행을 건너뛰었어요.")
             return
@@ -100,13 +104,13 @@ class JobExecutor:
         if path:
             await self._notify(f"📦 백업: {path.name}")
 
-    async def run_job1(self, premium: int = 10, **_):
+    async def run_job1(self, premium: int | None = None, **_):
         await self.run_phase(JobPhase.JOB3_LOC_CLOSE, premium)
 
     async def run_job2(self, **_):
         await self._notify("job2는 사용하지 않아요. 장 마감 LOC는 /job3 입니다.")
 
-    async def run_job3(self, premium: int = 10, **_):
+    async def run_job3(self, premium: int | None = None, **_):
         await self.run_phase(JobPhase.JOB3_LOC_CLOSE, premium)
 
     async def run_job4(self, **_):
@@ -115,7 +119,9 @@ class JobExecutor:
         now = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
         await self._notify(f"📊 오늘 마무리 완료 ({now})")
 
-    async def force_job(self, name: str, premium: int = 10) -> None:
+    async def force_job(self, name: str, premium: int | None = None) -> None:
+        if premium is None:
+            premium = self.app.runtime.premium_default()
         mapping = {
             "job1": lambda **kw: self.run_job1(premium=premium),
             "job2": self.run_job2,

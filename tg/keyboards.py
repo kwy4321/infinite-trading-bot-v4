@@ -2,28 +2,28 @@
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from config.settings import SPLIT_OPTIONS, SYMBOLS
+from config.settings import PREMIUM_OPTIONS, SPLIT_OPTIONS, SYMBOLS
 
 
-def plan_premium_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("5%", callback_data="PLAN:5"),
-         InlineKeyboardButton("10%", callback_data="PLAN:10")],
-        [InlineKeyboardButton("15%", callback_data="PLAN:15"),
-         InlineKeyboardButton("20%", callback_data="PLAN:20")],
-    ])
-
-
-def plan_action_keyboard(symbols: list[str], premium: int) -> InlineKeyboardMarkup:
+def premium_keyboard() -> InlineKeyboardMarkup:
     rows = []
+    row = []
+    for n in PREMIUM_OPTIONS:
+        row.append(InlineKeyboardButton(f"+{n}%", callback_data=f"PREMIUM:{n}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return InlineKeyboardMarkup(rows)
+
+
+def plan_action_keyboard(symbols: list[str]) -> InlineKeyboardMarkup:
     exec_row = [
-        InlineKeyboardButton(f"🚀 {sym}", callback_data=f"EXEC:{sym}:{premium}")
+        InlineKeyboardButton(f"🚀 {sym}", callback_data=f"EXEC:{sym}")
         for sym in symbols
     ]
-    if exec_row:
-        rows.append(exec_row)
-    rows.extend(plan_premium_keyboard().inline_keyboard)
-    return InlineKeyboardMarkup(rows)
+    return InlineKeyboardMarkup([exec_row] if exec_row else [])
 
 
 def symbol_picker(prefix: str) -> InlineKeyboardMarkup:
@@ -37,6 +37,7 @@ def setting_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("💰 원금", callback_data="set_seed")],
         [InlineKeyboardButton("💵 예수금", callback_data="set_cash")],
         [InlineKeyboardButton("🍰 분할", callback_data="set_split")],
+        [InlineKeyboardButton("📈 큰수매수", callback_data="set_premium")],
     ])
 
 

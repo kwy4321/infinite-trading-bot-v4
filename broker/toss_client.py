@@ -1,8 +1,10 @@
 """Toss Open API HTTP client."""
 
+import datetime
 import logging
 import time
 import uuid
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -154,6 +156,59 @@ class TossClient:
         }
         self._request("POST", "/api/v1/orders", "ORDER", account=True, json=body)
         return True
+
+    def _parse_session_time(self, raw: str) -> datetime.time:
+        parts = raw.split(":")
+        return datetime.time(int(parts[0]), int(parts[1]), int(parts[2]) if len(parts) > 2 else 0)
+
+    def _in_session(self, now_kst: datetime.datetime, session: dict | None) -> bool:
+        if not session:
+            return False
+        start = self._parse_session_time(session["startTime"])
+        end = self._parse_session_time(session["endTime"])
+        now_t = now_kst.time()
+        if start <= end:
+            return start <= now_t <= end
+        return now_t >= start or now_t <= end
+
+    def _market_status_from_calendar(self, day: dict) -> str:
+        if not day.get("regularMarket"):
+            return "closed"
+        now_kst = datetime.datetime.now(ZoneInfo("Asia/Seoul"))
+        checks = (
+            ("day", day.get("dayMarket")),
+            ("premarket", day.get("preMarket")),
+            ("regular", day.get("regularMarket")),
+            ("afterhours", day.get("afterMarket")),
+        )
+        for status, session in checks:
+            if self._in_session(now_kst, session):
+                return status
+        return "off_hours"
+
+    def _market_status_fallback(self) -> str:
+        now_ny = datetime.datetime.now(ZoneInfo("America/New_York"))
+        if now_ny.weekday() >= 5:
+            return "closed"
+        t = now_ny.time()
+        if datetime.time(9, 30) <= t < datetime.time(16, 0):
+            return "regular"
+        if datetime.time(4, 0) <= t < datetime.time(9, 30):
+            return "premarket"
+        if datetime.time(16, 0) <= t < datetime.time(20, 0):
+            return "afterhours"
+        return "off_hours"
+
+    def get_us_market_status(self) -> str:
+        """Return US market phase: regular, premarket, afterhours, day, off_hours, closed."""
+        if self.dry_run:
+            return self._market_status_fallback()
+        try:
+            data = self._request("GET", "/api/v1/market-calendar/US", "MARKET_INFO")
+            result = data.get("result", data)
+            return self._market_status_from_calendar(result.get("today", {}))
+        except Exception:
+            return self._market_status_fallback()
 
     def is_us_market_open_today(self) -> bool:
         if self.dry_run:

@@ -2,18 +2,17 @@
 
 from app import App
 from tg.format_helpers import is_dry, resolve_price
-from tg.ui import DIVIDER, mode_label, pnl_line, section
+from tg.ui import DIVIDER, market_status_label, mode_label, pnl_line, section
 
 
 def format_status(app: App) -> str:
     try:
-        market_open = app.broker.is_us_market_open_today()
+        market = market_status_label(app.broker.get_us_market_status())
     except Exception:
-        market_open = True
+        market = market_status_label("off_hours")
 
     paused = app.runtime.is_paused()
     dry = is_dry(app)
-    market = "🟢 개장" if market_open else "🔴 휴장"
     run_mode = "🧪 DRY" if dry else "💹 LIVE"
     bot = "⏸️ 정지" if paused else "🤖 가동"
     auto = "⏸️ 멈춤" if paused else "⏰ 실행 중"
@@ -27,7 +26,7 @@ def format_status(app: App) -> str:
         "",
     ]
 
-    symbols = list(app.runtime.active_symbols()) or list(app.state.list_symbols())
+    symbols = [app.runtime.default_symbol()]
     for sym in symbols:
         st = app.state.load(sym)
         price = resolve_price(app, sym)

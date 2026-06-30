@@ -3,7 +3,7 @@
 from broker.toss_client import _money
 from app import App
 from config.settings import SYMBOLS
-from tg.ui import section
+from tg.ui import empty, row, section, symbol_card, usd
 
 
 def format_balance(app: App) -> str:
@@ -12,7 +12,7 @@ def format_balance(app: App) -> str:
 
     buying = broker.get_buying_power("USD")
     cash = float(buying.get("cashBuyingPower", 0) or 0) if buying else 0.0
-    lines.append(f"💵 예수금  <b>${cash:,.2f}</b>")
+    lines.append(row("💵", "예수금", usd(cash)))
     lines.append("")
 
     overview = broker.get_holdings_overview() or {}
@@ -25,7 +25,7 @@ def format_balance(app: App) -> str:
             lines.append(_holding_row(item))
             lines.append("")
     else:
-        lines.append("📭 보유 종목 없음")
+        lines.append(empty("보유 종목 없음"))
 
     if lines and lines[-1] == "":
         lines.pop()
@@ -46,8 +46,8 @@ def _holding_row(item: dict) -> str:
     if mkt == 0 and qty and last:
         mkt = qty * last
 
-    label = sym if name.upper() == sym else f"{sym}  {name}"
+    label = sym if name.upper() == sym else f"{sym} · {name}"
     return (
-        f"📦 <b>{label}</b>\n"
-        f"📊 {qty:g}주  │  평단 ${avg:.2f}  │  💰 ${mkt:,.2f}"
+        f"{symbol_card(label)}\n"
+        f"   📊 {qty:g}주  │  평단 {usd(avg)}  │  💰 {usd(mkt)}"
     )

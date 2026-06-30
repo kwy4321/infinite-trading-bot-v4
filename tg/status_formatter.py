@@ -2,7 +2,21 @@
 
 from app import App
 from tg.format_helpers import is_dry, resolve_price
-from tg.ui import DIVIDER, market_status_label, mode_label, pnl_line, section
+from tg.ui import (
+    DIVIDER,
+    badge_auto,
+    badge_bot,
+    badge_live,
+    code,
+    dim,
+    market_status_label,
+    mode_label,
+    pnl_line,
+    row,
+    section,
+    symbol_card,
+    usd,
+)
 
 
 def format_status(app: App) -> str:
@@ -13,16 +27,13 @@ def format_status(app: App) -> str:
 
     paused = app.runtime.is_paused()
     dry = is_dry(app)
-    run_mode = "🧪 DRY" if dry else "💹 LIVE"
-    bot = "⏸️ 정지" if paused else "🤖 가동"
-    auto = "⏸️ 멈춤" if paused else "⏰ 실행 중"
 
     lines = [
         section("진행상황", "📈"),
-        f"🤖 봇      {bot}",
-        f"⚙️ 모드    {run_mode}",
-        f"⏰ 자동    {auto}",
-        f"🇺🇸 시장   {market}",
+        row("🤖", "봇", badge_bot(paused)),
+        row("⚙️", "모드", badge_live(dry)),
+        row("⏰", "자동", badge_auto(paused)),
+        row("🇺🇸", "시장", market),
         "",
     ]
 
@@ -38,32 +49,37 @@ def format_status(app: App) -> str:
             ).value
         )
 
-        lines.append(f"📦 <b>{sym}</b>")
-        lines.append(f"🎯 T {st['T']:.2f}  │  {st['split_count']}분할  │  {strat}")
+        lines.append(symbol_card(sym))
+        lines.append(
+            f"   🎯 {dim('T')} {code(f'{st['T']:.2f}')}  "
+            f"│  {dim('분할')} {code(str(st['split_count']))}  "
+            f"│  {strat}"
+        )
 
         if live:
-            lines.append(f"🔢 회차 {live['cycle_no']}  │  {pnl_line(live['cycle_pnl_usd'], live['cycle_pnl_pct'])}")
+            lines.append(
+                f"   🔢 {dim('회차')} {code(str(live['cycle_no']))}  "
+                f"│  {pnl_line(live['cycle_pnl_usd'], live['cycle_pnl_pct'])}"
+            )
         else:
-            lines.append("🔢 회차 —  │  💤 시작 전")
+            lines.append(f"   🔢 {dim('회차')} —  │  💤 {dim('시작 전')}")
 
         if st["qty"] > 0:
-            pct = ""
+            pct_txt = ""
             if st["avg_price"] > 0 and price > 0:
                 p = (price - st["avg_price"]) / st["avg_price"] * 100
-                pct = f"  ({p:+.1f}%)"
-            price_txt = f"${price:.2f}" if price > 0 else "—"
-            lines.append(f"📊 {st['qty']}주 @ ${st['avg_price']:.2f}  →  {price_txt}{pct}")
+                pct_txt = f"  {dim(f'({p:+.1f}%)')}"
+            price_txt = usd(price) if price > 0 else "—"
+            lines.append(
+                f"   📊 {code(str(st['qty']) + '주')} @ {usd(st['avg_price'])}  "
+                f"→  {price_txt}{pct_txt}"
+            )
         else:
-            lines.append("📊 보유  없음")
+            lines.append(f"   📊 {dim('보유')}  {dim('없음')}")
 
-        lines.append(f"💰 원금  ${st['principal']:,.2f}")
-        lines.append("")
+        lines.append(f"   💰 {dim('원금')}  {usd(st['principal'])}")
 
     if dry:
-        lines.append(f"<i>{DIVIDER}</i>")
-        lines.append("<i>🧪 DRY 모드 · 전략 기록 기준</i>")
-
-    if lines and lines[-1] == "":
-        lines.pop()
+        lines.extend(["", DIVIDER, dim("🧪 DRY 모드 · 전략 기록 기준")])
 
     return "\n".join(lines)

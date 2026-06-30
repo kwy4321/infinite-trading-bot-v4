@@ -284,23 +284,23 @@ class CycleTracker:
         usd = completed["profit_usd"]
         sign = "+" if usd >= 0 else ""
         trades = completed.get("buy_count", 0) + completed.get("sell_count", 0)
-        divider = "────────────────"
-
         headline, tagline = self._GRADUATION_VARIANTS[-1][1][0]
         for threshold, variants in self._GRADUATION_VARIANTS:
             if pct >= threshold:
                 headline, tagline = random.choice(variants)
                 break
 
+        divider = "━━━━━━━━━━━━━━━━"
         note = completed.get("note", "")
-        note_line = f"\n📝 {note}" if note else ""
+        note_line = f"\n📝 <i>{note}</i>" if note else ""
+        dot = "🟢" if usd >= 0 else "🔴"
 
         return (
-            f"{headline}\n"
+            f"<b>{headline}</b>\n"
             f"{divider}\n\n"
-            f"📦 <b>{symbol}</b>  ·  🔢 {completed['cycle_no']}회차\n"
-            f"📅 {completed['started_at']} → {completed['ended_at']}\n"
-            f"🔁 {trades}번 매매\n"
-            f"💰 {sign}${usd:,.2f}  ({sign}{pct:.2f}%){note_line}\n\n"
+            f"◆ <b>{symbol}</b>  ·  🔢 <code>{completed['cycle_no']}회차</code>\n"
+            f"📅 <i>{completed['started_at']} → {completed['ended_at']}</i>\n"
+            f"🔁 <i>{trades}번 매매</i>\n"
+            f"{dot} <code>{sign}${usd:,.2f}</code>  <i>({sign}{pct:.2f}%)</i>{note_line}\n\n"
             f"<i>{tagline}</i>"
         )

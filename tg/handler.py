@@ -12,7 +12,19 @@ from app import App
 from jobs.executor import JobExecutor
 from strategy.split_handler import apply_split, calc_adjustment, format_preview, parse_ratio
 from config.settings import SYMBOLS
-from tg.ui import DIVIDER, help_block, market_status_label
+from tg.ui import (
+    DIVIDER,
+    badge_bot,
+    badge_live,
+    badge_on,
+    code,
+    help_block,
+    market_status_label,
+    row,
+    section,
+    symbol_card,
+    usd,
+)
 from tg.balance_formatter import format_balance
 from tg.plan_formatter import format_plans
 from tg.records_formatter import format_graduation_history, format_profit_summary
@@ -55,15 +67,14 @@ class TelegramHandler:
 
     def _setting_text(self, symbol: str) -> str:
         st = self.app.state.load(symbol)
-        force = "🟢 ON" if st.get("force_one") else "⚪ OFF"
         return (
-            f"⚙️ <b>설정</b>\n"
-            f"{DIVIDER}\n"
-            f"📦 종목  {symbol}\n\n"
-            f"💰 원금  ${st['principal']:,.0f}\n"
-            f"🍰 분할    {st['split_count']}\n"
-            f"📈 큰수매수  +{self.app.runtime.premium_default()}%\n"
-            f"⚡ 강제1회  {force}"
+            f"{section('설정', '⚙️')}\n"
+            f"{row('📦', '종목', symbol_card(symbol))}\n"
+            f"\n"
+            f"{row('💰', '원금', usd(st['principal'], decimals=0))}\n"
+            f"{row('🍰', '분할', code(str(st['split_count'])))}\n"
+            f"{row('📈', '큰수매수', code(f'+{self.app.runtime.premium_default()}%'))}\n"
+            f"{row('⚡', '강제1회', badge_on(st.get('force_one', False)))}"
         )
 
     def _setting_keyboard(self, symbol: str):
@@ -95,12 +106,10 @@ class TelegramHandler:
             market = market_status_label("off_hours")
         paused = self.app.runtime.is_paused()
         dry = self.app.settings.dry_run or not self.app.settings.has_toss
-        run_mode = "🧪 DRY" if dry else "💹 LIVE"
-        bot = "⏸️ 정지" if paused else "🤖 가동"
         header = (
             f"🖥️ <b>라오어 무한매수 4.0</b>\n"
             f"{DIVIDER}\n"
-            f"{bot}  │  {run_mode}  │  {market}\n\n"
+            f"{badge_bot(paused)}  │  {badge_live(dry)}  │  {market}\n\n"
         )
         await update.message.reply_text(header + help_block(), parse_mode="HTML")
 

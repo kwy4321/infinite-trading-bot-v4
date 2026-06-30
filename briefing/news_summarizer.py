@@ -1,8 +1,8 @@
 """아침 뉴스 요약.
 
-1) 무료 Google News RSS 로 나스닥·반도체 관련 헤드라인을 수집한다(키 불필요).
-2) SUMMARIZER_API_KEY 가 있으면 LLM(OpenAI/Gemini)으로 "왜 움직였는지"를
-   한국어로 요약한다. 키가 없으면 헤드라인 목록만 보여준다.
+1) 무료 Google News RSS(한국어) 로 나스닥·반도체 관련 헤드라인을 수집한다(키 불필요).
+2) SUMMARIZER_API_KEY 가 있으면 LLM(Gemini/OpenAI)으로 나스닥·반도체 각각
+   "왜 움직였는지"를 한국어로 요약한다. 키가 없으면 헤드라인 목록만 보여준다.
 
 requests 는 블로킹이라 asyncio.to_thread 로 감싼다.
 """
@@ -22,18 +22,30 @@ logger = logging.getLogger(__name__)
 _RSS = "https://news.google.com/rss/search"
 _HEADERS = {"User-Agent": "Mozilla/5.0 (infinite-trading-bot briefing)"}
 _QUERIES = (
-    "nasdaq stock market today",
-    "semiconductor stocks nvidia chip",
+    "나스닥 지수",
+    "반도체 엔비디아 주가",
 )
 _MAX_PER_QUERY = 4
 _MAX_TOTAL = 8
 
+# 마커로 두 파트를 구분 → 각각 별도 카드로 렌더링
+_MARK_NASDAQ = "[나스닥]"
+_MARK_SEMI = "[반도체]"
 _PROMPT = (
-    "다음은 오늘 미국 증시·반도체 관련 뉴스 헤드라인입니다. "
-    "나스닥 종합지수와 필라델피아 반도체지수(SOX)가 왜 그렇게 움직였는지 "
-    "핵심 이유를 한국어로 3~4개의 짧은 불릿(각 한 문장)으로 요약하세요. "
-    "헤드라인에 없는 내용은 추측하지 말고, 불릿마다 앞에 '· ' 를 붙이세요.\n\n"
+    "다음은 오늘 미국 증시·반도체 관련 한국어 뉴스 헤드라인입니다.\n"
+    "나스닥 종합지수와 필라델피아 반도체지수(SOX)가 오늘 왜 그렇게 움직였는지 "
+    "한국어로 분석하세요.\n"
+    "반드시 아래 형식을 그대로 지키고, 다른 머리말이나 설명은 넣지 마세요:\n"
+    f"{_MARK_NASDAQ}\n· (한 문장)\n· (한 문장)\n· (한 문장)\n"
+    f"{_MARK_SEMI}\n· (한 문장)\n· (한 문장)\n· (한 문장)\n"
+    "각 지수마다 구체적인 불릿 3개를 쓰고, 금리·경제지표·실적·개별 종목 등 "
+    "원인을 분명히 밝히세요. 헤드라인에 없는 사실은 추측하지 마세요.\n\n"
+    "헤드라인:\n"
 )
+
+
+def _has_korean(text: str) -> bool:
+    return any("\uac00" <= ch <= "\ud7a3" for ch in text)
 
 
 def _fetch_headlines() -> list[dict]:
@@ -43,7 +55,7 @@ def _fetch_headlines() -> list[dict]:
         try:
             resp = requests.get(
                 _RSS,
-                params={"q": query, "hl": "en-US", "gl": "US", "ceid": "US:en"},
+                params={"q": query, "hl": "ko", "gl": "KR", "ceid": "KR:ko"},
                 headers=_HEADERS,
                 timeout=10,
             )
@@ -56,6 +68,9 @@ def _fetch_headlines() -> list[dict]:
         for item in root.iter("item"):
             title = (item.findtext("title") or "").strip()
             if not title or title in seen:
+                continue
+            # 영어 헤드라인 제외 — 한글이 포함된 기사만
+            if not _has_korean(title):
                 continue
             seen.add(title)
             src_el = item.find("source")
@@ -116,6 +131,20 @@ def _clean_summary(text: str) -> str:
     return html.escape(text.strip())
 
 
+def _split_sections(text: str) -> tuple[str, str] | None:
+    """AI 응답을 [나스닥]/[반도체] 두 파트로 분리. 실패 시 None."""
+    cleaned = text.replace("**", "").replace("`", "")
+    n_idx = cleaned.find(_MARK_NASDAQ)
+    s_idx = cleaned.find(_MARK_SEMI)
+    if n_idx == -1 or s_idx == -1 or s_idx <= n_idx:
+        return None
+    nasdaq = cleaned[n_idx + len(_MARK_NASDAQ):s_idx].strip()
+    semi = cleaned[s_idx + len(_MARK_SEMI):].strip()
+    if not nasdaq or not semi:
+        return None
+    return nasdaq, semi
+
+
 def _format_headlines(items: list[dict]) -> str:
     if not items:
         return f"{section('주요 뉴스', '📰')}\n{quote('· 뉴스를 불러오지 못했습니다')}"
@@ -144,9 +173,19 @@ def _build_sync(settings: Settings) -> str:
         else:
             summary = _summarize_openai(api_key, settings.summarizer_model, prompt)
         if summary:
-            parts.append(
-                f"{section('왜 움직였나 · AI 요약', '💡')}\n{quote(_clean_summary(summary))}"
-            )
+            split = _split_sections(summary)
+            if split:
+                nasdaq, semi = split
+                parts.append(
+                    f"{section('나스닥 종합 · AI 분석', '📊')}\n{quote(html.escape(nasdaq))}"
+                )
+                parts.append(
+                    f"{section('필라델피아 반도체 · AI 분석', '🔌')}\n{quote(html.escape(semi))}"
+                )
+            else:
+                parts.append(
+                    f"{section('왜 움직였나 · AI 요약', '💡')}\n{quote(_clean_summary(summary))}"
+                )
 
     parts.append(_format_headlines(items))
     return "\n\n".join(parts)

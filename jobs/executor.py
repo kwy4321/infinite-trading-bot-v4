@@ -6,7 +6,11 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from app import App
-from strategy.order_planner import JobPhase, filter_orders_for_phase
+from strategy.order_planner import (
+    JobPhase,
+    filter_orders_for_phase,
+    gate_orders_by_close_price,
+)
 
 logger = logging.getLogger(__name__)
 KST = ZoneInfo("Asia/Seoul")
@@ -38,7 +42,11 @@ class JobExecutor:
             premium, st["principal"], st["split_count"], st.get("force_one", False),
         )
         filtered = filter_orders_for_phase(plan, phase)
-        orders = filtered["buy_orders"] + filtered["sell_orders"]
+
+        # 장 마감 30초 전 종가 근사가(price)로 LOC 흉내 — 조건 맞는 주문만 통과
+        is_dry = self.app.settings.dry_run or not self.app.settings.has_toss
+        gated = gate_orders_by_close_price(filtered, 0.0 if is_dry else price)
+        orders = gated["buy_orders"] + gated["sell_orders"]
         if not orders:
             return f"[{symbol}] {phase.value}: 주문 없음"
 
@@ -46,13 +54,16 @@ class JobExecutor:
         grad_msg = None
         for order in orders:
             side = order["side"]
+            # 시장가로 체결되므로 기록은 종가 근사가(price)로 남긴다
+            if not is_dry and price > 0:
+                order = {**order, "price": round(price, 2)}
             for attempt in range(self._retry):
                 try:
-                    if self.app.settings.dry_run or not self.app.settings.has_toss:
+                    if is_dry:
                         success = True
                     else:
-                        success = self.app.broker.place_limit_order(
-                            symbol, side, order["price"], order["qty"]
+                        success = self.app.broker.place_market_order(
+                            symbol, side, order["qty"]
                         )
                     if success:
                         ok += 1

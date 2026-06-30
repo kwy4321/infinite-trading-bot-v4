@@ -168,6 +168,22 @@ class TossClient:
         self._request("POST", "/api/v1/orders", "ORDER", account=True, json=body)
         return True
 
+    def place_market_order(self, symbol: str, side: str, qty: int) -> bool:
+        """시장가 주문 — 장 마감 30초 전 LOC 흉내(보장 체결, 종가 근사가로 체결)."""
+        if self.dry_run:
+            logger.info("[DRY_RUN] MARKET %s %s %s", side, qty, symbol)
+            return True
+        body = {
+            "symbol": symbol.upper(),
+            "side": side.upper(),
+            "orderType": "MARKET",
+            "timeInForce": "DAY",
+            "quantity": qty,
+            "clientOrderId": str(uuid.uuid4()),
+        }
+        self._request("POST", "/api/v1/orders", "ORDER", account=True, json=body)
+        return True
+
     def _parse_session_time(self, raw: str) -> datetime.time:
         parts = raw.split(":")
         return datetime.time(int(parts[0]), int(parts[1]), int(parts[2]) if len(parts) > 2 else 0)

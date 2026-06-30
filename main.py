@@ -8,6 +8,7 @@ from telegram.ext import ApplicationBuilder, CallbackQueryHandler, CommandHandle
 
 from app import App
 from jobs.executor import JobExecutor
+from strategy.order_planner import CLOSE_LEAD_SECONDS
 from tg.handler import TelegramHandler
 from tg.sender import TelegramSender
 
@@ -21,21 +22,24 @@ def _is_us_summer() -> bool:
     return ny.dst() != datetime.timedelta(0)
 
 
+def _lead_time(close_hour: int, close_minute: int) -> datetime.time:
+    """미국 장 마감(KST 기준 시각)에서 CLOSE_LEAD_SECONDS 만큼 앞당긴 시각."""
+    base = datetime.datetime(2000, 1, 1, close_hour, close_minute, 0)
+    early = base - datetime.timedelta(seconds=CLOSE_LEAD_SECONDS)
+    return early.time().replace(tzinfo=KST)
+
+
 def _register_jobs(app_tg, executor: JobExecutor):
     """Register KST daily jobs — LOC close aligned to US 16:00 ET."""
 
     async def job3_summer(ctx):
-        now = datetime.datetime.now(KST)
-        if now.hour != 5 or now.minute != 0:
-            return
+        # 서머타임(EDT): 미국 16:00 = KST 05:00 → 30초 전 발사
         if not _is_us_summer():
             return
         await executor.run_job3()
 
     async def job3_winter(ctx):
-        now = datetime.datetime.now(KST)
-        if now.hour != 6 or now.minute != 0:
-            return
+        # 윈터타임(EST): 미국 16:00 = KST 06:00 → 30초 전 발사
         if _is_us_summer():
             return
         await executor.run_job3()
@@ -52,8 +56,8 @@ def _register_jobs(app_tg, executor: JobExecutor):
     jq = app_tg.job_queue
     if executor.app.settings.briefing_enabled:
         jq.run_daily(briefing, time=datetime.time(7, 0, tzinfo=KST), chat_id=chat_id, name="briefing")
-    jq.run_daily(job3_summer, time=datetime.time(5, 0, tzinfo=KST), chat_id=chat_id, name="job3_summer")
-    jq.run_daily(job3_winter, time=datetime.time(6, 0, tzinfo=KST), chat_id=chat_id, name="job3_winter")
+    jq.run_daily(job3_summer, time=_lead_time(5, 0), chat_id=chat_id, name="job3_summer")
+    jq.run_daily(job3_winter, time=_lead_time(6, 0), chat_id=chat_id, name="job3_winter")
     jq.run_daily(job4, time=datetime.time(6, 15, tzinfo=KST), chat_id=chat_id, name="job4")
 
 

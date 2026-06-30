@@ -169,8 +169,9 @@ def format_records_dashboard(app: App) -> str:
     if acct["unreal_pct"] is not None:
         unreal_rows.append(pnl_line_precise(acct["unreal_usd"], acct["unreal_pct"]))
     else:
-        sign = "+" if acct["unreal_usd"] >= 0 else ""
-        unreal_rows.append(f"{pnl_dot(acct['unreal_usd'] >= 0)} {code(f'{sign}${acct['unreal_usd']:,.2f}')}")
+        u = acct["unreal_usd"]
+        sign = "+" if u >= 0 else ""
+        unreal_rows.append(f"{pnl_dot(u >= 0)} {code(f'{sign}${u:,.2f}')}")
     if fx_rate > 0:
         sign = "+" if unreal_krw >= 0 else ""
         unreal_rows.append(row("🇰🇷", "KRW", code(f"{sign}₩{unreal_krw:,.0f}")))
@@ -197,11 +198,13 @@ def format_records_dashboard(app: App) -> str:
         sym_rows = []
         for sym in detail:
             info = per_sym[sym]
-            sign = "+" if info["realized_usd"] >= 0 else ""
+            r = info["realized_usd"]
+            sign = "+" if r >= 0 else ""
             tag = dim(" · 진행 중") if info.get("active") else ""
+            cycles_txt = "(" + str(info["completed_cycles"]) + "회)"
             sym_rows.append(
-                f"{symbol_card(sym)}　{code(f'{sign}${info['realized_usd']:,.0f}')}"
-                f"　{dim('(' + str(info['completed_cycles']) + '회)')}{tag}"
+                f"{symbol_card(sym)}　{code(f'{sign}${r:,.0f}')}"
+                f"　{dim(cycles_txt)}{tag}"
             )
         lines.extend(["", subsection("📦 종목별 실현"), quote(*sym_rows)])
 

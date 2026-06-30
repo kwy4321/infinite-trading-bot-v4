@@ -48,9 +48,10 @@ def format_status(app: App) -> str:
             ).value
         )
 
+        t_str = f"{st['T']:.2f}"
         card = [
             symbol_card(sym),
-            f"🎯 {dim('T')} {code(f'{st['T']:.2f}')}　│　"
+            f"🎯 {dim('T')} {code(t_str)}　│　"
             f"{dim('분할')} {code(str(st['split_count']))}　│　{strat}",
         ]
 

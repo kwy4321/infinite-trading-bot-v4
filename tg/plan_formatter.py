@@ -28,10 +28,11 @@ def format_plan_block(app: App, symbol: str, premium: int) -> str:
         premium, st["principal"], st["split_count"], st.get("force_one", False),
     )
     strat = mode_label(plan["mode"])
+    t_str = f"{st['T']:.2f}"
 
     card = [
         symbol_card(symbol),
-        f"🎯 {dim('T')} {code(f'{st['T']:.2f}')}　│　"
+        f"🎯 {dim('T')} {code(t_str)}　│　"
         f"{dim('분할')} {code(str(st['split_count']))}　│　{strat}",
         f"💵 {dim('1회 매수')}　{usd(plan['one_buy_amount'])}",
     ]

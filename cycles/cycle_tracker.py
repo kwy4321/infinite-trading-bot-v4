@@ -290,17 +290,19 @@ class CycleTracker:
                 headline, tagline = random.choice(variants)
                 break
 
-        divider = "━━━━━━━━━━━━━━━━"
         note = completed.get("note", "")
         note_line = f"\n📝 <i>{note}</i>" if note else ""
         dot = "🟢" if usd >= 0 else "🔴"
 
-        return (
-            f"<b>{headline}</b>\n"
-            f"{divider}\n\n"
-            f"◆ <b>{symbol}</b>  ·  🔢 <code>{completed['cycle_no']}회차</code>\n"
+        card = (
+            f"◆ <b>{symbol}</b>　·　🔢 <code>{completed['cycle_no']}회차</code>\n"
             f"📅 <i>{completed['started_at']} → {completed['ended_at']}</i>\n"
             f"🔁 <i>{trades}번 매매</i>\n"
-            f"{dot} <code>{sign}${usd:,.2f}</code>  <i>({sign}{pct:.2f}%)</i>{note_line}\n\n"
+            f"{dot} <code>{sign}${usd:,.2f}</code>　<i>({sign}{pct:.2f}%)</i>{note_line}"
+        )
+
+        return (
+            f"<b>{headline}</b>\n"
+            f"<blockquote>{card}</blockquote>\n"
             f"<i>{tagline}</i>"
         )

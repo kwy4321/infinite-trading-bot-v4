@@ -20,6 +20,7 @@ from tg.ui import (
     code,
     help_block,
     market_status_label,
+    quote,
     row,
     section,
     symbol_card,
@@ -69,12 +70,13 @@ class TelegramHandler:
         st = self.app.state.load(symbol)
         return (
             f"{section('설정', '⚙️')}\n"
-            f"{row('📦', '종목', symbol_card(symbol))}\n"
-            f"\n"
-            f"{row('💰', '원금', usd(st['principal'], decimals=0))}\n"
-            f"{row('🍰', '분할', code(str(st['split_count'])))}\n"
-            f"{row('📈', '큰수매수', code(f'+{self.app.runtime.premium_default()}%'))}\n"
-            f"{row('⚡', '강제1회', badge_on(st.get('force_one', False)))}"
+            + quote(
+                row("📦", "종목", symbol_card(symbol)),
+                row("💰", "원금", usd(st["principal"], decimals=0)),
+                row("🍰", "분할", code(str(st["split_count"]))),
+                row("📈", "큰수매수", code(f"+{self.app.runtime.premium_default()}%")),
+                row("⚡", "강제1회", badge_on(st.get("force_one", False))),
+            )
         )
 
     def _setting_keyboard(self, symbol: str):
@@ -108,8 +110,7 @@ class TelegramHandler:
         dry = self.app.settings.dry_run or not self.app.settings.has_toss
         header = (
             f"🖥️ <b>라오어 무한매수 4.0</b>\n"
-            f"{DIVIDER}\n"
-            f"{badge_bot(paused)}  │  {badge_live(dry)}  │  {market}\n\n"
+            f"{quote(f'{badge_bot(paused)}   ·   {badge_live(dry)}   ·   {market}')}\n"
         )
         await update.message.reply_text(header + help_block(), parse_mode="HTML")
 

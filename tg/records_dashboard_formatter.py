@@ -12,6 +12,7 @@ from tg.ui import (
     pnl_dot,
     pnl_line,
     pnl_line_precise,
+    quote,
     row,
     section,
     subsection,
@@ -111,7 +112,7 @@ def _active_cycle_lines(app: App) -> list[str]:
         if not live:
             continue
         lines.append(
-            f"   {symbol_card(sym)}  #{code(str(live['cycle_no']))}  "
+            f"{symbol_card(sym)}　#{code(str(live['cycle_no']))}　"
             f"{pnl_line(live['cycle_pnl_usd'], live['cycle_pnl_pct'])}"
         )
     return lines
@@ -123,20 +124,19 @@ def _realized_block(stats: dict, cash_usd: float) -> list[str]:
     active = stats["active_cycles"]
     pct_val = round(realized / cash_usd * 100, 2) if cash_usd > 0 else None
 
-    lines = [
-        subsection("🏦 무한매수 실현 수익"),
-        row("📊", "회차", f"{dim('완료')} {code(str(completed))}  │  {dim('진행')} {code(str(active))}"),
+    rows = [
+        row("📊", "회차", f"{dim('완료')} {code(str(completed))}　│　{dim('진행')} {code(str(active))}"),
     ]
     if pct_val is not None:
-        lines.append(f"   {pnl_line_precise(realized, pct_val)}")
+        rows.append(pnl_line_precise(realized, pct_val))
         sign = "+" if pct_val >= 0 else ""
-        lines.append(f"   {dim('예수금 대비')}  {code(f'{sign}{pct_val:.2f}%')}")
+        rows.append(f"{dim('예수금 대비')}　{code(f'{sign}{pct_val:.2f}%')}")
     else:
         sign = "+" if realized >= 0 else ""
-        lines.append(f"   {pnl_dot(realized >= 0)} {code(f'{sign}${realized:,.2f}')}")
+        rows.append(f"{pnl_dot(realized >= 0)} {code(f'{sign}${realized:,.2f}')}")
         if cash_usd <= 0:
-            lines.append(f"   {dim('예수금 대비')}  —")
-    return lines
+            rows.append(f"{dim('예수금 대비')}　—")
+    return [subsection("🏦 무한매수 실현 수익"), quote(*rows)]
 
 
 def format_records_dashboard(app: App) -> str:
@@ -145,10 +145,11 @@ def format_records_dashboard(app: App) -> str:
 
     if is_dry(app):
         lines.append(dim("🧪 DRY 모드 — Toss API 미조회"))
-        lines.extend(["", *_realized_block(stats, 0.0)])
+        lines.append("")
+        lines.extend(_realized_block(stats, 0.0))
         active = _active_cycle_lines(app)
         if active:
-            lines.extend(["", subsection("진행 회차 (평가)"), *active])
+            lines.extend(["", subsection("⏳ 진행 회차 (평가)"), quote(*active)])
         return "\n".join(lines)
 
     acct = _fetch_account(app)
@@ -158,39 +159,34 @@ def format_records_dashboard(app: App) -> str:
     if total_krw <= 0 and fx_rate > 0:
         total_krw = acct["total_usd"] * fx_rate
 
-    lines.extend([
-        subsection("💰 총 자산"),
-        f"   {row('🇺🇸', 'USD', usd(acct['total_usd']))}",
-    ])
+    asset_rows = [row("🇺🇸", "USD", usd(acct["total_usd"]))]
     if total_krw > 0:
-        lines.append(f"   {row('🇰🇷', 'KRW', krw(total_krw))}")
-    lines.extend([
-        "",
-        row("💵", "예수금", usd(acct["cash_usd"])),
-        "",
-        subsection("📈 미실현 손익"),
-    ])
+        asset_rows.append(row("🇰🇷", "KRW", krw(total_krw)))
+    asset_rows.append(row("💵", "예수금", usd(acct["cash_usd"])))
+    lines.extend([subsection("💰 총 자산"), quote(*asset_rows), ""])
 
+    unreal_rows = []
     if acct["unreal_pct"] is not None:
-        lines.append(f"   {pnl_line_precise(acct['unreal_usd'], acct['unreal_pct'])}")
+        unreal_rows.append(pnl_line_precise(acct["unreal_usd"], acct["unreal_pct"]))
     else:
         sign = "+" if acct["unreal_usd"] >= 0 else ""
-        lines.append(f"   {pnl_dot(acct['unreal_usd'] >= 0)} {code(f'{sign}${acct['unreal_usd']:,.2f}')}")
-
+        unreal_rows.append(f"{pnl_dot(acct['unreal_usd'] >= 0)} {code(f'{sign}${acct['unreal_usd']:,.2f}')}")
     if fx_rate > 0:
         sign = "+" if unreal_krw >= 0 else ""
-        lines.append(f"   {row('🇰🇷', 'KRW', code(f'{sign}₩{unreal_krw:,.0f}'))}")
-        lines.append("")
+        unreal_rows.append(row("🇰🇷", "KRW", code(f"{sign}₩{unreal_krw:,.0f}")))
+    lines.extend([subsection("📈 미실현 손익"), quote(*unreal_rows)])
+
+    if fx_rate > 0:
         lines.append(row("💱", "환율", code(f"$1 = ₩{fx_rate:,.2f}")))
     else:
-        lines.extend(["", row("💱", "환율", dim("조회 실패"))])
+        lines.append(row("💱", "환율", dim("조회 실패")))
 
     lines.extend(["", DIVIDER, ""])
     lines.extend(_realized_block(stats, acct["cash_usd"]))
 
     active = _active_cycle_lines(app)
     if active:
-        lines.extend(["", subsection("진행 회차 (평가)"), *active])
+        lines.extend(["", subsection("⏳ 진행 회차 (평가)"), quote(*active)])
 
     per_sym = stats.get("per_symbol", {})
     detail = [
@@ -198,14 +194,15 @@ def format_records_dashboard(app: App) -> str:
         if per_sym.get(sym, {}).get("realized_usd", 0) != 0 or per_sym.get(sym, {}).get("active")
     ]
     if detail:
-        lines.extend(["", subsection("종목별 실현")])
+        sym_rows = []
         for sym in detail:
             info = per_sym[sym]
             sign = "+" if info["realized_usd"] >= 0 else ""
             tag = dim(" · 진행 중") if info.get("active") else ""
-            lines.append(
-                f"   {symbol_card(sym)}  {code(f'{sign}${info['realized_usd']:,.0f}')}"
-                f"  {dim('(' + str(info['completed_cycles']) + '회)')}{tag}"
+            sym_rows.append(
+                f"{symbol_card(sym)}　{code(f'{sign}${info['realized_usd']:,.0f}')}"
+                f"　{dim('(' + str(info['completed_cycles']) + '회)')}{tag}"
             )
+        lines.extend(["", subsection("📦 종목별 실현"), quote(*sym_rows)])
 
     return "\n".join(lines)

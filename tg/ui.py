@@ -1,7 +1,20 @@
 """Shared Telegram UI styling — HTML-safe (Telegram parse_mode=HTML)."""
 
 DIVIDER = "━━━━━━━━━━━━━━━━"
+THIN = "┈┈┈┈┈┈┈┈┈┈┈┈"
 DOTS = "· · · · · · · · · · · ·"
+
+
+def quote(*lines) -> str:
+    """카드처럼 보이는 인용 박스 (왼쪽 세로 바)."""
+    body = "\n".join(str(line) for line in lines if line is not None)
+    return f"<blockquote>{body}</blockquote>"
+
+
+def quote_exp(*lines) -> str:
+    """접을 수 있는 인용 박스 — 긴 목록(기록 등)에 사용."""
+    body = "\n".join(str(line) for line in lines if line is not None)
+    return f"<blockquote expandable>{body}</blockquote>"
 
 MODE_KO = {
     "ENTRY": "🌱 진입",
@@ -127,24 +140,30 @@ def month_bar(positive: bool) -> str:
 
 
 def help_block() -> str:
-    return f"""\
-{subsection("📊 현황")}
-{code("/status")}  📈 진행상황
-{code("/balance")}  💼 계좌현황
-{code("/plan")}  📋 오늘 주문계획
-
-{subsection("⚙️ 설정")}
-{code("/setting")}  💰 원금 · 분할 · 큰수매수
-{code("/split")}  📐 액면분할
-{code("/set_t")}  🎯 T 값 조정
-
-{subsection("📒 기록")}
-{code("/dashboard")}  📒 자산·손익 대시보드
-{code("/history")}  🎓 종료 기록
-{code("/monthly")}  📅 수익현황
-
-{subsection("🔧 운영")}
-{code("/pause")}  ⏸ 자동 실행 멈춤
-{code("/resume")}  ⏰ 자동 실행 재개
-{code("/run")}  ▶️ 수동 실행
-"""
+    groups = [
+        ("📊 현황", [
+            (f"{code('/status')}", "📈 진행상황"),
+            (f"{code('/balance')}", "💼 계좌현황"),
+            (f"{code('/plan')}", "📋 오늘 주문계획"),
+        ]),
+        ("⚙️ 설정", [
+            (f"{code('/setting')}", "💰 원금·분할·큰수매수"),
+            (f"{code('/split')}", "📐 액면분할"),
+            (f"{code('/set_t')}", "🎯 T 값 조정"),
+        ]),
+        ("📒 기록", [
+            (f"{code('/dashboard')}", "📒 자산·손익 대시보드"),
+            (f"{code('/history')}", "🎓 종료 기록"),
+            (f"{code('/monthly')}", "📅 수익현황"),
+        ]),
+        ("🔧 운영", [
+            (f"{code('/pause')}", "⏸ 자동 실행 멈춤"),
+            (f"{code('/resume')}", "⏰ 자동 실행 재개"),
+            (f"{code('/run')}", "▶️ 수동 실행"),
+        ]),
+    ]
+    blocks = []
+    for title, cmds in groups:
+        rows = [f"{cmd}　{dim(desc)}" for cmd, desc in cmds]
+        blocks.append(f"{subsection(title)}\n{quote(*rows)}")
+    return "\n".join(blocks)

@@ -55,8 +55,6 @@ def format_plan_block(app: App, symbol: str, premium: int) -> str:
 
 
 def format_plans(app: App, symbols: list[str], premium: int) -> str:
-    if not symbols:
-        symbols = list(app.runtime.active_symbols()) or list(app.state.list_symbols())
     kst = ZoneInfo("Asia/Seoul")
     today = datetime.datetime.now(kst).strftime("%Y-%m-%d")
     blocks = [
@@ -64,6 +62,9 @@ def format_plans(app: App, symbols: list[str], premium: int) -> str:
         row("📅", today, f"{dim('큰수매수')} {code(f'+{premium}%')}"),
         "",
     ]
+    if not symbols:
+        blocks.append(quote(empty("자동매매 종목이 없어요 · /setting → 자동매매 종목에서 켜기")))
+        return "\n".join(blocks)
     cards = [format_plan_block(app, symbol, premium) for symbol in symbols]
     blocks.append("\n\n".join(cards))
     return "\n".join(blocks)

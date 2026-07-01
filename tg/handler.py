@@ -32,6 +32,7 @@ from tg.records_formatter import format_graduation_history, format_profit_summar
 from tg.dashboard_formatter import format_dashboard
 from tg.status_formatter import format_status
 from tg.keyboards import (
+    active_symbols_keyboard,
     plan_action_keyboard,
     premium_keyboard,
     run_job_keyboard,
@@ -68,10 +69,13 @@ class TelegramHandler:
 
     def _setting_text(self, symbol: str) -> str:
         st = self.app.state.load(symbol)
+        active = self.app.runtime.active_symbols()
+        active_str = ", ".join(active) if active else "없음"
         return (
             f"{section('설정', '⚙️')}\n"
             + quote(
                 row("📦", "종목", symbol_card(symbol)),
+                row("📡", "자동매매", code(active_str)),
                 row("💰", "원금", usd(st["principal"], decimals=0)),
                 row("🍰", "분할", code(str(st["split_count"]))),
                 row("📈", "큰수매수", code(f"+{self.app.runtime.premium_default()}%")),
@@ -173,9 +177,10 @@ class TelegramHandler:
         context.user_data["plan_symbols"] = symbols
         try:
             msg = self._render_plans(symbols, premium)
+            markup = plan_action_keyboard(symbols) if symbols else None
             await update.message.reply_text(
                 msg,
-                reply_markup=plan_action_keyboard(symbols),
+                reply_markup=markup,
                 parse_mode="HTML",
             )
         except Exception as e:
@@ -348,6 +353,32 @@ class TelegramHandler:
             self.app.runtime.set_default_symbol(sym)
             context.user_data["symbol"] = sym
             await query.edit_message_text(f"✅ 기본 종목 → {sym}")
+            return
+
+        if data == "set_active":
+            active = self.app.runtime.active_symbols()
+            await query.edit_message_text(
+                "📡 <b>자동매매 종목</b>\n탭하여 켜기(🟢)/끄기(⚪). 켜진 종목만 주문계획·자동주문에 반영돼요.",
+                reply_markup=active_symbols_keyboard(active),
+                parse_mode="HTML",
+            )
+            return
+
+        if data.startswith("TOGGLE_ACTIVE:"):
+            sym = data.split(":")[1]
+            active = self.app.runtime.toggle_active_symbol(sym)
+            await query.edit_message_reply_markup(
+                reply_markup=active_symbols_keyboard(active)
+            )
+            return
+
+        if data == "back_setting":
+            sym = self._symbol(context)
+            await query.edit_message_text(
+                self._setting_text(sym),
+                reply_markup=self._setting_keyboard(sym),
+                parse_mode="HTML",
+            )
             return
 
         if data == "set_seed":

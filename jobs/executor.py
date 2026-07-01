@@ -93,14 +93,34 @@ class JobExecutor:
     async def run_phase(self, phase: JobPhase, premium: int | None = None) -> None:
         if premium is None:
             premium = self.app.runtime.premium_default()
-        if not self.app.broker.is_us_market_open_today() and phase != JobPhase.JOB4_REPORT:
+
+        if self.app.runtime.is_paused():
+            await self._notify("⏸️ 자동매매가 정지 상태예요. /resume 로 재개하세요.")
+            return
+
+        try:
+            market_open = self.app.broker.is_us_market_open_today()
+        except Exception as e:
+            logger.exception("market open check failed")
+            await self._notify(f"🚨 장 개장 확인 실패: {e}")
+            return
+        if not market_open and phase != JobPhase.JOB4_REPORT:
             await self._notify("📅 오늘은 미국 휴장이라 자동 실행을 건너뛰었어요.")
             return
+
+        symbols = self._active_symbols()
+        if not symbols:
+            await self._notify("⚠️ 자동매매 대상 종목이 없어요. /setting → 자동매매 종목에서 켜주세요.")
+            return
+
         lines = []
-        for sym in self._active_symbols():
-            lines.append(await self.run_for_symbol(sym, phase, premium))
-        if lines:
-            await self._notify("\n".join(lines))
+        for sym in symbols:
+            try:
+                lines.append(await self.run_for_symbol(sym, phase, premium))
+            except Exception as e:
+                logger.exception("run_for_symbol failed %s", sym)
+                lines.append(f"🚨 [{sym}] 실행 실패: {e}")
+        await self._notify("\n".join(lines))
 
     async def run_morning_briefing(self) -> None:
         from briefing.morning_briefing import build_briefing

@@ -51,6 +51,28 @@ class RuntimeSettings:
     def active_symbols(self) -> list:
         return self.load().get("active_symbols", list(SYMBOLS))
 
+    def is_active(self, symbol: str) -> bool:
+        return symbol.upper() in [s.upper() for s in self.active_symbols()]
+
+    def set_active_symbols(self, symbols: list) -> None:
+        data = self.load()
+        data["active_symbols"] = [s for s in SYMBOLS if s in {x.upper() for x in symbols}]
+        self.save(data)
+
+    def toggle_active_symbol(self, symbol: str) -> list:
+        """종목 자동매매 ON/OFF 토글. 갱신된 활성 종목 리스트를 반환."""
+        data = self.load()
+        active = {s.upper() for s in data.get("active_symbols", list(SYMBOLS))}
+        sym = symbol.upper()
+        if sym in active:
+            active.discard(sym)
+        else:
+            active.add(sym)
+        ordered = [s for s in SYMBOLS if s in active]
+        data["active_symbols"] = ordered
+        self.save(data)
+        return ordered
+
     def default_symbol(self) -> str:
         return self.load().get("default_symbol", "TQQQ")
 

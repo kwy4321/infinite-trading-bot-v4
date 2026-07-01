@@ -35,10 +35,27 @@ def setting_keyboard(force_one: bool = False) -> InlineKeyboardMarkup:
     force_label = "⚡ 강제1회 OFF" if force_one else "⚡ 강제1회 ON"
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔀 종목", callback_data="set_ticker")],
+        [InlineKeyboardButton("📡 자동매매 종목", callback_data="set_active")],
         [InlineKeyboardButton("💰 원금", callback_data="set_seed")],
         [InlineKeyboardButton("🍰 분할", callback_data="set_split")],
         [InlineKeyboardButton("📈 큰수매수", callback_data="set_premium")],
         [InlineKeyboardButton(force_label, callback_data="toggle_force_one")],
+    ])
+
+
+def active_symbols_keyboard(active: list[str]) -> InlineKeyboardMarkup:
+    """자동매매 대상 종목 ON/OFF 토글. 🟢=켜짐, ⚪=꺼짐."""
+    active_up = {s.upper() for s in active}
+    row = [
+        InlineKeyboardButton(
+            f"{'🟢' if s in active_up else '⚪'} {s}",
+            callback_data=f"TOGGLE_ACTIVE:{s}",
+        )
+        for s in SYMBOLS
+    ]
+    return InlineKeyboardMarkup([
+        row,
+        [InlineKeyboardButton("⬅️ 설정으로", callback_data="back_setting")],
     ])
 
 

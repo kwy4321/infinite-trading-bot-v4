@@ -127,6 +127,31 @@ class JobExecutor:
         text = await build_briefing(self.app)
         await self._notify(text, html=True)
 
+    async def run_market_open_plan(self) -> None:
+        """미국 장 시작 시각에 오늘의 주문계획을 자동 전송 (개장일·가동 상태에만)."""
+        if self.app.runtime.is_paused():
+            return
+        try:
+            if not self.app.broker.is_us_market_open_today():
+                return
+        except Exception:
+            logger.exception("market open check failed (plan broadcast)")
+            return
+        symbols = self._active_symbols()
+        if not symbols:
+            await self._notify("⚠️ 자동매매 대상 종목이 없어요. /setting → 자동매매 종목에서 켜주세요.")
+            return
+        from tg.plan_formatter import format_plans
+        premium = self.app.runtime.premium_default()
+        try:
+            text = format_plans(self.app, symbols, premium)
+        except Exception as e:
+            logger.exception("plan broadcast build failed")
+            await self._notify(f"🚨 주문계획 자동 전송 실패: {e}")
+            return
+        header = "🔔 <b>미국 장 시작</b> — 오늘의 주문계획이에요.\n\n"
+        await self._notify(header + text, html=True)
+
     async def run_backup(self) -> None:
         if not self.app.settings.backup_enabled:
             return

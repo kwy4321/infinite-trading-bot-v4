@@ -24,6 +24,7 @@ JOB_SCHEDULE_KST = {
     JobPhase.JOB3_LOC_CLOSE: {"summer": (5, 0), "winter": (6, 0)},
     JobPhase.JOB4_REPORT: {"summer": (6, 15), "winter": (6, 15)},
     "morning_briefing": {"summer": (7, 0), "winter": (7, 0)},
+    "market_open_plan": {"summer": (22, 30), "winter": (23, 30)},
 }
 
 

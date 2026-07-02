@@ -177,6 +177,9 @@ class InfiniteStrategyV40:
         )
         plan = {
             "mode": mode.value, "star_pct": round(star_pct, 4), "star_price": star_price,
+            "star_buy": star_buy, "take_profit_pct": take_profit_pct,
+            "current_price": round(current_price, 2) if current_price > 0 else 0.0,
+            "avg_price": round(avg_price, 4), "premium_pct": premium_pct,
             "one_buy_amount": round(one_buy, 2), "buy_orders": [], "sell_orders": [],
         }
 

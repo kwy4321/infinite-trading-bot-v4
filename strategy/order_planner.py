@@ -44,7 +44,7 @@ def gate_orders_by_close_price(filtered: dict, price: float) -> dict:
     각 주문은 자기 LOC 기준가(order["price"])를 들고 있다:
       · 평단가 매수  → 기준가 = 평단가
       · 별값 매수    → 기준가 = 별값(별% 적용가)
-      · 큰수/하단방어 → 기준가 = 현재가 ±%
+      · 큰수/하단방어 → 기준가 = 평단가 ±%
       · 쿼터 매도    → 기준가 = 별값
       · 익절 매도    → 기준가 = 평단 + 익절%
 

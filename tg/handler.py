@@ -404,7 +404,7 @@ class TelegramHandler:
 
         if data == "set_premium":
             await query.edit_message_text(
-                "📈 큰수매수 할증 (현재가 대비):",
+                "📈 큰수매수 할증 (평단가 대비, 첫 진입만 현재가):",
                 reply_markup=premium_keyboard(),
             )
             return

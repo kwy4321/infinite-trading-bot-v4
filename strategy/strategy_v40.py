@@ -59,6 +59,24 @@ class InfiniteStrategyV40:
             return 0.0
         return principal / denom
 
+    def calc_premium_buy_price(
+        self, avg_price: float, current_price: float, premium_pct: int,
+    ) -> float:
+        """큰수매수 LOC — 보유 중이면 평단×(1+%), 첫 진입만 현재가×(1+%)."""
+        base = avg_price if avg_price > 0 else current_price
+        if base <= 0:
+            return 0.0
+        return round(base * (1.0 + premium_pct / 100.0), 2)
+
+    def calc_defense_buy_price(
+        self, avg_price: float, current_price: float, drop_pct: int,
+    ) -> float:
+        """하단 방어 — 평단×(1−%). 평단 없으면 현재가 기준."""
+        base = avg_price if avg_price > 0 else current_price
+        if base <= 0:
+            return 0.0
+        return round(base * (1.0 - drop_pct / 100.0), 2)
+
     def get_take_profit_pct(self, ticker: str) -> float:
         return self.TAKE_PROFIT_PCT.get(ticker, 15.0)
 
@@ -116,12 +134,12 @@ class InfiniteStrategyV40:
         star_buy: float, premium_pct: int,
     ) -> float:
         if mode in (TradingMode.ENTRY, TradingMode.NORMAL_EARLY):
-            return round(current_price * (1.0 + premium_pct / 100.0), 2)
+            return self.calc_premium_buy_price(avg_price, current_price, premium_pct)
         if mode == TradingMode.NORMAL_LATE and star_buy > 0:
             return star_buy
         if mode == TradingMode.REVERSE:
             return self.calc_buy_trigger_price(star_buy) if star_buy > 0 else current_price
-        return round(current_price * (1.0 + premium_pct / 100.0), 2)
+        return self.calc_premium_buy_price(avg_price, current_price, premium_pct)
 
     def _append_sell_orders(
         self, plan, avg_price: float, qty: int,
@@ -190,7 +208,7 @@ class InfiniteStrategyV40:
             )
 
         if mode == TradingMode.ENTRY:
-            big = round(current_price * (1.0 + premium_pct / 100.0), 2)
+            big = self.calc_premium_buy_price(0.0, current_price, premium_pct)
             self._append_buy(plan, big, one_buy, "BUY_FULL", f"첫 진입 큰수(+{premium_pct}%)")
             return plan
 
@@ -211,14 +229,14 @@ class InfiniteStrategyV40:
             self._append_buy(plan, star_buy, half, "BUY_HALF", f"전반전 별지점 (${star_buy})")
             if avg_price > 0:
                 self._append_buy(plan, avg_price, half, "BUY_HALF", f"전반전 평단 (${avg_price:.2f})")
-            big = round(current_price * (1.0 + premium_pct / 100.0), 2)
+            big = self.calc_premium_buy_price(avg_price, current_price, premium_pct)
             self._append_buy(plan, big, one_buy, "BUY_FULL", f"큰수(+{premium_pct}%)")
         else:
             self._append_buy(plan, star_buy, one_buy, "BUY_FULL", f"후반전 별지점 (${star_buy})")
 
-        if current_price > 0 and one_buy > 0:
+        if avg_price > 0 and one_buy > 0:
             for drop in (10, 15, 20):
-                fp = round(current_price * (1.0 - drop / 100.0), 2)
+                fp = self.calc_defense_buy_price(avg_price, current_price, drop)
                 self._append_buy(plan, fp, one_buy * 0.5, "BUY_HALF", f"하단 방어(-{drop}%)")
 
         self._append_sell_orders(plan, avg_price, qty, star_price, take_profit_pct)

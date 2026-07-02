@@ -6,21 +6,42 @@ from zoneinfo import ZoneInfo
 from app import App
 from tg.format_helpers import is_dry, resolve_price
 from tg.ui import (
-    THIN,
-    code,
     dim,
     empty,
     mode_label,
-    order_side,
     quote,
     section,
     symbol_card,
-    usd,
 )
 
 
+def _short_label(desc: str) -> str:
+    """주문 설명을 짧은 라벨로."""
+    if "별지점" in desc or "후반전 별" in desc:
+        return "별지점"
+    if "평단" in desc and "별" not in desc:
+        return "평단"
+    if "큰수" in desc or "첫 진입" in desc:
+        return "큰수매수"
+    if "하단 방어" in desc or "방어" in desc:
+        for drop in (10, 15, 20):
+            if f"-{drop}%" in desc:
+                return f"하단방어 −{drop}%"
+        return "하단방어"
+    if "리버스 쿼터" in desc:
+        return "리버스 쿼터"
+    if "쿼터" in desc:
+        return "쿼터 매도"
+    if "익절" in desc:
+        return "익절 매도"
+    if "강제1회" in desc:
+        return "강제1회"
+    if "리버스" in desc and "매수" in desc:
+        return "리버스 매수"
+    return desc.split("(")[0].strip()[:12]
+
+
 def _order_formula(order: dict, plan: dict) -> str:
-    """주문가 산정식 (plain text — blockquote 안 안전)."""
     action = order.get("action")
     price = float(order.get("price", 0))
     avg = float(plan.get("avg_price", 0))
@@ -30,46 +51,44 @@ def _order_formula(order: dict, plan: dict) -> str:
     star_buy = float(plan.get("star_buy", 0))
     premium = int(plan.get("premium_pct", 0))
     tp = float(plan.get("take_profit_pct", 0))
-    desc = order.get("desc", "")
 
     if action == "BUY_FULL":
-        if "큰수" in desc or "첫 진입" in desc:
-            return f"현재가 ${cur:.2f} × (1+{premium}%) = ${price:.2f}"
-        if "별지점" in desc or "후반전" in desc:
-            return f"별가 ${star_price:.2f} − 0.01 = ${star_buy:.2f}"
-        if "리버스" in desc and star_buy > 0:
-            return f"별가 ${star_price:.2f} − 0.01 = ${star_buy:.2f}"
-        if "강제1회" in desc:
-            return desc.replace("강제1회 LOC (", "").rstrip(")")
+        label = _short_label(order.get("desc", ""))
+        if label == "큰수매수":
+            return f"${cur:.2f} × (1+{premium}%)"
+        if label in ("별지점", "리버스 매수"):
+            return f"별가 ${star_price:.2f} − 0.01"
     if action == "BUY_HALF":
-        if "평단" in desc:
+        label = _short_label(order.get("desc", ""))
+        if label == "평단":
             return f"평단 ${avg:.2f}"
-        if "별지점" in desc and star_buy > 0:
-            return f"별가 ${star_price:.2f} − 0.01 = ${star_buy:.2f}"
-        if "하단 방어" in desc:
-            for drop in (10, 15, 20):
-                if f"-{drop}%" in desc:
-                    return f"현재가 ${cur:.2f} × (1−{drop}%) = ${price:.2f}"
-    if action == "SELL_QUARTER":
-        if avg > 0:
-            return f"별가 = 평단 ${avg:.2f} × (1+{star_pct:g}%) = ${star_price:.2f}"
-        return f"별가 ${star_price:.2f}"
-    if action is None and "익절" in desc and avg > 0:
-        return f"평단 ${avg:.2f} × (1+{tp:g}%) = ${price:.2f}"
+        if label == "별지점":
+            return f"별가 ${star_price:.2f} − 0.01"
+        if label.startswith("하단방어"):
+            drop = label.replace("하단방어 −", "").replace("%", "")
+            return f"${cur:.2f} × (1−{drop}%)"
+    if action == "SELL_QUARTER" and avg > 0:
+        return f"평단 ${avg:.2f} × (1+{star_pct:g}%)"
+    if action is None and "익절" in order.get("desc", "") and avg > 0:
+        return f"평단 ${avg:.2f} × (1+{tp:g}%)"
     return ""
 
 
-def _one_buy_formula(st: dict, plan: dict) -> str:
-    principal = float(st["principal"])
-    split = int(st["split_count"])
-    t_val = float(st["T"])
-    mode = plan.get("mode", "")
-    safe_t = 0 if mode == "ENTRY" else min(t_val, split - 1)
-    denom = split - safe_t
-    if denom <= 0 or principal <= 0:
-        return ""
-    amt = plan.get("one_buy_amount", 0)
-    return f"1회매수 = 원금 ${principal:,.0f} ÷ ({split} − {safe_t:g}) = ${amt:,.2f}"
+def _format_order_lines(orders: list[dict], plan: dict, side: str) -> list[str]:
+    if not orders:
+        return []
+    icon = "🟢" if side == "BUY" else "🔴"
+    title = "매수" if side == "BUY" else "매도"
+    lines = [f"", f"{icon} {title} {len(orders)}건"]
+    for idx, o in enumerate(orders, 1):
+        label = _short_label(o.get("desc", ""))
+        price = float(o.get("price", 0))
+        qty = int(o.get("qty", 0))
+        lines.append(f"{idx}. {label}  ${price:.2f} × {qty}주")
+        formula = _order_formula(o, plan)
+        if formula:
+            lines.append(f"     = {formula}")
+    return lines
 
 
 def format_plan_block(app: App, symbol: str, premium: int) -> str:
@@ -81,53 +100,49 @@ def format_plan_block(app: App, symbol: str, premium: int) -> str:
         take_profit_pct=st.get("take_profit_pct"),
     )
     strat = mode_label(plan["mode"])
-    t_str = f"{st['T']:.2f}"
     star_pct = float(plan.get("star_pct", 0))
     star_price = float(plan.get("star_price", 0))
     tp_pct = float(plan.get("take_profit_pct", 0))
     avg = float(plan.get("avg_price", 0) or st["avg_price"])
+    one_buy = float(plan.get("one_buy_amount", 0))
 
     card = [
         symbol_card(symbol),
-        f"🎯 {dim('T')} {code(t_str)}　│　"
-        f"{dim('분할')} {code(str(st['split_count']))}　│　{strat}",
+        "",
+        "📌 진행",
+        f"T {st['T']:.2f}  ·  {st['split_count']}분할  ·  {strat}",
     ]
 
-    if avg > 0 and star_price > 0:
-        card.append(
-            f"⭐ {dim('별%')} {code(f'+{star_pct:g}%')}　→　"
-            f"{dim('별가')} {usd(star_price)}　"
-            f"{dim(f'(평단 ${avg:.2f} × {1 + star_pct / 100:.4f})')}"
-        )
-        tp_price = round(avg * (1 + tp_pct / 100), 2)
-        card.append(
-            f"🎯 {dim('익절')} {code(f'+{tp_pct:g}%')}　→　"
-            f"{usd(tp_price)}　"
-            f"{dim(f'(평단 ${avg:.2f} × {1 + tp_pct / 100:.2f})')}"
-        )
-    elif star_pct != 0:
-        card.append(f"⭐ {dim('별%')} {code(f'+{star_pct:g}%')}　{dim('(진입 후 별가 산출)')}")
-
-    one_buy_line = _one_buy_formula(st, plan)
-    if one_buy_line:
-        card.append(f"💵 {dim(one_buy_line)}")
-
-    orders = plan.get("buy_orders", []) + plan.get("sell_orders", [])
-    if not orders:
-        if price <= 0:
-            hint = "LIVE 전환 후 표시" if is_dry(app) else "API 확인 필요"
-            card.append(empty(f"주문 없음 · {hint}"))
+    if price > 0:
+        if st["qty"] > 0 and avg > 0:
+            card.append(f"현재 ${price:.2f}  ·  보유 {st['qty']}주 @ ${avg:.2f}")
         else:
-            card.append(empty("주문 없음 · 조건 미충족"))
+            card.append(f"현재 ${price:.2f}  ·  보유 없음")
+    elif is_dry(app):
+        card.append("현재가 —  (LIVE 전환 후 표시)")
+
+    card.extend(["", "📐 기준가"])
+    if avg > 0 and star_price > 0:
+        card.append(f"별% +{star_pct:g}%  →  ${star_price:.2f}")
+        tp_price = round(avg * (1 + tp_pct / 100), 2)
+        card.append(f"익절 +{tp_pct:g}%  →  ${tp_price:.2f}")
+    elif star_pct != 0:
+        card.append(f"별% +{star_pct:g}%  (진입 후 산출)")
+    if one_buy > 0:
+        card.append(f"1회 매수액  →  ${one_buy:,.2f}")
+
+    buys = plan.get("buy_orders", [])
+    sells = plan.get("sell_orders", [])
+    if not buys and not sells:
+        if price <= 0 and not is_dry(app):
+            card.append("")
+            card.append("📭 API 확인 필요")
+        elif price > 0:
+            card.append("")
+            card.append("📭 오늘 주문 없음")
     else:
-        card.append(THIN)
-        for o in orders:
-            icon, side = order_side(o["side"])
-            card.append(f"{icon} <b>{side}</b>　{dim(o['desc'])}")
-            card.append(f"　　{usd(o['price'])}　×　{code(str(o['qty']) + '주')}")
-            formula = _order_formula(o, plan)
-            if formula:
-                card.append(f"　　{dim('└ ' + formula)}")
+        card.extend(_format_order_lines(buys, plan, "BUY"))
+        card.extend(_format_order_lines(sells, plan, "SELL"))
 
     return quote(*card)
 
@@ -137,11 +152,11 @@ def format_plans(app: App, symbols: list[str], premium: int) -> str:
     today = datetime.datetime.now(kst).strftime("%Y-%m-%d")
     blocks = [
         section("오늘 주문계획", "📋"),
-        dim(f"{today} KST"),
+        dim(today),
         "",
     ]
     if not symbols:
-        blocks.append(quote(empty("거래 종목이 없어요 · /setting → 📡 거래 종목")))
+        blocks.append(quote(empty("거래 종목 없음 · /setting → 📡 거래 종목")))
         return "\n".join(blocks)
     cards = [format_plan_block(app, symbol, premium) for symbol in symbols]
     blocks.append("\n\n".join(cards))

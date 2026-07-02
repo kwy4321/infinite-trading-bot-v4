@@ -17,7 +17,11 @@ from tg.ui import (
 
 def _short_label(desc: str) -> str:
     """주문 설명을 짧은 라벨로."""
-    if "별지점" in desc or "후반전 별" in desc:
+    if desc.startswith("별 +") or "별지점" in desc or "후반전 별" in desc:
+        plus = desc.find("+")
+        pct_end = desc.find("%", plus)
+        if plus >= 0 and pct_end > plus:
+            return f"별 {desc[plus:pct_end + 1]}"
         return "별지점"
     if "평단" in desc and "별" not in desc:
         return "평단"
@@ -62,7 +66,7 @@ def _order_formula(order: dict, plan: dict) -> str:
         label = _short_label(order.get("desc", ""))
         if label == "평단":
             return f"평단 ${avg:.2f}"
-        if label == "별지점":
+        if label.startswith("별 +") or label == "별지점":
             return f"평단 ${avg:.2f} × (1+{star_pct:g}%)"
         if label.startswith("하단방어"):
             drop = label.replace("하단방어 −", "").replace("%", "")

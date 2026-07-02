@@ -110,6 +110,23 @@ class InfiniteStrategyV40:
             return
         self._append_buy_qty(plan, price, qty, action, desc)
 
+    def _append_star_buy(
+        self, plan, star_price: float, star_pct: float, one_buy: float,
+    ) -> None:
+        """전반전 별 매수 — 1회 매수액의 절반 예산, 부족하면 1주라도 포함."""
+        if star_price <= 0 or one_buy <= 0:
+            return
+        half = one_buy / 2.0
+        qty = self._floor_qty(half, star_price)
+        if qty <= 0 and one_buy >= star_price:
+            qty = 1
+        if qty <= 0:
+            return
+        self._append_buy_qty(
+            plan, star_price, qty, "BUY_HALF",
+            f"별 +{star_pct:g}% (${star_price:.2f})",
+        )
+
     def _append_buy_qty(self, plan, price, qty, action, desc):
         if price <= 0 or qty <= 0:
             return
@@ -229,10 +246,7 @@ class InfiniteStrategyV40:
         if avg_price > 0:
             self._append_buy(plan, avg_price, half, "BUY_HALF", f"평단 (${avg_price:.2f})")
         if star_price > 0:
-            self._append_buy(
-                plan, star_price, half, "BUY_HALF",
-                f"별지점 +{star_pct:g}% (${star_price:.2f})",
-            )
+            self._append_star_buy(plan, star_price, star_pct, one_buy)
 
         if avg_price > 0 and one_buy > 0:
             for drop in (20, 30):

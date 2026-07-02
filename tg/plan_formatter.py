@@ -6,12 +6,14 @@ from zoneinfo import ZoneInfo
 from app import App
 from tg.format_helpers import is_dry, resolve_price
 from tg.ui import (
+    code,
     dim,
     empty,
     mode_label,
     quote,
     section,
     symbol_card,
+    THIN,
 )
 
 
@@ -79,20 +81,35 @@ def _order_formula(order: dict, plan: dict) -> str:
     return ""
 
 
+def _order_est_usd(order: dict) -> float:
+    return round(float(order.get("price", 0)) * int(order.get("qty", 0)), 2)
+
+
 def _format_order_lines(orders: list[dict], plan: dict, side: str) -> list[str]:
     if not orders:
         return []
     icon = "🟢" if side == "BUY" else "🔴"
     title = "매수" if side == "BUY" else "매도"
-    lines = [f"", f"{icon} {title} {len(orders)}건"]
+    total = sum(_order_est_usd(o) for o in orders)
+    lines = [
+        "",
+        f"{icon} {title} {len(orders)}건  ·  {dim('합계')} {code(f'${total:,.2f}')}",
+    ]
     for idx, o in enumerate(orders, 1):
         label = _short_label(o.get("desc", ""))
         price = float(o.get("price", 0))
         qty = int(o.get("qty", 0))
-        lines.append(f"{idx}. {label}  ${price:.2f} × {qty}주")
+        est = _order_est_usd(o)
+        if idx > 1:
+            lines.append(THIN)
+        lines.append(f"{idx}. {label}")
+        lines.append(
+            f"   💵 {code(f'${est:,.2f}')}  ·  "
+            f"{dim(f'${price:.2f} × {qty}주')}"
+        )
         formula = _order_formula(o, plan)
         if formula:
-            lines.append(f"     = {formula}")
+            lines.append(f"   {dim('기준')} {formula}")
     return lines
 
 

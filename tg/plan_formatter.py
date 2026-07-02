@@ -24,7 +24,7 @@ def _short_label(desc: str) -> str:
     if "큰수" in desc or "첫 진입" in desc:
         return "큰수매수"
     if "하단 방어" in desc or "방어" in desc:
-        for drop in (10, 15, 20):
+        for drop in (20, 30):
             if f"-{drop}%" in desc:
                 return f"하단방어 −{drop}%"
         return "하단방어"
@@ -63,7 +63,7 @@ def _order_formula(order: dict, plan: dict) -> str:
         if label == "평단":
             return f"평단 ${avg:.2f}"
         if label == "별지점":
-            return f"별가 ${star_price:.2f} − 0.01"
+            return f"평단 ${avg:.2f} × (1+{star_pct:g}%)"
         if label.startswith("하단방어"):
             drop = label.replace("하단방어 −", "").replace("%", "")
             base = avg if avg > 0 else cur

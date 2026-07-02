@@ -225,16 +225,17 @@ class InfiniteStrategyV40:
 
         plan["star_price"] = star_price
 
-        if mode == TradingMode.NORMAL_EARLY:
-            half = one_buy / 2.0
-            self._append_buy(plan, star_buy, half, "BUY_HALF", f"전반전 별지점 (${star_buy})")
-            if avg_price > 0:
-                self._append_buy(plan, avg_price, half, "BUY_HALF", f"전반전 평단 (${avg_price:.2f})")
-        else:
-            self._append_buy(plan, star_buy, one_buy, "BUY_FULL", f"후반전 별지점 (${star_buy})")
+        half = one_buy / 2.0
+        if avg_price > 0:
+            self._append_buy(plan, avg_price, half, "BUY_HALF", f"평단 (${avg_price:.2f})")
+        if star_price > 0:
+            self._append_buy(
+                plan, star_price, half, "BUY_HALF",
+                f"별지점 +{star_pct:g}% (${star_price:.2f})",
+            )
 
         if avg_price > 0 and one_buy > 0:
-            for drop in (10, 15, 20):
+            for drop in (20, 30):
                 fp = self.calc_defense_buy_price(avg_price, current_price, drop)
                 self._append_buy(plan, fp, one_buy * 0.5, "BUY_HALF", f"하단 방어(-{drop}%)")
 

@@ -154,6 +154,8 @@ def help_block() -> str:
         ]),
         ("📒 기록", [
             (f"{code('/dashboard')}", "📒 자산·손익 대시보드"),
+            (f"{code('/cycles')}", "📈 진행 회차 기록"),
+            (f"{code('/sync')}", "🔄 실계좌 회차 동기화"),
             (f"{code('/history')}", "🎓 종료 기록"),
             (f"{code('/monthly')}", "📅 수익현황"),
         ]),

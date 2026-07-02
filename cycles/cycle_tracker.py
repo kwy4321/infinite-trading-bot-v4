@@ -143,6 +143,27 @@ class CycleTracker:
         self._save_all(data)
         return completed
 
+    def record_snapshot(self, symbol: str, *, t_val: float, avg_price: float,
+                        qty: int, current_price: float, eval_usd: float,
+                        invested_usd: float, principal: float) -> dict:
+        """토스 실계좌 기준 현재 진행 회차 스냅샷 기록 (T·평단가·주수·평가금액)."""
+        data = self._load_all()
+        sym = self._get(data, symbol)
+        if sym["current"] is None:
+            sym["current"] = _new_current(sym["next_cycle_no"], principal)
+        snapshot = {
+            "T": round(float(t_val), 2),
+            "avg_price": round(float(avg_price), 4),
+            "qty": int(qty),
+            "current_price": round(float(current_price), 4),
+            "eval_usd": round(float(eval_usd), 2),
+            "invested_usd": round(float(invested_usd), 2),
+            "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+        }
+        sym["current"]["snapshot"] = snapshot
+        self._save_all(data)
+        return snapshot
+
     def get_symbol_data(self, symbol: str) -> dict:
         return self._get(self._load_all(), symbol)
 
@@ -222,6 +243,16 @@ class CycleTracker:
             lines += [
                 f"🔵 <b>진행 중 — {live['cycle_no']}회차</b>",
                 f"  시작: {live['started_at']}",
+            ]
+            snap = sym.get("current", {}).get("snapshot") if sym.get("current") else None
+            if snap:
+                snap_at = snap.get("at", "")[:16].replace("T", " ")
+                lines += [
+                    f"  🎯 T <b>{snap['T']:.2f}</b> · 평단 <b>${snap['avg_price']:,.2f}</b> · <b>{snap['qty']}</b>주",
+                    f"  💵 평가금액 <b>${snap['eval_usd']:,.2f}</b> (투입 ${snap['invested_usd']:,.2f})",
+                    f"  <i>동기화 {snap_at}</i>",
+                ]
+            lines += [
                 f"  회차 손익: {sign}${live['cycle_pnl_usd']:,.2f} ({sign}{live['cycle_pnl_pct']:.2f}%)", "",
             ]
         else:

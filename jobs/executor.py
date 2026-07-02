@@ -152,6 +152,71 @@ class JobExecutor:
         header = "🔔 <b>미국 장 시작</b> — 오늘의 주문계획이에요.\n\n"
         await self._notify(header + text, html=True)
 
+    def _derive_t(self, invested_usd: float, principal: float, split_count: int) -> float:
+        """실투입금 → 진행 회차 T (라오어 기준: 투입금 ÷ (원금/분할수))."""
+        seed = (principal / split_count) if split_count > 0 else 0.0
+        if seed <= 0:
+            return 0.0
+        return round(invested_usd / seed, 2)
+
+    def sync_cycle_from_broker(self, symbol: str) -> dict:
+        """토스 실계좌 보유내역으로 T·평단가·주수·평가금액을 가져와 현재 회차에 기록."""
+        st = self.app.state.load(symbol)
+        item = self.app.broker.get_holdings_item(symbol)
+        qty = int(item.get("qty", 0) or 0)
+        avg = float(item.get("avg_price", 0.0) or 0.0)
+        price = float(item.get("current_price", 0.0) or 0.0)
+        invested = round(qty * avg, 2)
+        eval_usd = round(qty * price, 2) if price > 0 else invested
+
+        if qty <= 0:
+            return {"symbol": symbol, "qty": 0, "avg": 0.0, "price": price,
+                    "invested": 0.0, "eval": 0.0, "T": 0.0}
+
+        t_val = self._derive_t(invested, st["principal"], st["split_count"])
+        # 실계좌를 진실로 삼아 상태 동기화 (평단·주수는 항상, T는 산출 가능할 때만)
+        st["qty"] = qty
+        st["avg_price"] = round(avg, 4)
+        if st["split_count"] > 0 and st["principal"] > 0:
+            st["T"] = t_val
+        self.app.state.save(symbol, st)
+
+        self.app.cycles.ensure_current(symbol, st["principal"])
+        self.app.cycles.record_snapshot(
+            symbol, t_val=st["T"], avg_price=avg, qty=qty,
+            current_price=price, eval_usd=eval_usd, invested_usd=invested,
+            principal=st["principal"],
+        )
+        return {"symbol": symbol, "qty": qty, "avg": avg, "price": price,
+                "invested": invested, "eval": eval_usd, "T": st["T"]}
+
+    async def run_cycle_sync(self, notify: bool = True) -> None:
+        """활성 종목의 회차 기록을 토스 실계좌 기준으로 동기화."""
+        is_dry = self.app.settings.dry_run or not self.app.settings.has_toss
+        if is_dry:
+            if notify:
+                await self._notify("🧪 DRY_RUN — 실계좌 회차 동기화는 LIVE에서만 됩니다.")
+            return
+        symbols = self._active_symbols() or list(self.app.state.list_symbols())
+        lines = ["🔄 <b>회차 동기화</b> <i>(토스 실계좌 기준)</i>"]
+        for sym in symbols:
+            try:
+                r = self.sync_cycle_from_broker(sym)
+            except Exception as e:
+                logger.exception("cycle sync failed %s", sym)
+                lines.append(f"🚨 [{sym}] 동기화 실패: {e}")
+                continue
+            if r["qty"] <= 0:
+                lines.append(f"◆ <b>{sym}</b> — 보유 없음")
+                continue
+            lines.append(
+                f"◆ <b>{sym}</b>\n"
+                f"🎯 T <b>{r['T']:.2f}</b> · 평단 <b>${r['avg']:,.2f}</b> · <b>{r['qty']}</b>주\n"
+                f"💵 평가금액 <b>${r['eval']:,.2f}</b> <i>(투입 ${r['invested']:,.2f})</i>"
+            )
+        if notify:
+            await self._notify("\n".join(lines), html=True)
+
     async def run_backup(self) -> None:
         if not self.app.settings.backup_enabled:
             return
@@ -171,6 +236,7 @@ class JobExecutor:
 
     async def run_job4(self, **_):
         await self.run_phase(JobPhase.JOB4_REPORT)
+        await self.run_cycle_sync(notify=True)
         await self.run_backup()
         now = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
         await self._notify(f"📊 오늘 마무리 완료 ({now})")

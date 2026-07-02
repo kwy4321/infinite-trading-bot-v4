@@ -55,10 +55,7 @@ def _order_formula(order: dict, plan: dict) -> str:
     if action == "BUY_FULL":
         label = _short_label(order.get("desc", ""))
         if label == "큰수매수":
-            if "첫 진입" in order.get("desc", ""):
-                return f"현재가 ${cur:.2f} × (1+{premium}%)"
-            base = avg if avg > 0 else cur
-            return f"평단 ${base:.2f} × (1+{premium}%)"
+            return f"현재가 ${cur:.2f} × (1+{premium}%)"
         if label in ("별지점", "리버스 매수"):
             return f"별가 ${star_price:.2f} − 0.01"
     if action == "BUY_HALF":

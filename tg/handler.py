@@ -92,7 +92,7 @@ class TelegramHandler:
                 row("📡", "거래 종목", code(active_str + edit_hint)),
                 row("💰", "원금", usd(st["principal"], decimals=0)),
                 row("🍰", "분할", code(str(st["split_count"]))),
-                row("📈", "큰수매수", code(f"+{self.app.runtime.premium_default()}%")),
+                row("📈", "큰수매수", code(f"T=0 +{self.app.runtime.premium_default()}%")),
                 row("🎯", "목표수익률", code(f"+{tp:g}%")),
                 row("⚡", "강제1회", badge_on(st.get("force_one", False))),
             )
@@ -404,7 +404,7 @@ class TelegramHandler:
 
         if data == "set_premium":
             await query.edit_message_text(
-                "📈 큰수매수 할증 (평단가 대비, 첫 진입만 현재가):",
+                "📈 큰수매수 할증 (T=0 첫 매수만, 현재가 대비):",
                 reply_markup=premium_keyboard(),
             )
             return

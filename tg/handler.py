@@ -44,6 +44,13 @@ from tg.keyboards import (
     take_profit_keyboard,
     token_keyboard,
     trading_symbols_keyboard,
+    main_menu_keyboard,
+    MAIN_HOME,
+    MAIN_PLAN,
+    MAIN_SETTING,
+    MAIN_STATUS,
+    MAIN_BALANCE,
+    MAIN_TOKEN,
 )
 from tg.sender import TelegramSender
 
@@ -147,7 +154,11 @@ class TelegramHandler:
                 f"{quote(f'{badge_bot(paused)}   ·   {badge_live(dry)}   ·   {market}')}\n"
                 f"{token_line}\n"
             )
-            await update.message.reply_text(header + help_block(), parse_mode="HTML")
+            await update.message.reply_text(
+                header + help_block(),
+                reply_markup=main_menu_keyboard(),
+                parse_mode="HTML",
+            )
         except Exception as e:
             logger.exception("cmd_start failed")
             await update.message.reply_text(f"🚨 /start 실패: {e}")
@@ -613,6 +624,20 @@ class TelegramHandler:
         if not self._allowed(update):
             return await self._deny(update)
         text = update.message.text.strip()
+
+        menu_routes = {
+            MAIN_HOME: self.cmd_start,
+            MAIN_PLAN: self.cmd_plan,
+            MAIN_SETTING: self.cmd_setting,
+            MAIN_STATUS: self.cmd_status,
+            MAIN_BALANCE: self.cmd_balance,
+            MAIN_TOKEN: self.cmd_token,
+        }
+        if text in menu_routes:
+            context.user_data.pop("awaiting", None)
+            context.user_data.pop("awaiting_symbol", None)
+            return await menu_routes[text](update, context)
+
         if text.startswith("/set_t"):
             return await self.cmd_set_t(update, context)
 

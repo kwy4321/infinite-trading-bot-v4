@@ -1,8 +1,27 @@
 """Inline keyboard builders."""
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 from config.settings import PREMIUM_OPTIONS, SPLIT_OPTIONS, SYMBOLS, TAKE_PROFIT_OPTIONS
+
+# 하단 고정 메뉴 (Reply Keyboard) — 탭하면 명령어 입력 없이 실행
+MAIN_HOME = "🏠 메인"
+MAIN_PLAN = "📋 주문계획"
+MAIN_SETTING = "⚙️ 설정"
+MAIN_STATUS = "📈 현황"
+MAIN_BALANCE = "💼 잔고"
+MAIN_TOKEN = "🔑 토큰"
+
+
+def main_menu_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        [
+            [KeyboardButton(MAIN_HOME), KeyboardButton(MAIN_PLAN), KeyboardButton(MAIN_SETTING)],
+            [KeyboardButton(MAIN_STATUS), KeyboardButton(MAIN_BALANCE), KeyboardButton(MAIN_TOKEN)],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
 
 
 def premium_keyboard() -> InlineKeyboardMarkup:

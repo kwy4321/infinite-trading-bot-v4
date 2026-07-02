@@ -64,7 +64,7 @@ def format_plans(app: App, symbols: list[str], premium: int) -> str:
         "",
     ]
     if not symbols:
-        blocks.append(quote(empty("자동매매 종목이 없어요 · /setting → 🔀 종목 또는 📡 자동매매 종목")))
+        blocks.append(quote(empty("거래 종목이 없어요 · /setting → 📡 거래 종목")))
         return "\n".join(blocks)
     cards = [format_plan_block(app, symbol, premium) for symbol in symbols]
     blocks.append("\n\n".join(cards))

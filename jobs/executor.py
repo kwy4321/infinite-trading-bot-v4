@@ -111,7 +111,7 @@ class JobExecutor:
 
         symbols = self._active_symbols()
         if not symbols:
-            await self._notify("⚠️ 자동매매 대상 종목이 없어요. /setting → 자동매매 종목에서 켜주세요.")
+            await self._notify("⚠️ 거래 종목이 없어요. /setting → 📡 거래 종목에서 켜주세요.")
             return
 
         lines = []
@@ -144,7 +144,7 @@ class JobExecutor:
             return
         symbols = self._active_symbols()
         if not symbols:
-            await self._notify("⚠️ 자동매매 대상 종목이 없어요. /setting → 자동매매 종목에서 켜주세요.")
+            await self._notify("⚠️ 거래 종목이 없어요. /setting → 📡 거래 종목에서 켜주세요.")
             return
         from tg.plan_formatter import format_plans
         premium = self.app.runtime.premium_default()

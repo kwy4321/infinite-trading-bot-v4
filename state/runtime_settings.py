@@ -73,18 +73,43 @@ class RuntimeSettings:
         self.save(data)
 
     def toggle_active_symbol(self, symbol: str) -> list:
-        """종목 자동매매 ON/OFF 토글. 갱신된 활성 종목 리스트를 반환."""
+        """@deprecated — select_trading_symbol 사용."""
+        active, _, _ = self.select_trading_symbol(symbol)
+        return active
+
+    def select_trading_symbol(self, symbol: str) -> tuple[list, str, str | None]:
+        """거래 종목 버튼: OFF→켜기+편집, ON(다른 편집중)→편집 전환, ON(편집중)→끄기.
+
+        Returns: (active_symbols, default_symbol, alert_message)
+        """
         data = self.load()
-        active = {s.upper() for s in data.get("active_symbols", list(SYMBOLS))}
+        active = {s.upper() for s in data.get("active_symbols", DEFAULT["active_symbols"])}
         sym = symbol.upper()
-        if sym in active:
-            active.discard(sym)
-        else:
+        if sym not in SYMBOLS:
+            return self.active_symbols(), self.default_symbol(), None
+
+        default = str(data.get("default_symbol", DEFAULT["default_symbol"])).upper()
+
+        if sym not in active:
             active.add(sym)
+            data["default_symbol"] = sym
+        elif sym != default:
+            data["default_symbol"] = sym
+        elif len(active) <= 1:
+            return (
+                [s for s in SYMBOLS if s in active],
+                default,
+                "최소 1개 종목은 켜져 있어야 해요.",
+            )
+        else:
+            active.discard(sym)
+            ordered = [s for s in SYMBOLS if s in active]
+            data["default_symbol"] = ordered[0]
+
         ordered = [s for s in SYMBOLS if s in active]
         data["active_symbols"] = ordered
         self.save(data)
-        return ordered
+        return ordered, data["default_symbol"], None
 
     def default_symbol(self) -> str:
         return self.load().get("default_symbol", "TQQQ")

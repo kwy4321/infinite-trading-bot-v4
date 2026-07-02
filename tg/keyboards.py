@@ -47,8 +47,7 @@ def symbol_picker(prefix: str) -> InlineKeyboardMarkup:
 def setting_keyboard(force_one: bool = False) -> InlineKeyboardMarkup:
     force_label = "⚡ 강제1회 OFF" if force_one else "⚡ 강제1회 ON"
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔀 종목", callback_data="set_ticker")],
-        [InlineKeyboardButton("📡 자동매매 종목", callback_data="set_active")],
+        [InlineKeyboardButton("📡 거래 종목", callback_data="set_symbols")],
         [InlineKeyboardButton("💰 원금", callback_data="set_seed")],
         [InlineKeyboardButton("🍰 분할", callback_data="set_split")],
         [InlineKeyboardButton("📈 큰수매수", callback_data="set_premium")],
@@ -57,20 +56,26 @@ def setting_keyboard(force_one: bool = False) -> InlineKeyboardMarkup:
     ])
 
 
-def active_symbols_keyboard(active: list[str]) -> InlineKeyboardMarkup:
-    """자동매매 대상 종목 ON/OFF 토글. 🟢=켜짐, ⚪=꺼짐."""
+def trading_symbols_keyboard(active: list[str], editing: str) -> InlineKeyboardMarkup:
+    """거래 종목 선택 — 🟢=켜짐, ⚪=꺼짐, ✏️=설정 편집 중."""
     active_up = {s.upper() for s in active}
-    row = [
-        InlineKeyboardButton(
-            f"{'🟢' if s in active_up else '⚪'} {s}",
-            callback_data=f"TOGGLE_ACTIVE:{s}",
-        )
-        for s in SYMBOLS
-    ]
+    editing = editing.upper()
+    row = []
+    for s in SYMBOLS:
+        if s in active_up:
+            label = f"🟢 {s}" + (" ✏️" if s == editing else "")
+        else:
+            label = f"⚪ {s}"
+        row.append(InlineKeyboardButton(label, callback_data=f"TRADE:{s}"))
     return InlineKeyboardMarkup([
         row,
         [InlineKeyboardButton("⬅️ 설정으로", callback_data="back_setting")],
     ])
+
+
+def active_symbols_keyboard(active: list[str]) -> InlineKeyboardMarkup:
+    """@deprecated — trading_symbols_keyboard 사용."""
+    return trading_symbols_keyboard(active, active[0] if active else SYMBOLS[0])
 
 
 def token_keyboard() -> InlineKeyboardMarkup:

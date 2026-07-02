@@ -33,7 +33,6 @@ from tg.dashboard_formatter import format_dashboard
 from tg.status_formatter import format_status
 from tg.token_formatter import format_toss_token_brief, format_toss_token_detail
 from tg.keyboards import (
-    active_symbols_keyboard,
     plan_action_keyboard,
     premium_keyboard,
     run_job_keyboard,
@@ -44,6 +43,7 @@ from tg.keyboards import (
     symbol_picker,
     take_profit_keyboard,
     token_keyboard,
+    trading_symbols_keyboard,
 )
 from tg.sender import TelegramSender
 
@@ -78,17 +78,24 @@ class TelegramHandler:
         active = self.app.runtime.active_symbols()
         active_str = ", ".join(active) if active else "없음"
         tp = self._effective_take_profit(symbol, st)
+        edit_hint = f" · {symbol} 편집" if symbol in active else ""
         return (
             f"{section('설정', '⚙️')}\n"
             + quote(
-                row("📦", "종목", symbol_card(symbol)),
-                row("📡", "자동매매", code(active_str)),
+                row("📡", "거래 종목", code(active_str + edit_hint)),
                 row("💰", "원금", usd(st["principal"], decimals=0)),
                 row("🍰", "분할", code(str(st["split_count"]))),
                 row("📈", "큰수매수", code(f"+{self.app.runtime.premium_default()}%")),
                 row("🎯", "목표수익률", code(f"+{tp:g}%")),
                 row("⚡", "강제1회", badge_on(st.get("force_one", False))),
             )
+        )
+
+    def _symbols_picker_text(self, editing: str) -> str:
+        return (
+            "📡 <b>거래 종목</b>\n"
+            "탭하여 켜기(🟢)/끄기(⚪) · ✏️ 표시 종목의 원금·분할을 편집해요.\n"
+            "켜진 종목만 주문계획·자동매매에 반영돼요."
         )
 
     def _setting_keyboard(self, symbol: str):
@@ -361,8 +368,21 @@ class TelegramHandler:
         if not self._allowed(update):
             return await self._deny(update)
         query = update.callback_query
-        await query.answer()
         data = query.data
+
+        if data.startswith("TRADE:") or data.startswith("TOGGLE_ACTIVE:"):
+            sym = data.split(":")[1]
+            active, editing, alert = self.app.runtime.select_trading_symbol(sym)
+            await query.answer(alert or "✓", show_alert=bool(alert))
+            context.user_data["symbol"] = editing
+            await query.edit_message_text(
+                self._symbols_picker_text(editing),
+                reply_markup=trading_symbols_keyboard(active, editing),
+                parse_mode="HTML",
+            )
+            return
+
+        await query.answer()
 
         if data.startswith("EXEC:"):
             symbol = data.split(":")[1]
@@ -418,35 +438,13 @@ class TelegramHandler:
             )
             return
 
-        if data == "set_ticker":
-            await query.edit_message_text("종목:", reply_markup=symbol_picker("select"))
-            return
-
-        if data.startswith("select:"):
-            sym = data.split(":")[1]
-            self.app.runtime.set_default_symbol(sym)
-            context.user_data["symbol"] = sym
-            await query.edit_message_text(
-                f"✅ 기본 종목 → <b>{sym}</b>\n"
-                f"📡 자동매매·주문계획도 <b>{sym}</b>만 반영돼요.",
-                parse_mode="HTML",
-            )
-            return
-
-        if data == "set_active":
+        if data == "set_symbols":
             active = self.app.runtime.active_symbols()
+            editing = self._symbol(context)
             await query.edit_message_text(
-                "📡 <b>자동매매 종목</b>\n탭하여 켜기(🟢)/끄기(⚪). 켜진 종목만 주문계획·자동주문에 반영돼요.",
-                reply_markup=active_symbols_keyboard(active),
+                self._symbols_picker_text(editing),
+                reply_markup=trading_symbols_keyboard(active, editing),
                 parse_mode="HTML",
-            )
-            return
-
-        if data.startswith("TOGGLE_ACTIVE:"):
-            sym = data.split(":")[1]
-            active = self.app.runtime.toggle_active_symbol(sym)
-            await query.edit_message_reply_markup(
-                reply_markup=active_symbols_keyboard(active)
             )
             return
 

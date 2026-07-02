@@ -31,7 +31,7 @@ from tg.plan_formatter import format_plans
 from tg.records_formatter import format_graduation_history, format_profit_summary
 from tg.dashboard_formatter import format_dashboard
 from tg.status_formatter import format_status
-from tg.token_formatter import format_toss_token_line
+from tg.token_formatter import format_toss_token_brief, format_toss_token_detail
 from tg.keyboards import (
     active_symbols_keyboard,
     plan_action_keyboard,
@@ -43,6 +43,7 @@ from tg.keyboards import (
     split_ratio_keyboard,
     symbol_picker,
     take_profit_keyboard,
+    token_keyboard,
 )
 from tg.sender import TelegramSender
 
@@ -110,6 +111,12 @@ class TelegramHandler:
     def _pos(self, symbol: str) -> dict:
         return self.app.broker.get_holdings_item(symbol)
 
+    async def _fetch_token_status(self, refresh: bool = False) -> dict:
+        auth = self.app.broker.auth
+        if refresh:
+            return await asyncio.to_thread(auth.force_refresh)
+        return await asyncio.to_thread(auth.get_status)
+
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
             return await self._deny(update)
@@ -120,24 +127,14 @@ class TelegramHandler:
                 market = market_status_label("off_hours")
             paused = self.app.runtime.is_paused()
             dry = self.app.settings.dry_run or not self.app.settings.has_toss
-            token_line = "🔑 토스 토큰  확인 중…"
-            if dry or not self.app.settings.has_toss:
-                token_line = format_toss_token_line(self.app)
-            else:
+            token_line = format_toss_token_brief(self.app)
+            if not dry and self.app.settings.has_toss:
                 try:
-                    status = await asyncio.wait_for(
-                        asyncio.to_thread(self.app.broker.auth.ensure_token_status),
-                        timeout=12.0,
-                    )
-                    token_line = format_toss_token_line(self.app, status)
-                except asyncio.TimeoutError:
-                    token_line = "🔑 토스 토큰  🟡 확인 지연 · 잠시 후 다시 /start"
-                except Exception as e:
-                    logger.exception("token status check failed")
-                    token_line = format_toss_token_line(
-                        self.app,
-                        {"reason": "refresh_failed", "error": str(e)},
-                    )
+                    status = await self._fetch_token_status(refresh=False)
+                    token_line = format_toss_token_brief(self.app, status)
+                except Exception:
+                    logger.exception("token brief check failed")
+                    token_line = "🔑 토스 토큰  🔴 사용 불가"
             header = (
                 f"🖥️ <b>라오어 무한매수 4.0</b>\n"
                 f"{quote(f'{badge_bot(paused)}   ·   {badge_live(dry)}   ·   {market}')}\n"
@@ -147,6 +144,19 @@ class TelegramHandler:
         except Exception as e:
             logger.exception("cmd_start failed")
             await update.message.reply_text(f"🚨 /start 실패: {e}")
+
+    async def cmd_token(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self._allowed(update):
+            return await self._deny(update)
+        dry = self.app.settings.dry_run or not self.app.settings.has_toss
+        try:
+            status = None if dry or not self.app.settings.has_toss else await self._fetch_token_status()
+            text = format_toss_token_detail(self.app, status)
+            markup = token_keyboard() if not dry and self.app.settings.has_toss else None
+            await update.message.reply_text(text, reply_markup=markup, parse_mode="HTML")
+        except Exception as e:
+            logger.exception("cmd_token failed")
+            await update.message.reply_text(f"🚨 토큰 조회 실패: {e}")
 
     async def cmd_dashboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
@@ -516,6 +526,24 @@ class TelegramHandler:
             job = data.split(":")[1]
             await query.edit_message_reply_markup(reply_markup=None)
             await self._run_job(query.message.chat_id, context, job)
+            return
+
+        if data == "TOKEN:refresh":
+            if self.app.settings.dry_run or not self.app.settings.has_toss:
+                await query.edit_message_text("⚠️ LIVE 모드에서만 토큰 갱신이 됩니다.")
+                return
+            await query.edit_message_text("⏳ 토큰 갱신 중…")
+            try:
+                status = await self._fetch_token_status(refresh=True)
+                text = format_toss_token_detail(self.app, status)
+                await query.edit_message_text(
+                    text,
+                    reply_markup=token_keyboard(),
+                    parse_mode="HTML",
+                )
+            except Exception as e:
+                logger.exception("token refresh failed")
+                await query.edit_message_text(f"🚨 토큰 갱신 실패: {e}")
             return
 
         if data.startswith("CYCLES:"):

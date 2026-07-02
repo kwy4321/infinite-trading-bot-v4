@@ -163,6 +163,7 @@ def help_block() -> str:
             (f"{code('/pause')}", "⏸ 자동 실행 멈춤"),
             (f"{code('/resume')}", "⏰ 자동 실행 재개"),
             (f"{code('/run')}", "▶️ 수동 실행"),
+            (f"{code('/token')}", "🔑 토큰 상태·갱신"),
         ]),
     ]
     blocks = []

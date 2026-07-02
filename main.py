@@ -115,6 +115,7 @@ def main():
     tg.add_handler(CommandHandler("pause", handler.cmd_pause))
     tg.add_handler(CommandHandler("resume", handler.cmd_resume))
     tg.add_handler(CommandHandler("run", handler.cmd_run))
+    tg.add_handler(CommandHandler("token", handler.cmd_token))
     tg.add_handler(CallbackQueryHandler(handler.handle_callback))
     tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handler.handle_message))
 

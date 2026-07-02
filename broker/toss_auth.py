@@ -155,3 +155,18 @@ class TossAuth:
         with self._lock:
             self._token = None
             self._expires_at = None
+
+    def force_refresh(self) -> dict:
+        """캐시 무효화 후 새 토큰 발급."""
+        self.invalidate()
+        try:
+            self.get_token()
+        except Exception as exc:
+            return {
+                "ok": False,
+                "reason": "refresh_failed",
+                "remaining_seconds": 0,
+                "expires_at": None,
+                "error": str(exc),
+            }
+        return self.get_status()

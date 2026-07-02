@@ -73,6 +73,12 @@ def active_symbols_keyboard(active: list[str]) -> InlineKeyboardMarkup:
     ])
 
 
+def token_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 갱신하기", callback_data="TOKEN:refresh")],
+    ])
+
+
 def run_job_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📈 익절", callback_data="RUN:job1"),

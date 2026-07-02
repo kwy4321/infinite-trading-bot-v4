@@ -12,20 +12,7 @@ from app import App
 from jobs.executor import JobExecutor
 from strategy.split_handler import apply_split, calc_adjustment, format_preview, parse_ratio
 from config.settings import SYMBOLS
-from tg.ui import (
-    DIVIDER,
-    badge_bot,
-    badge_live,
-    badge_on,
-    code,
-    help_block,
-    market_status_label,
-    quote,
-    row,
-    section,
-    symbol_card,
-    usd,
-)
+from tg.home_formatter import format_home
 from tg.balance_formatter import format_balance
 from tg.plan_formatter import format_plans
 from tg.records_formatter import format_graduation_history, format_profit_summary
@@ -53,6 +40,7 @@ from tg.keyboards import (
     MAIN_TOKEN,
 )
 from tg.sender import TelegramSender
+from tg.ui import DIVIDER, badge_on, code, quote, row, section, usd
 
 logger = logging.getLogger(__name__)
 
@@ -135,11 +123,6 @@ class TelegramHandler:
         if not self._allowed(update):
             return await self._deny(update)
         try:
-            try:
-                market = market_status_label(self.app.broker.get_us_market_status())
-            except Exception:
-                market = market_status_label("off_hours")
-            paused = self.app.runtime.is_paused()
             dry = self.app.settings.dry_run or not self.app.settings.has_toss
             token_line = format_toss_token_brief(self.app)
             if not dry and self.app.settings.has_toss:
@@ -149,13 +132,8 @@ class TelegramHandler:
                 except Exception:
                     logger.exception("token brief check failed")
                     token_line = "🔑 토스 토큰  🔴 사용 불가"
-            header = (
-                f"🖥️ <b>라오어 무한매수 4.0</b>\n"
-                f"{quote(f'{badge_bot(paused)}   ·   {badge_live(dry)}   ·   {market}')}\n"
-                f"{token_line}\n"
-            )
             await update.message.reply_text(
-                header + help_block(),
+                format_home(self.app, token_line),
                 reply_markup=main_menu_keyboard(),
                 parse_mode="HTML",
             )

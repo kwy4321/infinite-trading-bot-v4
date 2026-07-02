@@ -10,10 +10,18 @@ RUNTIME_PATH = ROOT / "data" / "runtime_settings.json"
 
 DEFAULT = {
     "paused": False,
-    "active_symbols": list(SYMBOLS),
+    "active_symbols": ["TQQQ"],
     "default_symbol": "TQQQ",
     "premium_pct_default": 10,
 }
+
+
+def _normalize_active_symbols(data: dict) -> list:
+    """활성 종목 목록 정규화 — SYMBOLS 순서 유지, 유효 종목만."""
+    active = data.get("active_symbols", DEFAULT["active_symbols"])
+    if not isinstance(active, list):
+        active = list(DEFAULT["active_symbols"])
+    return [s for s in SYMBOLS if s in {x.upper() for x in active}]
 
 
 class RuntimeSettings:
@@ -33,6 +41,7 @@ class RuntimeSettings:
                 return dict(DEFAULT)
             merged = dict(DEFAULT)
             merged.update(data)
+            merged["active_symbols"] = _normalize_active_symbols(merged)
             return merged
 
     def save(self, data: dict) -> None:
@@ -49,7 +58,11 @@ class RuntimeSettings:
         self.save(data)
 
     def active_symbols(self) -> list:
-        return self.load().get("active_symbols", list(SYMBOLS))
+        active = _normalize_active_symbols(self.load())
+        if active:
+            return active
+        default_sym = self.default_symbol()
+        return [default_sym] if default_sym in SYMBOLS else list(DEFAULT["active_symbols"])
 
     def is_active(self, symbol: str) -> bool:
         return symbol.upper() in [s.upper() for s in self.active_symbols()]
@@ -78,7 +91,11 @@ class RuntimeSettings:
 
     def set_default_symbol(self, symbol: str) -> None:
         data = self.load()
-        data["default_symbol"] = symbol.upper()
+        sym = symbol.upper()
+        data["default_symbol"] = sym
+        # 기본종목 선택 = 주문계획·자동매매 대상도 해당 종목만
+        if sym in SYMBOLS:
+            data["active_symbols"] = [sym]
         self.save(data)
 
     def premium_default(self) -> int:

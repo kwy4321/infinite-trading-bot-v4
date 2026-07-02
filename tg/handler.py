@@ -31,6 +31,7 @@ from tg.plan_formatter import format_plans
 from tg.records_formatter import format_graduation_history, format_profit_summary
 from tg.dashboard_formatter import format_dashboard
 from tg.status_formatter import format_status
+from tg.token_formatter import format_toss_token_row
 from tg.keyboards import (
     active_symbols_keyboard,
     plan_action_keyboard,
@@ -118,9 +119,23 @@ class TelegramHandler:
             market = market_status_label("off_hours")
         paused = self.app.runtime.is_paused()
         dry = self.app.settings.dry_run or not self.app.settings.has_toss
+        token_line = row("🔑", "토스 토큰", dim("확인 중…"))
+        if dry or not self.app.settings.has_toss:
+            token_line = format_toss_token_row(self.app, {})
+        else:
+            try:
+                status = await asyncio.to_thread(self.app.broker.auth.ensure_token_status)
+                token_line = format_toss_token_row(self.app, status)
+            except Exception as e:
+                logger.exception("token status check failed")
+                token_line = row("🔑", "토스 토큰", f"🔴 확인 실패 · {dim(str(e)[:80])}")
         header = (
             f"🖥️ <b>라오어 무한매수 4.0</b>\n"
-            f"{quote(f'{badge_bot(paused)}   ·   {badge_live(dry)}   ·   {market}')}\n"
+            + quote(
+                f"{badge_bot(paused)}   ·   {badge_live(dry)}   ·   {market}",
+                token_line,
+            )
+            + "\n"
         )
         await update.message.reply_text(header + help_block(), parse_mode="HTML")
 
@@ -169,7 +184,10 @@ class TelegramHandler:
     def _plan_symbols(self, context: ContextTypes.DEFAULT_TYPE, parts: list[str]) -> list[str]:
         if len(parts) > 1 and parts[1].upper() in SYMBOLS:
             return [parts[1].upper()]
-        return list(self.app.runtime.active_symbols())
+        active = self.app.runtime.active_symbols()
+        if active:
+            return list(active)
+        return [self._symbol(context)]
 
     def _render_plans(self, symbols: list[str], premium: int) -> str:
         return format_plans(self.app, symbols, premium)
@@ -389,7 +407,11 @@ class TelegramHandler:
             sym = data.split(":")[1]
             self.app.runtime.set_default_symbol(sym)
             context.user_data["symbol"] = sym
-            await query.edit_message_text(f"✅ 기본 종목 → {sym}")
+            await query.edit_message_text(
+                f"✅ 기본 종목 → <b>{sym}</b>\n"
+                f"📡 자동매매·주문계획도 <b>{sym}</b>만 반영돼요.",
+                parse_mode="HTML",
+            )
             return
 
         if data == "set_active":

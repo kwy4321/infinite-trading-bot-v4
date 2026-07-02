@@ -1,10 +1,10 @@
 """Toss API token status for Telegram UI."""
 
+import html
 import datetime
 from zoneinfo import ZoneInfo
 
 from app import App
-from tg.ui import code, dim, row
 
 
 def _format_remaining(seconds: int) -> str:
@@ -26,36 +26,37 @@ def _format_expires_at(expires_at: datetime.datetime | None) -> str:
     return kst.strftime("%m/%d %H:%M")
 
 
-def format_toss_token_row(app: App, status: dict) -> str:
+def format_toss_token_line(app: App, status: dict | None = None) -> str:
+    """blockquote 밖용 — HTML 태그 없이 plain text (Telegram blockquote 중첩 금지)."""
     settings = app.settings
     if settings.dry_run:
-        return row("🔑", "토스 토큰", dim("DRY_RUN — 미사용"))
+        return "🔑 토스 토큰  🧪 DRY_RUN — 미사용"
     if not settings.has_toss:
-        return row("🔑", "토스 토큰", "🔴 키 없음 · .env 확인")
+        return "🔑 토스 토큰  🔴 키 없음 · .env 확인"
 
+    status = status or {}
     reason = status.get("reason", "")
     remaining = int(status.get("remaining_seconds", 0))
     expires_at = status.get("expires_at")
     expires_str = _format_expires_at(expires_at)
+    expiry_part = f" · 만료 {expires_str}" if expires_str else ""
 
     if reason == "refresh_failed":
-        err = status.get("error", "재발급 실패")
-        return row("🔑", "토스 토큰", f"🔴 사용 불가 · {dim(err[:80])}")
+        err = html.escape(str(status.get("error", "재발급 실패"))[:80])
+        return f"🔑 토스 토큰  🔴 사용 불가 · {err}"
 
     if status.get("ok"):
         left = _format_remaining(remaining)
-        detail = f"{code(left)} · {dim(f'만료 {expires_str}')}" if expires_str else code(left)
-        return row("🔑", "토스 토큰", f"🟢 사용 가능 · {detail}")
+        return f"🔑 토스 토큰  🟢 사용 가능 · {left}{expiry_part}"
 
     if reason == "expiring_soon":
         left = _format_remaining(remaining)
-        detail = f"{code(left)} · {dim(f'만료 {expires_str}')}" if expires_str else code(left)
-        return row("🔑", "토스 토큰", f"🟡 곧 갱신 · {detail}")
+        return f"🔑 토스 토큰  🟡 곧 갱신 · {left}{expiry_part}"
 
     if reason == "expired":
-        return row("🔑", "토스 토큰", "🔴 만료됨 · 재발급 필요")
+        return "🔑 토스 토큰  🔴 만료됨 · 재발급 필요"
 
     if reason == "missing":
-        return row("🔑", "토스 토큰", "⚪ 없음 · 최초 발급 필요")
+        return "🔑 토스 토큰  ⚪ 없음 · 최초 발급 필요"
 
-    return row("🔑", "토스 토큰", "🔴 사용 불가")
+    return "🔑 토스 토큰  🔴 사용 불가"

@@ -31,7 +31,7 @@ from tg.plan_formatter import format_plans
 from tg.records_formatter import format_graduation_history, format_profit_summary
 from tg.dashboard_formatter import format_dashboard
 from tg.status_formatter import format_status
-from tg.token_formatter import format_toss_token_row
+from tg.token_formatter import format_toss_token_line
 from tg.keyboards import (
     active_symbols_keyboard,
     plan_action_keyboard,
@@ -114,30 +114,39 @@ class TelegramHandler:
         if not self._allowed(update):
             return await self._deny(update)
         try:
-            market = market_status_label(self.app.broker.get_us_market_status())
-        except Exception:
-            market = market_status_label("off_hours")
-        paused = self.app.runtime.is_paused()
-        dry = self.app.settings.dry_run or not self.app.settings.has_toss
-        token_line = row("🔑", "토스 토큰", dim("확인 중…"))
-        if dry or not self.app.settings.has_toss:
-            token_line = format_toss_token_row(self.app, {})
-        else:
             try:
-                status = await asyncio.to_thread(self.app.broker.auth.ensure_token_status)
-                token_line = format_toss_token_row(self.app, status)
-            except Exception as e:
-                logger.exception("token status check failed")
-                token_line = row("🔑", "토스 토큰", f"🔴 확인 실패 · {dim(str(e)[:80])}")
-        header = (
-            f"🖥️ <b>라오어 무한매수 4.0</b>\n"
-            + quote(
-                f"{badge_bot(paused)}   ·   {badge_live(dry)}   ·   {market}",
-                token_line,
+                market = market_status_label(self.app.broker.get_us_market_status())
+            except Exception:
+                market = market_status_label("off_hours")
+            paused = self.app.runtime.is_paused()
+            dry = self.app.settings.dry_run or not self.app.settings.has_toss
+            token_line = "🔑 토스 토큰  확인 중…"
+            if dry or not self.app.settings.has_toss:
+                token_line = format_toss_token_line(self.app)
+            else:
+                try:
+                    status = await asyncio.wait_for(
+                        asyncio.to_thread(self.app.broker.auth.ensure_token_status),
+                        timeout=12.0,
+                    )
+                    token_line = format_toss_token_line(self.app, status)
+                except asyncio.TimeoutError:
+                    token_line = "🔑 토스 토큰  🟡 확인 지연 · 잠시 후 다시 /start"
+                except Exception as e:
+                    logger.exception("token status check failed")
+                    token_line = format_toss_token_line(
+                        self.app,
+                        {"reason": "refresh_failed", "error": str(e)},
+                    )
+            header = (
+                f"🖥️ <b>라오어 무한매수 4.0</b>\n"
+                f"{quote(f'{badge_bot(paused)}   ·   {badge_live(dry)}   ·   {market}')}\n"
+                f"{token_line}\n"
             )
-            + "\n"
-        )
-        await update.message.reply_text(header + help_block(), parse_mode="HTML")
+            await update.message.reply_text(header + help_block(), parse_mode="HTML")
+        except Exception as e:
+            logger.exception("cmd_start failed")
+            await update.message.reply_text(f"🚨 /start 실패: {e}")
 
     async def cmd_dashboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):

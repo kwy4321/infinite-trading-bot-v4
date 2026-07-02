@@ -219,8 +219,11 @@ class TelegramHandler:
             symbol = parts[1].upper()
             if symbol in SYMBOLS or symbol == "ALL":
                 return await self._send_cycles(update.message, symbol)
-        kb = symbol_picker("CYCLES")
-        kb.inline_keyboard.append([InlineKeyboardButton("전체", callback_data="CYCLES:ALL")])
+        rows = [
+            [InlineKeyboardButton(s, callback_data=f"CYCLES:{s}") for s in SYMBOLS],
+            [InlineKeyboardButton("전체", callback_data="CYCLES:ALL")],
+        ]
+        kb = InlineKeyboardMarkup(rows)
         await update.message.reply_text("📒 회차 기록 — 종목:", reply_markup=kb)
 
     async def cmd_monthly(self, update: Update, context: ContextTypes.DEFAULT_TYPE):

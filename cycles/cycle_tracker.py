@@ -211,29 +211,64 @@ class CycleTracker:
             result[m] = {"cycles": info["cycles"], "profit_usd": profit, "profit_pct_on_buy": pct, "details": info["details"]}
         return result
 
-    def portfolio_stats(self) -> dict:
+    def cycle_progress(self, symbol: str, *, trading: bool, qty: int) -> int:
+        """거래 종목이 아니면 0. 매수 시작 전이면 0. 진행 중이면 cycle_no."""
+        if not trading:
+            return 0
+        cur = self.get_symbol_data(symbol).get("current")
+        if not cur:
+            return 0
+        if qty <= 0 and cur.get("buy_count", 0) == 0 and cur.get("total_buy_usd", 0) <= 0:
+            return 0
+        return int(cur.get("cycle_no", 1))
+
+    def portfolio_stats(
+        self,
+        symbols: tuple | list | None = None,
+        qty_by_symbol: dict | None = None,
+    ) -> dict:
+        syms = tuple(symbols) if symbols else SYMBOLS
+        trading_set = {s.upper() for s in syms}
+        qty_map = qty_by_symbol or {}
         data = self._load_all()
         realized_usd = 0.0
         completed_cycles = 0
         active_cycles = 0
+        active_cycle_nos: list[int] = []
         per_symbol = {}
         for sym in SYMBOLS:
             s = self._get(data, sym)
+            is_trading = sym in trading_set
+            qty = int(qty_map.get(sym, 0))
+            progress = self.cycle_progress(sym, trading=is_trading, qty=qty)
+            cur = s.get("current")
             sym_realized = sum(c.get("profit_usd", 0.0) for c in s.get("completed", []))
             sym_completed = len(s.get("completed", []))
-            sym_active = 1 if s.get("current") else 0
-            realized_usd += sym_realized
-            completed_cycles += sym_completed
-            active_cycles += sym_active
+            if is_trading:
+                realized_usd += sym_realized
+                completed_cycles += sym_completed
+                if progress > 0:
+                    active_cycles += 1
+                    active_cycle_nos.append(progress)
             per_symbol[sym] = {
-                "realized_usd": round(sym_realized, 2),
-                "completed_cycles": sym_completed,
-                "active": bool(sym_active),
+                "realized_usd": round(sym_realized, 2) if is_trading else 0.0,
+                "completed_cycles": sym_completed if is_trading else 0,
+                "active": progress > 0,
+                "cycle_progress": progress,
+                "cycle_no": int(cur["cycle_no"]) if cur else None,
             }
+        unique_nos = sorted(set(active_cycle_nos))
+        if len(unique_nos) == 1:
+            active_cycle_label = str(unique_nos[0])
+        elif unique_nos:
+            active_cycle_label = "/".join(str(n) for n in unique_nos)
+        else:
+            active_cycle_label = None
         return {
             "realized_usd": round(realized_usd, 2),
             "completed_cycles": completed_cycles,
             "active_cycles": active_cycles,
+            "active_cycle_label": active_cycle_label,
             "per_symbol": per_symbol,
         }
 

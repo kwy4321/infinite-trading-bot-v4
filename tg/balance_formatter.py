@@ -35,7 +35,6 @@ def format_balance(app: App) -> str:
 
 def _holding_rows(item: dict) -> list[str]:
     sym = item.get("symbol", "?").upper()
-    name = item.get("name", sym)
     qty = float(item.get("quantity", 0) or 0)
     avg = float(item.get("averagePurchasePrice", 0) or 0)
     if avg == 0:
@@ -46,8 +45,9 @@ def _holding_rows(item: dict) -> list[str]:
     if mkt == 0 and qty and last:
         mkt = qty * last
 
-    label = sym if name.upper() == sym else f"{sym} · {name}"
     return [
-        symbol_card(label),
-        f"📊 {code(f'{qty:g}주')}　│　{dim('평단')} {usd(avg)}　│　💰 {usd(mkt)}",
+        symbol_card(sym),
+        row("📊", "수량", code(f"{qty:g}주")),
+        row("📐", "평단", usd(avg)),
+        row("💰", "평가", usd(mkt)),
     ]

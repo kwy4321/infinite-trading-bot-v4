@@ -103,29 +103,48 @@ def _fetch_account(app: App) -> dict:
     }
 
 
-def _active_cycle_lines(app: App) -> list[str]:
+def _qty_by_symbol(app: App) -> dict[str, int]:
+    return {sym: int(app.state.load(sym).get("qty", 0)) for sym in SYMBOLS}
+
+
+def _active_cycle_lines(app: App, stats: dict) -> list[str]:
     lines = []
-    for sym in SYMBOLS:
+    for sym in app.runtime.active_symbols():
+        progress = stats["per_symbol"].get(sym, {}).get("cycle_progress", 0)
+        if progress <= 0:
+            continue
         st = app.state.load(sym)
         price = resolve_price(app, sym)
         live = app.cycles.calc_unrealized_pnl(sym, st["qty"], st["avg_price"], price)
         if not live:
             continue
         lines.append(
-            f"{symbol_card(sym)}　#{code(str(live['cycle_no']))}　"
+            f"{symbol_card(sym)}　#{code(str(progress))}　"
             f"{pnl_line(live['cycle_pnl_usd'], live['cycle_pnl_pct'])}"
         )
     return lines
 
 
-def _realized_block(stats: dict, cash_usd: float) -> list[str]:
+def _tracked_symbols(app: App) -> list[str]:
+    return app.runtime.active_symbols()
+
+
+def _cycle_progress_rows(stats: dict) -> list[str]:
+    rows = []
+    for sym in SYMBOLS:
+        progress = stats["per_symbol"].get(sym, {}).get("cycle_progress", 0)
+        rows.append(row("🔢", sym, code(f"{progress}회차")))
+    return rows
+
+
+def _realized_block(app: App, stats: dict, cash_usd: float) -> list[str]:
     realized = stats["realized_usd"]
     completed = stats["completed_cycles"]
-    active = stats["active_cycles"]
     pct_val = round(realized / cash_usd * 100, 2) if cash_usd > 0 else None
 
     rows = [
-        row("📊", "회차", f"{dim('완료')} {code(str(completed))}　│　{dim('진행')} {code(str(active))}"),
+        row("📊", "완료", code(f"{completed}회")),
+        *_cycle_progress_rows(stats),
     ]
     if pct_val is not None:
         rows.append(pnl_line_precise(realized, pct_val))
@@ -140,14 +159,15 @@ def _realized_block(stats: dict, cash_usd: float) -> list[str]:
 
 
 def format_records_dashboard(app: App) -> str:
-    stats = app.cycles.portfolio_stats()
+    tracked = _tracked_symbols(app)
+    stats = app.cycles.portfolio_stats(tracked, _qty_by_symbol(app))
     lines = [section("자산 대시보드", "📒"), ""]
 
     if is_dry(app):
         lines.append(dim("🧪 DRY 모드 — Toss API 미조회"))
         lines.append("")
-        lines.extend(_realized_block(stats, 0.0))
-        active = _active_cycle_lines(app)
+        lines.extend(_realized_block(app, stats, 0.0))
+        active = _active_cycle_lines(app, stats)
         if active:
             lines.extend(["", subsection("⏳ 진행 회차 (평가)"), quote(*active)])
         return "\n".join(lines)
@@ -183,15 +203,15 @@ def format_records_dashboard(app: App) -> str:
         lines.append(row("💱", "환율", dim("조회 실패")))
 
     lines.extend(["", DIVIDER, ""])
-    lines.extend(_realized_block(stats, acct["cash_usd"]))
+    lines.extend(_realized_block(app, stats, acct["cash_usd"]))
 
-    active = _active_cycle_lines(app)
+    active = _active_cycle_lines(app, stats)
     if active:
         lines.extend(["", subsection("⏳ 진행 회차 (평가)"), quote(*active)])
 
     per_sym = stats.get("per_symbol", {})
     detail = [
-        sym for sym in SYMBOLS
+        sym for sym in tracked
         if per_sym.get(sym, {}).get("realized_usd", 0) != 0 or per_sym.get(sym, {}).get("active")
     ]
     if detail:

@@ -93,6 +93,9 @@ class CycleTracker:
         if sym["current"] is None:
             sym["current"] = _new_current(sym["next_cycle_no"], principal)
         cur = sym["current"]
+        # 회차 '시작일'은 레코드 생성일이 아니라 실제 첫 매수일로 기록한다.
+        if cur.get("buy_count", 0) == 0 and cur.get("total_buy_usd", 0.0) == 0:
+            cur["started_at"] = _today_str()
         cur["total_buy_usd"] = round(cur["total_buy_usd"] + max(0.0, usd_amount), 2)
         cur["buy_count"] = cur.get("buy_count", 0) + 1
         cur["max_T"] = max(cur.get("max_T", 0.0), float(t_after))
@@ -237,6 +240,7 @@ class CycleTracker:
     def format_cycles_report(self, symbol: str, qty: int, avg_price: float, current_price: float) -> str:
         sym = self.get_symbol_data(symbol)
         lines = [f"📒 <b>[{symbol}] 회차 기록</b>\n"]
+        snap = sym.get("current", {}).get("snapshot") if sym.get("current") else None
         live = self.calc_unrealized_pnl(symbol, qty, avg_price, current_price)
         if live:
             sign = "+" if live["cycle_pnl_usd"] >= 0 else ""
@@ -244,13 +248,10 @@ class CycleTracker:
                 f"🔵 <b>진행 중 — {live['cycle_no']}회차</b>",
                 f"  시작: {live['started_at']}",
             ]
-            snap = sym.get("current", {}).get("snapshot") if sym.get("current") else None
             if snap:
-                snap_at = snap.get("at", "")[:16].replace("T", " ")
                 lines += [
-                    f"  🎯 T <b>{snap['T']:.2f}</b> · 평단 <b>${snap['avg_price']:,.2f}</b> · <b>{snap['qty']}</b>주",
+                    f"  🎯 T <b>{snap['T']:g}</b> · 평단 <b>${snap['avg_price']:,.2f}</b> · <b>{snap['qty']}</b>주",
                     f"  💵 평가금액 <b>${snap['eval_usd']:,.2f}</b> (투입 ${snap['invested_usd']:,.2f})",
-                    f"  <i>동기화 {snap_at}</i>",
                 ]
             lines += [
                 f"  회차 손익: {sign}${live['cycle_pnl_usd']:,.2f} ({sign}{live['cycle_pnl_pct']:.2f}%)", "",
@@ -258,13 +259,16 @@ class CycleTracker:
         else:
             lines.append("💤 진행 중인 회차 없음\n")
         completed = sym.get("completed", [])
-        if not completed:
+        if completed:
+            lines.append(f"🏆 <b>완료 ({len(completed)}개)</b>")
+            for c in reversed(completed[-10:]):
+                sign = "+" if c["profit_usd"] >= 0 else ""
+                lines.append(f"  #{c['cycle_no']} {c['ended_at']} | {sign}${c['profit_usd']:,.2f} ({sign}{c['profit_pct']:.2f}%)")
+        else:
             lines.append("📭 완료된 회차 없음")
-            return "\n".join(lines)
-        lines.append(f"🏆 <b>완료 ({len(completed)}개)</b>")
-        for c in reversed(completed[-10:]):
-            sign = "+" if c["profit_usd"] >= 0 else ""
-            lines.append(f"  #{c['cycle_no']} {c['ended_at']} | {sign}${c['profit_usd']:,.2f} ({sign}{c['profit_pct']:.2f}%)")
+        if snap and snap.get("at"):
+            snap_at = snap["at"][:16].replace("T", " ")
+            lines.append(f"\n<i>🔄 {snap_at} 동기화</i>")
         return "\n".join(lines)
 
     def format_monthly_report(self, year: Optional[int] = None, symbol: Optional[str] = None) -> str:

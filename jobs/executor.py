@@ -157,15 +157,13 @@ class JobExecutor:
         header = "🔔 <b>미국 장 시작</b> — 오늘의 주문계획이에요.\n\n"
         await self._notify(header + text, html=True)
 
-    def _derive_t(self, invested_usd: float, principal: float, split_count: int) -> float:
-        """실투입금 → 진행 회차 T (라오어 기준: 투입금 ÷ (원금/분할수))."""
-        seed = (principal / split_count) if split_count > 0 else 0.0
-        if seed <= 0:
-            return 0.0
-        return round(invested_usd / seed, 2)
-
     def sync_cycle_from_broker(self, symbol: str) -> dict:
-        """토스 실계좌 보유내역으로 T·평단가·주수·평가금액을 가져와 현재 회차에 기록."""
+        """토스 실계좌로 평단가·주수·평가금액을 가져와 현재 회차에 기록.
+
+        T(진행 회차)는 토스가 주지 않는 값이라, 봇이 매수마다 누적 관리하는
+        state["T"](풀매수 +1, 절반매수 +0.5)를 그대로 쓴다. 실계좌의 평단/주수는
+        진실로 삼아 동기화한다.
+        """
         st = self.app.state.load(symbol)
         item = self.app.broker.get_holdings_item(symbol)
         qty = int(item.get("qty", 0) or 0)
@@ -178,22 +176,20 @@ class JobExecutor:
             return {"symbol": symbol, "qty": 0, "avg": 0.0, "price": price,
                     "invested": 0.0, "eval": 0.0, "T": 0.0}
 
-        t_val = self._derive_t(invested, st["principal"], st["split_count"])
-        # 실계좌를 진실로 삼아 상태 동기화 (평단·주수는 항상, T는 산출 가능할 때만)
+        # 평단·주수만 실계좌 기준으로 동기화 (T는 건드리지 않음)
         st["qty"] = qty
         st["avg_price"] = round(avg, 4)
-        if st["split_count"] > 0 and st["principal"] > 0:
-            st["T"] = t_val
         self.app.state.save(symbol, st)
 
+        t_val = float(st.get("T", 0.0))
         self.app.cycles.ensure_current(symbol, st["principal"])
         self.app.cycles.record_snapshot(
-            symbol, t_val=st["T"], avg_price=avg, qty=qty,
+            symbol, t_val=t_val, avg_price=avg, qty=qty,
             current_price=price, eval_usd=eval_usd, invested_usd=invested,
             principal=st["principal"],
         )
         return {"symbol": symbol, "qty": qty, "avg": avg, "price": price,
-                "invested": invested, "eval": eval_usd, "T": st["T"]}
+                "invested": invested, "eval": eval_usd, "T": t_val}
 
     async def run_cycle_sync(self, notify: bool = True) -> None:
         """활성 종목의 회차 기록을 토스 실계좌 기준으로 동기화."""
@@ -216,7 +212,7 @@ class JobExecutor:
                 continue
             lines.append(
                 f"◆ <b>{sym}</b>\n"
-                f"🎯 T <b>{r['T']:.2f}</b> · 평단 <b>${r['avg']:,.2f}</b> · <b>{r['qty']}</b>주\n"
+                f"🎯 T <b>{r['T']:g}</b> · 평단 <b>${r['avg']:,.2f}</b> · <b>{r['qty']}</b>주\n"
                 f"💵 평가금액 <b>${r['eval']:,.2f}</b> <i>(투입 ${r['invested']:,.2f})</i>"
             )
         if notify:

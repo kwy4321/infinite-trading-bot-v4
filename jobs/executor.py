@@ -40,6 +40,7 @@ class JobExecutor:
         plan = self.app.strategy.get_plan(
             symbol, price, st["avg_price"], st["qty"], st["T"],
             premium, st["principal"], st["split_count"], st.get("force_one", False),
+            take_profit_pct=st.get("take_profit_pct"),
         )
         filtered = filter_orders_for_phase(plan, phase)
 

@@ -2,7 +2,7 @@
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from config.settings import PREMIUM_OPTIONS, SPLIT_OPTIONS, SYMBOLS
+from config.settings import PREMIUM_OPTIONS, SPLIT_OPTIONS, SYMBOLS, TAKE_PROFIT_OPTIONS
 
 
 def premium_keyboard() -> InlineKeyboardMarkup:
@@ -11,6 +11,19 @@ def premium_keyboard() -> InlineKeyboardMarkup:
     for n in PREMIUM_OPTIONS:
         row.append(InlineKeyboardButton(f"+{n}%", callback_data=f"PREMIUM:{n}"))
         if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return InlineKeyboardMarkup(rows)
+
+
+def take_profit_keyboard() -> InlineKeyboardMarkup:
+    rows = []
+    row = []
+    for n in TAKE_PROFIT_OPTIONS:
+        row.append(InlineKeyboardButton(f"+{n}%", callback_data=f"TAKEPROFIT:{n}"))
+        if len(row) == 3:
             rows.append(row)
             row = []
     if row:
@@ -39,6 +52,7 @@ def setting_keyboard(force_one: bool = False) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("💰 원금", callback_data="set_seed")],
         [InlineKeyboardButton("🍰 분할", callback_data="set_split")],
         [InlineKeyboardButton("📈 큰수매수", callback_data="set_premium")],
+        [InlineKeyboardButton("🎯 목표수익률", callback_data="set_takeprofit")],
         [InlineKeyboardButton(force_label, callback_data="toggle_force_one")],
     ])
 

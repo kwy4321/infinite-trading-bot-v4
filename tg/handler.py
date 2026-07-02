@@ -41,6 +41,7 @@ from tg.keyboards import (
     split_count_keyboard,
     split_ratio_keyboard,
     symbol_picker,
+    take_profit_keyboard,
 )
 from tg.sender import TelegramSender
 
@@ -67,10 +68,14 @@ class TelegramHandler:
     def _symbol(self, context: ContextTypes.DEFAULT_TYPE) -> str:
         return context.user_data.get("symbol") or self.app.runtime.default_symbol()
 
+    def _effective_take_profit(self, symbol: str, st: dict) -> float:
+        return self.app.strategy.resolve_take_profit(symbol, st.get("take_profit_pct"))
+
     def _setting_text(self, symbol: str) -> str:
         st = self.app.state.load(symbol)
         active = self.app.runtime.active_symbols()
         active_str = ", ".join(active) if active else "없음"
+        tp = self._effective_take_profit(symbol, st)
         return (
             f"{section('설정', '⚙️')}\n"
             + quote(
@@ -79,6 +84,7 @@ class TelegramHandler:
                 row("💰", "원금", usd(st["principal"], decimals=0)),
                 row("🍰", "분할", code(str(st["split_count"]))),
                 row("📈", "큰수매수", code(f"+{self.app.runtime.premium_default()}%")),
+                row("🎯", "목표수익률", code(f"+{tp:g}%")),
                 row("⚡", "강제1회", badge_on(st.get("force_one", False))),
             )
         )
@@ -343,6 +349,24 @@ class TelegramHandler:
             )
             return
 
+        if data == "set_takeprofit":
+            await query.edit_message_text(
+                "🎯 목표 수익률 (평단가 대비 익절 LOC 기준):",
+                reply_markup=take_profit_keyboard(),
+            )
+            return
+
+        if data.startswith("TAKEPROFIT:"):
+            pct = int(data.split(":")[1])
+            sym = self._symbol(context)
+            self.app.state.set_take_profit(sym, pct)
+            await query.edit_message_text(
+                self._setting_text(sym),
+                reply_markup=self._setting_keyboard(sym),
+                parse_mode="HTML",
+            )
+            return
+
         if data == "toggle_force_one":
             sym = self._symbol(context)
             st = self.app.state.load(sym)
@@ -491,6 +515,7 @@ class TelegramHandler:
         plan = self.app.strategy.get_plan(
             symbol, pos["current_price"], st["avg_price"], st["qty"], st["T"],
             premium, st["principal"], st["split_count"], st.get("force_one", False),
+            take_profit_pct=st.get("take_profit_pct"),
         )
         orders = plan.get("buy_orders", []) + plan.get("sell_orders", [])
         ok = 0

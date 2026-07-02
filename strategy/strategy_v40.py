@@ -62,6 +62,12 @@ class InfiniteStrategyV40:
     def get_take_profit_pct(self, ticker: str) -> float:
         return self.TAKE_PROFIT_PCT.get(ticker, 15.0)
 
+    def resolve_take_profit(self, ticker: str, override: float | None = None) -> float:
+        """설정값(override)이 있으면 그걸, 없으면 종목 기본값(TQQQ 15 / SOXL 20)을 쓴다."""
+        if override and float(override) > 0:
+            return float(override)
+        return self.get_take_profit_pct(ticker)
+
     def detect_mode(self, qty: int, t_val: float, split_count: int) -> TradingMode:
         if qty <= 0:
             return TradingMode.ENTRY
@@ -159,10 +165,11 @@ class InfiniteStrategyV40:
         self, ticker: str, current_price: float, avg_price: float,
         qty: int, t_val: float, premium_pct: int,
         principal: float, split_count: int, force_one: bool = False,
+        take_profit_pct: float | None = None,
     ) -> dict:
         mode = self.detect_mode(qty, t_val, split_count)
         star_pct = self.calc_star_pct(ticker, t_val, split_count)
-        take_profit_pct = self.get_take_profit_pct(ticker)
+        take_profit_pct = self.resolve_take_profit(ticker, take_profit_pct)
         star_price = self.calc_star_price(avg_price, star_pct) if avg_price > 0 else 0.0
         star_buy = self.calc_buy_trigger_price(star_price) if star_price > 0 else 0.0
         one_buy = self.calc_one_buy_amount(

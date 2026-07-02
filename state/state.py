@@ -14,6 +14,7 @@ DEFAULT_STATE = {
     "mode": "normal",
     "split_count": 40,
     "principal": 10000.0,
+    "take_profit_pct": 0.0,
     "force_one": False,
     "T": 0.0,
     "qty": 0,
@@ -81,6 +82,12 @@ class StateStore:
     def set_split_count(self, symbol: str, count: int) -> dict:
         state = self.load(symbol)
         state["split_count"] = int(count)
+        self.save(symbol, state)
+        return state
+
+    def set_take_profit(self, symbol: str, pct: float) -> dict:
+        state = self.load(symbol)
+        state["take_profit_pct"] = max(0.0, float(pct))
         self.save(symbol, state)
         return state
 

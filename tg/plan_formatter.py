@@ -26,6 +26,7 @@ def format_plan_block(app: App, symbol: str, premium: int) -> str:
     plan = app.strategy.get_plan(
         symbol, price, st["avg_price"], st["qty"], st["T"],
         premium, st["principal"], st["split_count"], st.get("force_one", False),
+        take_profit_pct=st.get("take_profit_pct"),
     )
     strat = mode_label(plan["mode"])
     t_str = f"{st['T']:.2f}"

@@ -13,6 +13,7 @@ DATA_DIR = ROOT / "data" / "accounts" / "default"
 SYMBOLS = ("TQQQ", "SOXL")
 SPLIT_OPTIONS = (20, 30, 40, 50, 60)
 PREMIUM_OPTIONS = (5, 10, 15, 20)
+TAKE_PROFIT_OPTIONS = (10, 15, 20, 25, 30)
 
 
 @dataclass

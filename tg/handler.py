@@ -490,24 +490,24 @@ class TelegramHandler:
             return
 
     async def _send_cycles(self, target, symbol: str):
-        if symbol == "ALL":
+        try:
+            symbols = list(self.app.state.list_symbols()) if symbol == "ALL" else [symbol]
             parts = []
-            for sym in self.app.state.list_symbols():
+            for sym in symbols:
                 st = self.app.state.load(sym)
-                pos = self._pos(sym)
+                try:
+                    price = self._pos(sym)["current_price"]
+                except Exception:
+                    logger.exception("holdings fetch failed %s", sym)
+                    price = 0.0
                 self.app.cycles.ensure_current(sym, st["principal"])
                 parts.append(self.app.cycles.format_cycles_report(
-                    sym, st["qty"], st["avg_price"], pos["current_price"],
+                    sym, st["qty"], st["avg_price"], price,
                 ))
-            msg = "\n\n".join(parts)
-        else:
-            st = self.app.state.load(symbol)
-            pos = self._pos(symbol)
-            self.app.cycles.ensure_current(symbol, st["principal"])
-            msg = self.app.cycles.format_cycles_report(
-                symbol, st["qty"], st["avg_price"], pos["current_price"],
-            )
-        await target.reply_text(msg, parse_mode="HTML")
+            await target.reply_text("\n\n".join(parts), parse_mode="HTML")
+        except Exception as e:
+            logger.exception("cycles report failed")
+            await target.reply_text(f"🚨 회차 조회 실패: {e}")
 
     async def _execute_manual(self, chat_id: int, symbol: str, premium: int, context: ContextTypes.DEFAULT_TYPE):
         st = self.app.state.load(symbol)

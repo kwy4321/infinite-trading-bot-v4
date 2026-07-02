@@ -32,7 +32,7 @@ class Settings:
     # GCP e2-micro 등 소형 VM — 디스크·RAM 절약
     backup_enabled: bool = field(default_factory=lambda: os.getenv("BACKUP_ENABLED", "true").lower() == "true")
     backup_keep: int = field(default_factory=lambda: _int_env("BACKUP_KEEP", 5))
-    briefing_enabled: bool = field(default_factory=lambda: os.getenv("BRIEFING_ENABLED", "false").lower() == "true")
+    briefing_enabled: bool = field(default_factory=lambda: os.getenv("BRIEFING_ENABLED", "true").lower() == "true")
     log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "WARNING").upper())
     max_split_log: int = field(default_factory=lambda: _int_env("MAX_SPLIT_LOG", 30))
     max_completed_cycles: int = field(default_factory=lambda: _int_env("MAX_COMPLETED_CYCLES", 50))

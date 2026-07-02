@@ -124,9 +124,13 @@ class JobExecutor:
         await self._notify("\n".join(lines))
 
     async def run_morning_briefing(self) -> None:
-        from briefing.morning_briefing import build_briefing
-        text = await build_briefing(self.app)
-        await self._notify(text, html=True)
+        try:
+            from briefing.morning_briefing import build_briefing
+            text = await build_briefing(self.app)
+            await self._notify(text, html=True)
+        except Exception as e:
+            logger.exception("morning briefing failed")
+            await self._notify(f"🚨 아침 브리핑 생성 실패: {e}")
 
     async def run_market_open_plan(self) -> None:
         """미국 장 시작 시각에 오늘의 주문계획을 자동 전송 (개장일·가동 상태에만)."""

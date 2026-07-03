@@ -10,14 +10,14 @@ MAIN_PLAN = "📋 주문계획"
 MAIN_SETTING = "⚙️ 설정"
 MAIN_STATUS = "📈 현황"
 MAIN_BALANCE = "💼 잔고"
-MAIN_TOKEN = "🔑 토큰"
+MAIN_CYCLES = "📒 회차내역"
 
 
 def main_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [
             [KeyboardButton(MAIN_HOME), KeyboardButton(MAIN_PLAN), KeyboardButton(MAIN_SETTING)],
-            [KeyboardButton(MAIN_STATUS), KeyboardButton(MAIN_BALANCE), KeyboardButton(MAIN_TOKEN)],
+            [KeyboardButton(MAIN_STATUS), KeyboardButton(MAIN_BALANCE), KeyboardButton(MAIN_CYCLES)],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -71,6 +71,7 @@ def setting_keyboard(force_one: bool = False) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🍰 분할", callback_data="set_split")],
         [InlineKeyboardButton("📈 큰수매수", callback_data="set_premium")],
         [InlineKeyboardButton("🎯 목표수익률", callback_data="set_takeprofit")],
+        [InlineKeyboardButton("🔑 API 토큰", callback_data="set_token")],
         [InlineKeyboardButton(force_label, callback_data="toggle_force_one")],
     ])
 
@@ -97,10 +98,11 @@ def active_symbols_keyboard(active: list[str]) -> InlineKeyboardMarkup:
     return trading_symbols_keyboard(active, active[0] if active else SYMBOLS[0])
 
 
-def token_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔄 갱신하기", callback_data="TOKEN:refresh")],
-    ])
+def token_keyboard(from_settings: bool = False) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton("🔄 갱신하기", callback_data="TOKEN:refresh")]]
+    if from_settings:
+        rows.append([InlineKeyboardButton("⬅️ 설정으로", callback_data="back_setting")])
+    return InlineKeyboardMarkup(rows)
 
 
 def run_job_keyboard() -> InlineKeyboardMarkup:

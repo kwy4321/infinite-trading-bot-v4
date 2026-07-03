@@ -151,6 +151,7 @@ def help_block() -> str:
             (f"{code('/setting')}", "💰 원금·분할·큰수매수"),
             (f"{code('/split')}", "📐 액면분할"),
             (f"{code('/set_t')}", "🎯 T 값 조정"),
+            (f"{code('/token')}", "🔑 API 토큰 상태·갱신"),
         ]),
         ("📒 기록", [
             (f"{code('/dashboard')}", "📒 자산·손익 대시보드"),
@@ -163,7 +164,6 @@ def help_block() -> str:
             (f"{code('/pause')}", "⏸ 자동 실행 멈춤"),
             (f"{code('/resume')}", "⏰ 자동 실행 재개"),
             (f"{code('/run')}", "▶️ 수동 실행"),
-            (f"{code('/token')}", "🔑 토큰 상태·갱신"),
         ]),
     ]
     blocks = []

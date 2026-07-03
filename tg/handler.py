@@ -37,7 +37,7 @@ from tg.keyboards import (
     MAIN_SETTING,
     MAIN_STATUS,
     MAIN_BALANCE,
-    MAIN_TOKEN,
+    MAIN_CYCLES,
 )
 from tg.sender import TelegramSender
 from tg.ui import DIVIDER, badge_on, code, quote, row, section, usd
@@ -244,6 +244,31 @@ class TelegramHandler:
         target = update.callback_query.message if update.callback_query else update.message
         await target.reply_text(text, reply_markup=markup)
 
+    async def cmd_cycles_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """하단 메뉴 — 거래 중인 종목의 현재 회차·매매 내역."""
+        if not self._allowed(update):
+            return await self._deny(update)
+        active = self.app.runtime.active_symbols()
+        if not active:
+            return await update.message.reply_text(
+                "⚠️ 거래 종목이 없어요. ⚙️ 설정 → 📡 거래 종목에서 켜주세요.",
+            )
+        if len(active) == 1:
+            return await self._send_cycles(update.message, active[0])
+        parts = []
+        for sym in active:
+            st = self.app.state.load(sym)
+            try:
+                price = self._pos(sym)["current_price"]
+            except Exception:
+                logger.exception("holdings fetch failed %s", sym)
+                price = 0.0
+            self.app.cycles.ensure_current(sym, st["principal"])
+            parts.append(self.app.cycles.format_cycles_report(
+                sym, st["qty"], st["avg_price"], price,
+            ))
+        await update.message.reply_text("\n\n".join(parts), parse_mode="HTML")
+
     async def cmd_cycles(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
             return await self._deny(update)
@@ -446,6 +471,20 @@ class TelegramHandler:
             )
             return
 
+        if data == "set_token":
+            dry = self.app.settings.dry_run or not self.app.settings.has_toss
+            try:
+                status = None if dry or not self.app.settings.has_toss else await self._fetch_token_status()
+                text = format_toss_token_detail(self.app, status)
+                markup = token_keyboard(from_settings=True) if not dry and self.app.settings.has_toss else InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⬅️ 설정으로", callback_data="back_setting")],
+                ])
+                await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+            except Exception as e:
+                logger.exception("set_token failed")
+                await query.edit_message_text(f"🚨 토큰 조회 실패: {e}")
+            return
+
         if data == "set_seed":
             context.user_data["awaiting"] = data
             context.user_data["awaiting_symbol"] = self._symbol(context)
@@ -525,7 +564,7 @@ class TelegramHandler:
                 text = format_toss_token_detail(self.app, status)
                 await query.edit_message_text(
                     text,
-                    reply_markup=token_keyboard(),
+                    reply_markup=token_keyboard(from_settings=True),
                     parse_mode="HTML",
                 )
             except Exception as e:
@@ -609,7 +648,7 @@ class TelegramHandler:
             MAIN_SETTING: self.cmd_setting,
             MAIN_STATUS: self.cmd_status,
             MAIN_BALANCE: self.cmd_balance,
-            MAIN_TOKEN: self.cmd_token,
+            MAIN_CYCLES: self.cmd_cycles_menu,
         }
         if text in menu_routes:
             context.user_data.pop("awaiting", None)

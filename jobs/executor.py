@@ -12,6 +12,7 @@ from strategy.order_planner import (
     filter_orders_for_phase,
     gate_orders_by_close_price,
 )
+from strategy.fill_reconciler import FillReconciler
 
 logger = logging.getLogger(__name__)
 KST = ZoneInfo("Asia/Seoul")
@@ -63,12 +64,16 @@ class JobExecutor:
                 try:
                     if is_dry:
                         success = True
+                        order_id = None
                     else:
-                        success = self.app.broker.place_market_order(
+                        order_id = self.app.broker.place_market_order(
                             symbol, side, order["qty"]
                         )
+                        success = bool(order_id)
                     if success:
                         ok += 1
+                        if order_id:
+                            FillReconciler.track_order(st, symbol, order_id, side, order["qty"])
                         if side == "BUY":
                             st = self.app.fills.apply_buy_fill(
                                 st, order, self.app.cycles, symbol
@@ -180,13 +185,18 @@ class JobExecutor:
         header = "🔔 <b>미국 장 시작</b> — 오늘의 주문계획이에요.\n\n"
         await self._notify(header + text, html=True)
 
-    def sync_cycle_from_broker(self, symbol: str) -> dict:
-        """토스 실계좌로 평단가·주수·평가금액을 가져와 현재 회차에 기록.
+    def sync_cycle_from_broker(self, symbol: str, premium: int | None = None) -> dict:
+        """토스 실계좌·체결 내역으로 T·회차·평단·주수 동기화."""
+        if premium is None:
+            premium = self.app.runtime.premium_default()
 
-        T(진행 회차)는 토스가 주지 않는 값이라, 봇이 매수마다 누적 관리하는
-        state["T"](풀매수 +1, 절반매수 +0.5)를 그대로 쓴다. 실계좌의 평단/주수는
-        진실로 삼아 동기화한다.
-        """
+        reconcile = {"applied": [], "t_before": 0.0, "t_after": 0.0}
+        if self.app.reconciler and not (self.app.settings.dry_run or not self.app.settings.has_toss):
+            try:
+                reconcile = self.app.reconciler.reconcile_symbol(symbol, premium)
+            except Exception:
+                logger.exception("fill reconcile failed %s", symbol)
+
         st = self.app.state.load(symbol)
         item = self.app.broker.get_holdings_item(symbol)
         qty = int(item.get("qty", 0) or 0)
@@ -196,12 +206,17 @@ class JobExecutor:
         eval_usd = round(qty * price, 2) if price > 0 else invested
 
         if qty <= 0:
-            return {"symbol": symbol, "qty": 0, "avg": 0.0, "price": price,
-                    "invested": 0.0, "eval": 0.0, "T": 0.0}
+            return {
+                "symbol": symbol, "qty": 0, "avg": 0.0, "price": price,
+                "invested": 0.0, "eval": 0.0, "T": 0.0,
+                "reconciled": reconcile.get("applied", []),
+                "t_before": reconcile.get("t_before", 0.0),
+                "t_after": reconcile.get("t_after", 0.0),
+            }
 
-        # 평단·주수만 실계좌 기준으로 동기화 (T는 건드리지 않음)
         st["qty"] = qty
         st["avg_price"] = round(avg, 4)
+        st["last_t_qty"] = qty
         self.app.state.save(symbol, st)
 
         t_val = float(st.get("T", 0.0))
@@ -211,8 +226,13 @@ class JobExecutor:
             current_price=price, eval_usd=eval_usd, invested_usd=invested,
             principal=st["principal"],
         )
-        return {"symbol": symbol, "qty": qty, "avg": avg, "price": price,
-                "invested": invested, "eval": eval_usd, "T": t_val}
+        return {
+            "symbol": symbol, "qty": qty, "avg": avg, "price": price,
+            "invested": invested, "eval": eval_usd, "T": t_val,
+            "reconciled": reconcile.get("applied", []),
+            "t_before": reconcile.get("t_before", t_val),
+            "t_after": t_val,
+        }
 
     async def run_cycle_sync(self, notify: bool = True) -> None:
         """활성 종목의 회차 기록을 토스 실계좌 기준으로 동기화."""
@@ -222,10 +242,11 @@ class JobExecutor:
                 await self._notify("🧪 DRY_RUN — 실계좌 회차 동기화는 LIVE에서만 됩니다.")
             return
         symbols = self._active_symbols() or list(self.app.state.list_symbols())
-        lines = ["🔄 <b>회차 동기화</b> <i>(토스 실계좌 기준)</i>"]
+        premium = self.app.runtime.premium_default()
+        lines = ["🔄 <b>회차 동기화</b> <i>(체결·실계좌 기준)</i>"]
         for sym in symbols:
             try:
-                r = self.sync_cycle_from_broker(sym)
+                r = self.sync_cycle_from_broker(sym, premium)
             except Exception as e:
                 logger.exception("cycle sync failed %s", sym)
                 lines.append(f"🚨 [{sym}] 동기화 실패: {e}")
@@ -233,11 +254,24 @@ class JobExecutor:
             if r["qty"] <= 0:
                 lines.append(f"◆ <b>{sym}</b> — 보유 없음")
                 continue
+            t_line = f"🎯 T <b>{r['T']:g}</b>"
+            if r.get("reconciled"):
+                tb, ta = r.get("t_before", r["T"]), r.get("t_after", r["T"])
+                if ta != tb:
+                    t_line = f"🎯 T <b>{tb:g}</b> → <b>{ta:g}</b>"
             lines.append(
                 f"◆ <b>{sym}</b>\n"
-                f"🎯 T <b>{r['T']:g}</b> · 평단 <b>${r['avg']:,.2f}</b> · <b>{r['qty']}</b>주\n"
+                f"{t_line} · 평단 <b>${r['avg']:,.2f}</b> · <b>{r['qty']}</b>주\n"
                 f"💵 평가금액 <b>${r['eval']:,.2f}</b> <i>(투입 ${r['invested']:,.2f})</i>"
             )
+            for fill in r.get("reconciled", []):
+                side = fill.get("side", "")
+                icon = "🟢" if side == "BUY" else "🔴"
+                act = fill.get("action") or side
+                lines.append(
+                    f"  {icon} 반영: {act} {fill.get('qty', 0)}주 "
+                    f"@ ${fill.get('price', 0):,.2f} → T {fill.get('t_after', 0):g}"
+                )
         if notify:
             await self._notify("\n".join(lines), html=True)
 

@@ -330,7 +330,7 @@ class TelegramHandler:
             return await update.message.reply_text(
                 "⚠️ LIVE 모드에서만 실계좌 동기화가 됩니다. (.env: DRY_RUN=false + Toss 키)"
             )
-        await update.message.reply_text("🔄 토스 실계좌에서 회차 동기화 중...")
+        await update.message.reply_text("🔄 토스 체결·실계좌에서 T·회차 동기화 중...")
         await self.executor.run_cycle_sync(notify=True)
 
     async def cmd_pause(self, update: Update, context: ContextTypes.DEFAULT_TYPE):

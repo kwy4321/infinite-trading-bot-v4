@@ -170,11 +170,11 @@ class TossClient:
         self._request("POST", "/api/v1/orders", "ORDER", account=True, json=body)
         return True
 
-    def place_market_order(self, symbol: str, side: str, qty: int) -> bool:
+    def place_market_order(self, symbol: str, side: str, qty: int) -> str | None:
         """시장가 주문 — 장 마감 30초 전 LOC 흉내(보장 체결, 종가 근사가로 체결)."""
         if self.dry_run:
             logger.info("[DRY_RUN] MARKET %s %s %s", side, qty, symbol)
-            return True
+            return None
         body = {
             "symbol": symbol.upper(),
             "side": side.upper(),
@@ -183,8 +183,30 @@ class TossClient:
             "quantity": qty,
             "clientOrderId": str(uuid.uuid4()),
         }
-        self._request("POST", "/api/v1/orders", "ORDER", account=True, json=body)
-        return True
+        data = self._request("POST", "/api/v1/orders", "ORDER", account=True, json=body)
+        result = data.get("result", data)
+        return str(result.get("orderId") or data.get("orderId") or "") or None
+
+    def get_open_orders(self, symbol: str | None = None) -> list[dict]:
+        if self.dry_run:
+            return []
+        data = self._request(
+            "GET", "/api/v1/orders", "ORDER_HISTORY", account=True, params={"status": "OPEN"},
+        )
+        result = data.get("result", data)
+        orders = list(result.get("orders") or [])
+        if symbol:
+            sym = symbol.upper()
+            orders = [o for o in orders if (o.get("symbol") or "").upper() == sym]
+        return orders
+
+    def get_order(self, order_id: str) -> dict:
+        if self.dry_run:
+            return {}
+        data = self._request(
+            "GET", f"/api/v1/orders/{order_id}", "ORDER_HISTORY", account=True,
+        )
+        return data.get("result", data)
 
     def _parse_session_time(self, raw: str) -> datetime.time:
         parts = raw.split(":")

@@ -11,6 +11,7 @@ from cycles.cycle_tracker import CycleTracker
 from state.runtime_settings import RuntimeSettings
 from state.state import StateStore
 from strategy.fill_processor import FillProcessor
+from strategy.fill_reconciler import FillReconciler
 from strategy.strategy_v40 import InfiniteStrategyV40
 
 
@@ -25,6 +26,7 @@ class App:
     fills: FillProcessor
     limiter: RateLimiter
     broker: TossClient
+    reconciler: FillReconciler | None = None
 
     @classmethod
     def create(cls) -> "App":
@@ -39,7 +41,7 @@ class App:
             limiter,
         )
         broker = TossClient(auth, settings.toss_account_seq, limiter, dry_run=dry)
-        return cls(
+        app = cls(
             settings=settings,
             paths=paths,
             state=StateStore(paths),
@@ -50,3 +52,5 @@ class App:
             limiter=limiter,
             broker=broker,
         )
+        app.reconciler = FillReconciler(app)
+        return app

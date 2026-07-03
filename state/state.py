@@ -23,6 +23,9 @@ DEFAULT_STATE = {
     "pending_sell_orders": [],
     "close_prices": [],
     "split_log": [],
+    "fill_log": [],
+    "tracked_orders": [],
+    "last_t_qty": 0,
     "last_order_date": "",
     "last_updated": "",
 }

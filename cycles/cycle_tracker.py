@@ -101,6 +101,43 @@ class CycleTracker:
         cur["max_T"] = max(cur.get("max_T", 0.0), float(t_after))
         self._save_all(data)
 
+    def record_trade(
+        self,
+        symbol: str,
+        *,
+        side: str,
+        qty: int,
+        price: float,
+        action: str | None,
+        t_after: float,
+        source: str,
+        note: str = "",
+        order_id: str | None = None,
+        filled_at: str | None = None,
+    ) -> None:
+        """현재 회차 매매 내역 기록 (체결 동기화·봇 주문 공통)."""
+        data = self._load_all()
+        sym = self._get(data, symbol)
+        if sym["current"] is None:
+            return
+        cur = sym["current"]
+        trades = cur.setdefault("trades", [])
+        trades.append({
+            "side": side.upper(),
+            "qty": int(qty),
+            "price": round(float(price), 2),
+            "action": action,
+            "t_after": round(float(t_after), 2),
+            "source": source,
+            "note": note,
+            "order_id": order_id,
+            "filled_at": filled_at or datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+        })
+        if len(trades) > 100:
+            cur["trades"] = trades[-100:]
+        self._save_all(data)
+
     def record_sell(self, symbol: str, usd_amount: float, t_after: float,
                     qty_after: int, principal: float) -> Optional[dict]:
         data = self._load_all()
@@ -291,6 +328,21 @@ class CycleTracker:
             lines += [
                 f"  회차 손익: {sign}${live['cycle_pnl_usd']:,.2f} ({sign}{live['cycle_pnl_pct']:.2f}%)", "",
             ]
+            trades = sym.get("current", {}).get("trades") or []
+            if trades:
+                lines.append("  📋 <b>매매 내역</b>")
+                for tr in trades[-8:]:
+                    side = tr.get("side", "")
+                    icon = "🟢" if side == "BUY" else "🔴"
+                    act = tr.get("action") or ("매수" if side == "BUY" else "매도")
+                    src = tr.get("source", "")
+                    src_tag = "🤖" if src == "bot" else "🔄" if src in ("sync", "broker") else "✋"
+                    when = (tr.get("filled_at") or tr.get("at") or "")[:16].replace("T", " ")
+                    lines.append(
+                        f"  {icon}{src_tag} {when} · {act} · <b>{tr.get('qty', 0)}</b>주 "
+                        f"@ ${tr.get('price', 0):,.2f} → T <b>{tr.get('t_after', 0):g}</b>"
+                    )
+                lines.append("")
         else:
             lines.append("💤 진행 중인 회차 없음\n")
         completed = sym.get("completed", [])

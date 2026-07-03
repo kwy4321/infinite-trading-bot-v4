@@ -7,11 +7,15 @@ class FillProcessor:
     def __init__(self, strategy: InfiniteStrategyV40 = None):
         self.strategy = strategy or InfiniteStrategyV40()
 
-    def apply_buy_fill(self, state: dict, order: dict, cycles, symbol: str) -> dict:
+    def apply_buy_fill(
+        self, state: dict, order: dict, cycles, symbol: str,
+        *, source: str = "bot", note: str = "",
+    ) -> dict:
         qty = int(order["qty"])
         price = float(order["price"])
         usd = price * qty
-        t_after = self.strategy.calc_next_t(float(state["T"]), order.get("action", "BUY_FULL"))
+        action = order.get("action", "BUY_FULL")
+        t_after = self.strategy.calc_next_t(float(state["T"]), action)
 
         old_q, old_a = int(state["qty"]), float(state["avg_price"])
         new_q = old_q + qty
@@ -19,12 +23,20 @@ class FillProcessor:
             state["avg_price"] = round((old_q * old_a + qty * price) / new_q, 4)
         state["qty"] = new_q
         state["T"] = t_after
+        state["last_t_qty"] = new_q
 
         cycles.ensure_current(symbol, state["principal"])
         cycles.record_buy(symbol, usd, t_after, state["principal"])
+        cycles.record_trade(
+            symbol, side="BUY", qty=qty, price=price, action=action,
+            t_after=t_after, source=source, note=note or order.get("desc", ""),
+        )
         return state
 
-    def apply_sell_fill(self, state: dict, order: dict, cycles, symbol: str):
+    def apply_sell_fill(
+        self, state: dict, order: dict, cycles, symbol: str,
+        *, source: str = "bot", note: str = "",
+    ):
         qty = int(order["qty"])
         price = float(order["price"])
         usd = price * qty
@@ -37,6 +49,12 @@ class FillProcessor:
         if state["qty"] == 0:
             state["avg_price"] = 0.0
         state["T"] = t_after if state["qty"] > 0 else 0.0
+        state["last_t_qty"] = int(state["qty"])
 
         completed = cycles.record_sell(symbol, usd, t_after, state["qty"], state["principal"])
+        cycles.record_trade(
+            symbol, side="SELL", qty=qty, price=price, action=action,
+            t_after=t_after if state["qty"] > 0 else 0.0,
+            source=source, note=note or order.get("desc", ""),
+        )
         return state, completed

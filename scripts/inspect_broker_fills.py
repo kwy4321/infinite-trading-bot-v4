@@ -1,4 +1,10 @@
-"""토스 CLOSED 주문 orderedAt 확인 — 매매날짜 디버그용."""
+"""토스 CLOSED 주문 orderedAt 확인 — 매매날짜 디버그용.
+
+서버 실행:
+  bash scripts/inspect_broker_fills.sh SOXL
+  # 또는
+  .venv/bin/python scripts/inspect_broker_fills.py SOXL
+"""
 
 import os
 import sys
@@ -7,9 +13,27 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from dotenv import load_dotenv
 
-load_dotenv(ROOT / ".env")
+def _load_env_file(path: Path) -> None:
+    if not path.is_file():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        text = line.strip()
+        if not text or text.startswith("#") or "=" not in text:
+            continue
+        key, _, val = text.partition("=")
+        key = key.strip()
+        val = val.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = val
+
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(ROOT / ".env")
+except ModuleNotFoundError:
+    _load_env_file(ROOT / ".env")
 
 from account.account import AccountPaths
 from broker.rate_limiter import RateLimiter

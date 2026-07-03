@@ -31,15 +31,27 @@ _MAX_TOTAL = 8
 # 마커로 두 파트를 구분 → 각각 별도 카드로 렌더링
 _MARK_NASDAQ = "[나스닥]"
 _MARK_SEMI = "[반도체]"
-_PROMPT = (
-    "다음은 오늘 미국 증시·반도체 관련 한국어 뉴스 헤드라인입니다.\n"
-    "나스닥 종합지수와 필라델피아 반도체지수(SOX)가 오늘 왜 그렇게 움직였는지 "
-    "한국어로 분석하세요.\n"
+_PROMPT_TRADING = (
+    "다음은 미국 증시·반도체 관련 한국어 뉴스 헤드라인입니다.\n"
+    "나스닥 종합지수와 필라델피아 반도체지수(SOX)가 {session_label} 미국장에서 "
+    "왜 그렇게 움직였는지 한국어로 분석하세요.\n"
     "반드시 아래 형식을 그대로 지키고, 다른 머리말이나 설명은 넣지 마세요:\n"
     f"{_MARK_NASDAQ}\n· (한 문장)\n· (한 문장)\n· (한 문장)\n"
     f"{_MARK_SEMI}\n· (한 문장)\n· (한 문장)\n· (한 문장)\n"
     "각 지수마다 구체적인 불릿 3개를 쓰고, 금리·경제지표·실적·개별 종목 등 "
     "원인을 분명히 밝히세요. 헤드라인에 없는 사실은 추측하지 마세요.\n\n"
+    "헤드라인:\n"
+)
+_PROMPT_HOLIDAY = (
+    "다음은 미국 증시·반도체 관련 한국어 뉴스 헤드라인입니다.\n"
+    "⚠️ {holiday_label} 미국 정규장은 휴장이었습니다. "
+    "지수는 전 거래일 {session_label} 마감 기준입니다.\n"
+    "오늘 장이 열리지 않았다는 점을 첫 불릿에 명시하고, "
+    "헤드라인에 근거한 시장 배경·전망만 정리하세요. "
+    "휴장일에 지수가 올랐다/내렸다고 쓰지 마세요.\n"
+    "반드시 아래 형식:\n"
+    f"{_MARK_NASDAQ}\n· (한 문장)\n· (한 문장)\n· (한 문장)\n"
+    f"{_MARK_SEMI}\n· (한 문장)\n· (한 문장)\n· (한 문장)\n\n"
     "헤드라인:\n"
 )
 
@@ -157,16 +169,25 @@ def _format_headlines(items: list[dict]) -> str:
     return f"{section('주요 뉴스', '📰')}\n{quote(*rows)}"
 
 
-def _build_sync(settings: Settings) -> str:
+def _build_sync(settings: Settings, market_ctx: dict | None = None) -> str:
     items = _fetch_headlines()
     parts: list[str] = []
+    ctx = market_ctx or {}
 
     api_key = settings.summarizer_api_key
     if api_key and items:
         headlines_text = "\n".join(
             f"- {item['title']} ({item['source']})" for item in items
         )
-        prompt = _PROMPT + headlines_text
+        if ctx.get("us_holiday"):
+            prompt = _PROMPT_HOLIDAY.format(
+                holiday_label=ctx.get("holiday_label") or "해당일",
+                session_label=ctx.get("session_label") or "전 거래일",
+            ) + headlines_text
+        else:
+            prompt = _PROMPT_TRADING.format(
+                session_label=ctx.get("session_label") or "전일",
+            ) + headlines_text
         provider = (settings.summarizer_provider or "openai").lower()
         if provider == "gemini":
             summary = _summarize_gemini(api_key, settings.summarizer_model, prompt)
@@ -191,5 +212,7 @@ def _build_sync(settings: Settings) -> str:
     return "\n\n".join(parts)
 
 
-async def summarize_news(settings: Settings) -> str:
-    return await asyncio.to_thread(_build_sync, settings)
+async def summarize_news(
+    settings: Settings, *, market_ctx: dict | None = None,
+) -> str:
+    return await asyncio.to_thread(_build_sync, settings, market_ctx)

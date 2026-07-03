@@ -67,6 +67,9 @@ class TossClient:
         self.dry_run = dry_run
         self._holdings_cache: dict | None = None
         self._holdings_cache_at: float = 0.0
+        self._calendar_cache: dict | None = None
+        self._calendar_cache_at: float = 0.0
+        self._fills_cache: dict[str, tuple[float, list]] = {}
 
     def _headers(self, with_account: bool = False) -> dict:
         h = {"Authorization": f"Bearer {self.auth.get_token()}"}
@@ -217,6 +220,25 @@ class TossClient:
     def _invalidate_holdings_cache(self) -> None:
         self._holdings_cache = None
         self._holdings_cache_at = 0.0
+        self._fills_cache.clear()
+
+    def _get_us_market_calendar_cached(self) -> dict:
+        now = time.monotonic()
+        if self._calendar_cache is not None and now - self._calendar_cache_at < 3600:
+            return self._calendar_cache
+        if self.dry_run:
+            today = datetime.datetime.now(NY).date().isoformat()
+            cal = {
+                "today": {"date": today, "regularMarket": {"startTime": "00:00", "endTime": "00:00"}},
+                "nextBusinessDay": {"date": today, "regularMarket": {"startTime": "00:00", "endTime": "00:00"}},
+                "previousBusinessDay": {"date": today, "regularMarket": {"startTime": "00:00", "endTime": "00:00"}},
+            }
+        else:
+            data = self._request("GET", "/api/v1/market-calendar/US", "MARKET_INFO")
+            cal = data.get("result", data)
+        self._calendar_cache = cal
+        self._calendar_cache_at = now
+        return cal
 
     def place_limit_order(self, symbol: str, side: str, price: float, qty: int) -> dict:
         client_order_id = str(uuid.uuid4())
@@ -368,6 +390,14 @@ class TossClient:
         extra_order_ids: list[str] | None = None,
     ) -> list[dict]:
         """체결 주문 — CLOSED 목록 + 알려진 orderId 단건 조회 fallback."""
+        sym = symbol.upper()
+        id_key = ",".join(sorted(str(x) for x in (extra_order_ids or []) if x))
+        cache_key = f"{sym}:{id_key}"
+        now = time.monotonic()
+        cached = self._fills_cache.get(cache_key)
+        if cached and now - cached[0] < 60:
+            return list(cached[1])
+
         from_date = (
             datetime.datetime.now(KST) - datetime.timedelta(days=days)
         ).date().isoformat()
@@ -418,6 +448,7 @@ class TossClient:
                 logger.exception("get_order fill fetch failed %s", oid)
 
         fills.sort(key=lambda f: f["ordered_at"])
+        self._fills_cache[cache_key] = (now, list(fills))
         return fills
 
     @staticmethod
@@ -496,15 +527,7 @@ class TossClient:
         return "off_hours"
 
     def get_us_market_calendar(self) -> dict:
-        if self.dry_run:
-            today = datetime.datetime.now(NY).date().isoformat()
-            return {
-                "today": {"date": today, "regularMarket": {"startTime": "00:00", "endTime": "00:00"}},
-                "nextBusinessDay": {"date": today, "regularMarket": {"startTime": "00:00", "endTime": "00:00"}},
-                "previousBusinessDay": {"date": today, "regularMarket": {"startTime": "00:00", "endTime": "00:00"}},
-            }
-        data = self._request("GET", "/api/v1/market-calendar/US", "MARKET_INFO")
-        return data.get("result", data)
+        return self._get_us_market_calendar_cached()
 
     @staticmethod
     def find_us_market_day(cal: dict, target_date: str) -> dict | None:
@@ -546,9 +569,8 @@ class TossClient:
         if self.dry_run:
             return self._market_status_fallback()
         try:
-            data = self._request("GET", "/api/v1/market-calendar/US", "MARKET_INFO")
-            result = data.get("result", data)
-            return self._market_status_from_calendar(result.get("today", {}))
+            cal = self._get_us_market_calendar_cached()
+            return self._market_status_from_calendar(cal.get("today", {}))
         except Exception:
             return self._market_status_fallback()
 

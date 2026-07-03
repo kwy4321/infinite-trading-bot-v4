@@ -65,10 +65,35 @@ class CycleTracker:
         self.data_dir = str(data_dir)
         self.path = os.path.join(self.data_dir, CYCLES_FILE)
         self._lock = threading.RLock()
+        self._batch_data: dict | None = None
+        self._batch_dirty = False
         os.makedirs(self.data_dir, exist_ok=True)
+
+    def batch(self):
+        """여러 cycle 갱신을 cycles.json 1회 저장으로 묶는다."""
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _ctx():
+            with self._lock:
+                self._batch_data = self._load_all()
+                self._batch_dirty = False
+            try:
+                yield
+            finally:
+                with self._lock:
+                    if self._batch_dirty and self._batch_data is not None:
+                        self._trim_completed(self._batch_data)
+                        save_json(Path(self.path), self._batch_data, compact=True)
+                    self._batch_data = None
+                    self._batch_dirty = False
+
+        return _ctx()
 
     def _load_all(self) -> dict:
         with self._lock:
+            if self._batch_data is not None:
+                return self._batch_data
             default = {s: _default_symbol_data() for s in SYMBOLS}
             if not os.path.exists(self.path):
                 return default
@@ -94,6 +119,10 @@ class CycleTracker:
 
     def _save_all(self, data: dict) -> None:
         with self._lock:
+            if self._batch_data is not None:
+                self._batch_data = data
+                self._batch_dirty = True
+                return
             self._trim_completed(data)
             save_json(Path(self.path), data, compact=True)
 

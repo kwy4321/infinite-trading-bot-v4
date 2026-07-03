@@ -157,6 +157,7 @@ class JobExecutor:
                                 "qty_after": int(st.get("qty", 0)),
                                 "avg_after": float(st.get("avg_price", 0.0)),
                             })
+                        FillReconciler.untrack_order(st, oid)
                     return True, True, st, grad
 
                 if notify:
@@ -373,27 +374,32 @@ class JobExecutor:
         if premium is None:
             premium = self.app.runtime.premium_default()
 
-        reconcile = {"applied": [], "t_before": 0.0, "t_after": 0.0}
-        if self.app.reconciler and not (self.app.settings.dry_run or not self.app.settings.has_toss):
+        reconcile = {"applied": [], "t_before": 0.0, "t_after": 0.0, "holdings": {}}
+        is_live = self.app.reconciler and not (
+            self.app.settings.dry_run or not self.app.settings.has_toss
+        )
+        if is_live:
             try:
                 reconcile = self.app.reconciler.reconcile_symbol(symbol, premium)
             except Exception:
                 logger.exception("fill reconcile failed %s", symbol)
 
-        st = self.app.state.load(symbol)
-        item = self.app.broker.get_holdings_item(symbol)
+        item = reconcile.get("holdings") or {}
+        if not item:
+            item = self.app.broker.get_holdings_item(symbol)
         qty = int(item.get("qty", 0) or 0)
         avg = float(item.get("avg_price", 0.0) or 0.0)
         price = float(item.get("current_price", 0.0) or 0.0)
         invested = round(qty * avg, 2)
         eval_usd = round(qty * price, 2) if price > 0 else invested
 
+        st = self.app.state.load(symbol)
         if qty <= 0:
-            st = self.app.state.load(symbol)
-            self.app.cycles.sync_trades_from_fill_log(
-                symbol, st.get("fill_log", []), float(st.get("principal", 0.0)),
-            )
-            self.app.cycles.dedupe_symbol_trades(symbol)
+            if not is_live:
+                self.app.cycles.sync_trades_from_fill_log(
+                    symbol, st.get("fill_log", []), float(st.get("principal", 0.0)),
+                )
+                self.app.cycles.dedupe_symbol_trades(symbol)
             return {
                 "symbol": symbol, "qty": 0, "avg": 0.0, "price": price,
                 "invested": 0.0, "eval": 0.0, "T": 0.0,
@@ -407,23 +413,13 @@ class JobExecutor:
         st["last_t_qty"] = qty
         self.app.state.save(symbol, st)
 
-        st = self.app.state.load(symbol)
-        is_live = self.app.reconciler and not (
-            self.app.settings.dry_run or not self.app.settings.has_toss
-        )
-        if is_live:
-            try:
-                self.app.reconciler._refresh_fill_dates_from_closed_orders(symbol, qty)
-            except Exception:
-                logger.exception("trade rebuild failed %s", symbol)
-        else:
+        if not is_live:
             self.app.cycles.sync_trades_from_fill_log(
                 symbol, st.get("fill_log", []), float(st.get("principal", 0.0)),
             )
             self.app.cycles.dedupe_symbol_trades(symbol)
-        st = self.app.state.load(symbol)
+
         t_val = float(st.get("T", 0.0))
-        self.app.cycles.ensure_current(symbol, st["principal"])
         self.app.cycles.record_snapshot(
             symbol, t_val=t_val, avg_price=avg, qty=qty,
             current_price=price, eval_usd=eval_usd, invested_usd=invested,
@@ -437,17 +433,19 @@ class JobExecutor:
             "t_after": t_val,
         }
 
-    async def run_cycle_sync(self, notify: bool = True) -> None:
-        """활성 종목의 회차 기록을 토스 실계좌 기준으로 동기화."""
+    async def run_cycle_sync(
+        self, notify: bool = True, symbols: list[str] | None = None,
+    ) -> None:
+        """회차 기록을 토스 실계좌 기준으로 동기화 (symbols 미지정 시 활성 종목)."""
         is_dry = self.app.settings.dry_run or not self.app.settings.has_toss
         if is_dry:
             if notify:
                 await self._notify("🧪 DRY_RUN — 실계좌 회차 동기화는 LIVE에서만 됩니다.")
             return
-        symbols = self._active_symbols() or list(self.app.state.list_symbols())
+        targets = symbols or self._active_symbols() or list(self.app.state.list_symbols())
         premium = self.app.runtime.premium_default()
         lines = ["🔄 <b>회차 동기화</b> <i>(체결·실계좌 기준)</i>"]
-        for sym in symbols:
+        for sym in targets:
             try:
                 r = await asyncio.to_thread(self.sync_cycle_from_broker, sym, premium)
             except Exception as e:
@@ -496,7 +494,6 @@ class JobExecutor:
         await self.run_phase(JobPhase.JOB3_LOC_CLOSE, premium)
 
     async def run_job4(self, **_):
-        await self.run_phase(JobPhase.JOB4_REPORT)
         await self.run_cycle_sync(notify=True)
         await self.run_backup()
         now = datetime.now(KST).strftime("%Y-%m-%d %H:%M")

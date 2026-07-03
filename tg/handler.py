@@ -569,30 +569,34 @@ class TelegramHandler:
     async def _sync_then_send_cycles(self, target, symbol: str):
         """실계좌 동기화(/sync) 후 회차 내역 표시."""
         is_live = not (self.app.settings.dry_run or not self.app.settings.has_toss)
+        sync_symbols = self._cycle_symbol_list(symbol)
         if is_live:
             await target.reply_text("🔄 토스 체결·실계좌에서 T·회차 동기화 중...")
             try:
-                await self.executor.run_cycle_sync(notify=False)
+                await self.executor.run_cycle_sync(notify=False, symbols=sync_symbols)
             except Exception:
                 logger.exception("cycle sync before report failed")
-        await self._send_cycles(target, symbol, refresh=not is_live)
+        await self._send_cycles(target, symbol, already_synced=is_live)
 
-    async def _send_cycles(self, target, symbol: str, *, refresh: bool = True):
+    @staticmethod
+    def _cycle_symbol_list(symbol: str) -> list[str]:
+        if symbol == "ALL":
+            return list(SYMBOLS)
+        if "," in symbol:
+            return [
+                s.strip().upper() for s in symbol.split(",")
+                if s.strip().upper() in SYMBOLS
+            ]
+        return [symbol.upper()]
+
+    async def _send_cycles(self, target, symbol: str, *, already_synced: bool = False):
         try:
-            if symbol == "ALL":
-                symbols = list(self.app.state.list_symbols())
-            elif "," in symbol:
-                symbols = [
-                    s.strip().upper() for s in symbol.split(",")
-                    if s.strip().upper() in SYMBOLS
-                ]
-            else:
-                symbols = [symbol.upper()]
+            symbols = self._cycle_symbol_list(symbol)
             is_live = not (self.app.settings.dry_run or not self.app.settings.has_toss)
             premium = self.app.runtime.premium_default()
             parts = []
             for sym in symbols:
-                if refresh and is_live:
+                if is_live and not already_synced:
                     try:
                         await asyncio.to_thread(
                             self.executor.sync_cycle_from_broker, sym, premium,
@@ -600,18 +604,22 @@ class TelegramHandler:
                     except Exception:
                         logger.exception("cycle refresh failed %s", sym)
                 st = self.app.state.load(sym)
-                try:
-                    price = self._pos(sym)["current_price"]
-                except Exception:
-                    logger.exception("holdings fetch failed %s", sym)
-                    price = 0.0
-                self.app.cycles.ensure_current(sym, st["principal"])
-                if not (refresh and is_live):
+                if is_live:
+                    pos = self.app.broker.get_holdings_item(sym)
+                    price = float(pos.get("current_price") or st.get("avg_price") or 0)
+                else:
+                    try:
+                        price = self._pos(sym)["current_price"]
+                    except Exception:
+                        logger.exception("holdings fetch failed %s", sym)
+                        price = float(st.get("avg_price") or 0)
+                if not is_live:
+                    self.app.cycles.ensure_current(sym, st["principal"])
                     self.app.cycles.sync_trades_from_fill_log(
                         sym, st.get("fill_log", []), float(st.get("principal", 0.0)),
                     )
                     self.app.cycles.dedupe_symbol_trades(sym)
-                st = self.app.state.load(sym)
+                    st = self.app.state.load(sym)
                 parts.append(self.app.cycles.format_cycles_report(
                     sym, st["qty"], st["avg_price"], price,
                     fill_log=st.get("fill_log", []),

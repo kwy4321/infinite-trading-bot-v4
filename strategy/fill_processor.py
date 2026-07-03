@@ -27,16 +27,17 @@ class FillProcessor:
         state["last_t_qty"] = new_q
 
         cycles.ensure_current(symbol, state["principal"])
-        cycles.record_buy(symbol, usd, t_after, state["principal"])
-        cycles.record_trade(
-            symbol, side="BUY", qty=qty, price=price, action=action,
-            t_before=t_before, t_after=t_after,
-            avg_after=state["avg_price"], qty_after=new_q,
-            source=source, note=note or order.get("desc", ""),
-            fill_id=order.get("fill_id"),
-            filled_at=order.get("ordered_at") or order.get("filled_at"),
-            order_id=order.get("order_id"),
-        )
+        with cycles.batch():
+            cycles.record_buy(symbol, usd, t_after, state["principal"])
+            cycles.record_trade(
+                symbol, side="BUY", qty=qty, price=price, action=action,
+                t_before=t_before, t_after=t_after,
+                avg_after=state["avg_price"], qty_after=new_q,
+                source=source, note=note or order.get("desc", ""),
+                fill_id=order.get("fill_id"),
+                filled_at=order.get("ordered_at") or order.get("filled_at"),
+                order_id=order.get("order_id"),
+            )
         return state
 
     def apply_sell_fill(
@@ -58,15 +59,16 @@ class FillProcessor:
         state["T"] = t_after if state["qty"] > 0 else 0.0
         state["last_t_qty"] = int(state["qty"])
 
-        completed = cycles.record_sell(symbol, usd, t_after, state["qty"], state["principal"])
-        cycles.record_trade(
-            symbol, side="SELL", qty=qty, price=price, action=action,
-            t_before=t_before,
-            t_after=t_after if state["qty"] > 0 else 0.0,
-            avg_after=state["avg_price"], qty_after=int(state["qty"]),
-            source=source, note=note or order.get("desc", ""),
-            fill_id=order.get("fill_id"),
-            filled_at=order.get("ordered_at") or order.get("filled_at"),
-            order_id=order.get("order_id"),
-        )
+        with cycles.batch():
+            completed = cycles.record_sell(symbol, usd, t_after, state["qty"], state["principal"])
+            cycles.record_trade(
+                symbol, side="SELL", qty=qty, price=price, action=action,
+                t_before=t_before,
+                t_after=t_after if state["qty"] > 0 else 0.0,
+                avg_after=state["avg_price"], qty_after=int(state["qty"]),
+                source=source, note=note or order.get("desc", ""),
+                fill_id=order.get("fill_id"),
+                filled_at=order.get("ordered_at") or order.get("filled_at"),
+                order_id=order.get("order_id"),
+            )
         return state, completed

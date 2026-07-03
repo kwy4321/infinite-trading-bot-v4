@@ -29,25 +29,32 @@ class RuntimeSettings:
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        self._cache: dict | None = None
 
     def load(self) -> dict:
         with self._lock:
+            if self._cache is not None:
+                return dict(self._cache)
             if not self.path.exists():
-                return dict(DEFAULT)
+                self._cache = dict(DEFAULT)
+                return dict(self._cache)
             try:
                 with open(self.path, "r", encoding="utf-8") as f:
                     data = json.load(f)
             except (json.JSONDecodeError, OSError):
-                return dict(DEFAULT)
+                self._cache = dict(DEFAULT)
+                return dict(self._cache)
             merged = dict(DEFAULT)
             merged.update(data)
             merged["active_symbols"] = _normalize_active_symbols(merged)
-            return merged
+            self._cache = merged
+            return dict(self._cache)
 
     def save(self, data: dict) -> None:
         with self._lock:
             with open(self.path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
+            self._cache = dict(data)
 
     def is_paused(self) -> bool:
         return bool(self.load().get("paused", False))
@@ -118,7 +125,6 @@ class RuntimeSettings:
         data = self.load()
         sym = symbol.upper()
         data["default_symbol"] = sym
-        # 기본종목 선택 = 주문계획·자동매매 대상도 해당 종목만
         if sym in SYMBOLS:
             data["active_symbols"] = [sym]
         self.save(data)

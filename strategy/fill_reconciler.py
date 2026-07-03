@@ -44,16 +44,23 @@ class FillReconciler:
         broker_price = float(broker.get("current_price", 0.0) or 0.0)
 
         applied.extend(self._process_tracked_orders(symbol, st, premium))
-        applied.extend(self._process_open_orders(symbol, st, premium))
+        sym_tracked = [
+            e for e in st.get("tracked_orders") or []
+            if str(e.get("symbol") or "").upper() == symbol.upper()
+        ]
+        needs_open = bool(sym_tracked) or int(st.get("qty", 0)) != broker_qty
+        if needs_open:
+            applied.extend(self._process_open_orders(symbol, st, premium))
+        plan = self._plan_for_state(symbol, st, broker_price, premium)
         invest_applied = self._reconcile_invested_gap(
-            symbol, st, broker_qty, broker_avg, broker_price, premium,
+            symbol, st, broker_qty, broker_avg, broker_price, premium, plan=plan,
         )
         applied.extend(invest_applied)
         if invest_applied:
-            st = self.app.state.load(symbol)
+            plan = self._plan_for_state(symbol, st, broker_price, premium)
         applied.extend(self._reconcile_qty_delta(
             symbol, st, broker_qty, broker_avg, broker_price, premium,
-            skip_buys=bool(invest_applied),
+            skip_buys=bool(invest_applied), plan=plan,
         ))
 
         if applied:
@@ -62,15 +69,21 @@ class FillReconciler:
             st["last_t_qty"] = broker_qty
             self.app.state.save(symbol, st)
 
-        st = self.app.state.load(symbol)
-        self._refresh_fill_dates_from_closed_orders(symbol, broker_qty)
-        st = self.app.state.load(symbol)
+        order_ids = self.collect_known_order_ids(self.app, symbol, st=st)
+        self._refresh_fill_dates_from_closed_orders(
+            symbol, broker_qty, st=st, order_ids=order_ids,
+        )
         return {
             "applied": applied,
             "t_before": t_before,
             "t_after": float(st.get("T", 0.0)),
             "qty_before": qty_before,
             "qty_after": int(st.get("qty", 0)),
+            "holdings": {
+                "qty": broker_qty,
+                "avg_price": broker_avg,
+                "current_price": broker_price,
+            },
         }
 
     def _process_tracked_orders(self, symbol: str, st: dict, premium: int) -> list[dict]:
@@ -123,6 +136,8 @@ class FillReconciler:
         broker_avg: float,
         broker_price: float,
         premium: int,
+        *,
+        plan: dict | None = None,
     ) -> list[dict]:
         """수동 매수 등 — cycles 투입금 vs 실계좌 투입금 차이로 미반영 체결 추정."""
         if broker_qty <= 0 or broker_avg <= 0:
@@ -140,7 +155,9 @@ class FillReconciler:
         if est_qty > broker_qty:
             est_qty = broker_qty
 
-        action, _, note = self._infer_buy_action(st, symbol, est_qty, price, premium)
+        action, _, note = self._infer_buy_action(
+            st, symbol, est_qty, price, premium, plan=plan,
+        )
         fill = {
             "id": f"invest-gap:{symbol}:{datetime.date.today().isoformat()}:{est_qty}",
             "order_id": None,
@@ -165,6 +182,7 @@ class FillReconciler:
         broker_price: float,
         premium: int,
         skip_buys: bool = False,
+        plan: dict | None = None,
     ) -> list[dict]:
         """state 주수 vs 실계좌 주수 차이로 미반영 체결 추정."""
         state_qty = int(st.get("qty", 0))
@@ -178,7 +196,9 @@ class FillReconciler:
             if sell_delta <= 0:
                 return []
             price = broker_price or broker_avg or float(st.get("avg_price", 0.0))
-            action, _, note = self._infer_sell_action(st, symbol, sell_delta, price, premium)
+            action, _, note = self._infer_sell_action(
+                st, symbol, sell_delta, price, premium, plan=plan,
+            )
             fill = {
                 "id": f"qty-delta:sell:{symbol}:{datetime.date.today().isoformat()}:{sell_delta}",
                 "order_id": None,
@@ -199,7 +219,9 @@ class FillReconciler:
         price = broker_price or broker_avg or float(st.get("avg_price", 0.0))
         while remaining > 0:
             chunk = remaining
-            action, use_price, note = self._infer_buy_action(st, symbol, chunk, price, premium)
+            action, use_price, note = self._infer_buy_action(
+                st, symbol, chunk, price, premium, plan=plan,
+            )
             fill = {
                 "id": f"qty-delta:buy:{symbol}:{datetime.date.today().isoformat()}:{chunk}:{len(applied)}",
                 "order_id": None,
@@ -323,10 +345,10 @@ class FillReconciler:
         self.app.state.save(symbol, st)
         return entry
 
-    def _infer_buy_action(
-        self, st: dict, symbol: str, qty: int, price: float, premium: int,
-    ) -> tuple[str, float, str]:
-        plan = self.app.strategy.get_plan(
+    def _plan_for_state(
+        self, symbol: str, st: dict, price: float, premium: int,
+    ) -> dict:
+        return self.app.strategy.get_plan(
             symbol,
             price,
             float(st.get("avg_price", 0.0)),
@@ -338,6 +360,13 @@ class FillReconciler:
             st.get("force_one", False),
             take_profit_pct=st.get("take_profit_pct"),
         )
+
+    def _infer_buy_action(
+        self, st: dict, symbol: str, qty: int, price: float, premium: int,
+        *, plan: dict | None = None,
+    ) -> tuple[str, float, str]:
+        if plan is None:
+            plan = self._plan_for_state(symbol, st, price, premium)
         best = None
         for o in plan.get("buy_orders", []):
             if int(o.get("qty", 0)) != qty:
@@ -364,19 +393,10 @@ class FillReconciler:
 
     def _infer_sell_action(
         self, st: dict, symbol: str, qty: int, price: float, premium: int,
+        *, plan: dict | None = None,
     ) -> tuple[str | None, float, str]:
-        plan = self.app.strategy.get_plan(
-            symbol,
-            price,
-            float(st.get("avg_price", 0.0)),
-            int(st.get("qty", 0)),
-            float(st.get("T", 0.0)),
-            premium,
-            float(st.get("principal", 0.0)),
-            int(st.get("split_count", 40)),
-            st.get("force_one", False),
-            take_profit_pct=st.get("take_profit_pct"),
-        )
+        if plan is None:
+            plan = self._plan_for_state(symbol, st, price, premium)
         best = None
         for o in plan.get("sell_orders", []):
             if int(o.get("qty", 0)) != qty:
@@ -395,7 +415,9 @@ class FillReconciler:
         return None, price, "수동/외부 매도 (익절 추정)"
 
     @staticmethod
-    def collect_known_order_ids(app: "App", symbol: str) -> list[str]:
+    def collect_known_order_ids(
+        app: "App", symbol: str, *, st: dict | None = None,
+    ) -> list[str]:
         """state·회차 기록에 저장된 orderId 수집 (CLOSED 목록 API fallback용)."""
         sym = symbol.upper()
         ids: list[str] = []
@@ -407,7 +429,8 @@ class FillReconciler:
                 seen.add(oid)
                 ids.append(oid)
 
-        st = app.state.load(sym)
+        if st is None:
+            st = app.state.load(sym)
         for entry in st.get("fill_log") or []:
             add(entry.get("order_id"))
         for entry in st.get("tracked_orders") or []:
@@ -419,11 +442,18 @@ class FillReconciler:
         return ids
 
     def _refresh_fill_dates_from_closed_orders(
-        self, symbol: str, target_qty: int | None = None,
+        self,
+        symbol: str,
+        target_qty: int | None = None,
+        *,
+        st: dict | None = None,
+        order_ids: list[str] | None = None,
     ) -> int:
         """토스 CLOSED 주문 orderedAt으로 fill_log·trades 재구성."""
-        st = self.app.state.load(symbol)
-        order_ids = self.collect_known_order_ids(self.app, symbol)
+        if st is None:
+            st = self.app.state.load(symbol)
+        if order_ids is None:
+            order_ids = self.collect_known_order_ids(self.app, symbol, st=st)
         try:
             fills = self.app.broker.list_broker_fills(
                 symbol, days=90, max_orders=200, extra_order_ids=order_ids,
@@ -433,7 +463,7 @@ class FillReconciler:
             return 0
         if not fills:
             logger.warning(
-                "no broker fills for %s (closed=0, known_order_ids=%d)",
+                "no broker fills for %s (known_order_ids=%d)",
                 symbol, len(order_ids),
             )
             return 0
@@ -484,3 +514,13 @@ class FillReconciler:
         })
         if len(tracked) > 50:
             st["tracked_orders"] = tracked[-50:]
+
+    @staticmethod
+    def untrack_order(st: dict, order_id: str) -> None:
+        if not order_id:
+            return
+        oid = str(order_id)
+        tracked = st.get("tracked_orders") or []
+        st["tracked_orders"] = [
+            e for e in tracked if str(e.get("order_id") or "") != oid
+        ]

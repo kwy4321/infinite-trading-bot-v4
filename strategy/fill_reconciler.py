@@ -242,7 +242,11 @@ class FillReconciler:
             or 0
         )
         order_id = str(order.get("orderId") or order.get("order_id") or "")
-        filled_at = execution.get("filledAt") or order.get("orderedAt") or ""
+        filled_at = (
+            execution.get("filledAt") or execution.get("filled_at")
+            or order.get("filled_at")
+            or order.get("orderedAt") or order.get("ordered_at") or ""
+        )
         side = (order.get("side") or "").upper()
         fill_id = f"{order_id}:{filled_qty}:{filled_at or 'na'}"
         return [{
@@ -267,6 +271,8 @@ class FillReconciler:
         }
         if fill.get("id"):
             order["fill_id"] = fill["id"]
+        if fill.get("filled_at"):
+            order["filled_at"] = fill["filled_at"]
         src = fill.get("source", "sync")
         note = fill.get("note", "")
         if side == "BUY":
@@ -306,7 +312,7 @@ class FillReconciler:
             "t_after": t_after,
             "avg_after": float(st.get("avg_price", 0.0)),
             "qty_after": int(st.get("qty", 0)),
-            "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "at": fill.get("filled_at") or datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         }
         self._append_fill_log(st, entry)
         st["last_t_qty"] = int(st.get("qty", 0))

@@ -34,6 +34,7 @@ class FillProcessor:
             avg_after=state["avg_price"], qty_after=new_q,
             source=source, note=note or order.get("desc", ""),
             fill_id=order.get("fill_id"),
+            filled_at=order.get("filled_at"),
         )
         return state
 
@@ -64,5 +65,6 @@ class FillProcessor:
             avg_after=state["avg_price"], qty_after=int(state["qty"]),
             source=source, note=note or order.get("desc", ""),
             fill_id=order.get("fill_id"),
+            filled_at=order.get("filled_at"),
         )
         return state, completed

@@ -168,6 +168,10 @@ class TossClient:
             exec_.get("filledQuantity") or exec_.get("filled_quantity") or 0
         )
         avg_raw = exec_.get("averageFilledPrice") or exec_.get("average_filled_price")
+        filled_at = (
+            exec_.get("filledAt") or exec_.get("filled_at")
+            or result.get("orderedAt") or result.get("ordered_at") or ""
+        )
         return {
             "order_id": str(result.get("orderId") or result.get("order_id") or ""),
             "status": str(result.get("status") or ""),
@@ -176,6 +180,8 @@ class TossClient:
             "quantity": float(qty_raw or 0),
             "filled_quantity": float(filled_raw or 0),
             "average_filled_price": float(avg_raw) if avg_raw not in (None, "") else None,
+            "filled_at": str(filled_at) if filled_at else "",
+            "execution": exec_,
         }
 
     def get_order(self, order_id: str) -> dict:

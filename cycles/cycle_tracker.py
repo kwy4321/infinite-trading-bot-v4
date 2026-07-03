@@ -7,16 +7,31 @@ import threading
 from collections import defaultdict
 from pathlib import Path
 from typing import Optional, Union
+from zoneinfo import ZoneInfo
 
 from config.json_io import load_json, save_json
 from config.settings import SYMBOLS, get_settings
 
 CYCLES_FILE = "cycles.json"
 DEFAULT_DATA = os.path.join("data", "accounts", "default")
+KST = ZoneInfo("Asia/Seoul")
 
 
 def _today_str() -> str:
-    return datetime.date.today().isoformat()
+    return datetime.datetime.now(KST).date().isoformat()
+
+
+def _trade_date_display(raw_when: str) -> str:
+    """체결 시각 → KST 날짜(YYYY-MM-DD) 표시."""
+    if not raw_when:
+        return "—"
+    if len(raw_when) >= 10 and raw_when[4] == "-" and "T" not in raw_when[:10]:
+        return raw_when[:10]
+    try:
+        dt = datetime.datetime.fromisoformat(raw_when.replace("Z", "+00:00"))
+        return dt.astimezone(KST).strftime("%Y-%m-%d")
+    except (TypeError, ValueError):
+        return raw_when[:10] if len(raw_when) >= 10 else "—"
 
 
 def _default_symbol_data() -> dict:
@@ -126,6 +141,7 @@ class CycleTracker:
             return
         cur = sym["current"]
         trades = cur.setdefault("trades", [])
+        when = filled_at or datetime.datetime.now(KST).isoformat(timespec="seconds")
         trades.append({
             "symbol": symbol.upper(),
             "side": side.upper(),
@@ -140,8 +156,8 @@ class CycleTracker:
             "note": note,
             "order_id": order_id,
             "fill_id": fill_id,
-            "filled_at": filled_at or datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-            "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "filled_at": when,
+            "at": when,
         })
         cur["trades"] = self._dedupe_trades(trades)[-100:]
         self._save_all(data)
@@ -207,7 +223,7 @@ class CycleTracker:
             "current_price": round(float(current_price), 4),
             "eval_usd": round(float(eval_usd), 2),
             "invested_usd": round(float(invested_usd), 2),
-            "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "at": datetime.datetime.now(KST).isoformat(timespec="seconds"),
         }
         sym["current"]["snapshot"] = snapshot
         self._save_all(data)
@@ -362,16 +378,44 @@ class CycleTracker:
             "t_after": entry.get("t_after"),
             "source": entry.get("source", "sync"),
             "filled_at": entry.get("filled_at") or entry.get("at"),
-            "at": entry.get("at") or entry.get("filled_at"),
+            "at": entry.get("filled_at") or entry.get("at"),
             "fill_id": entry.get("id"),
         }
 
     @classmethod
+    def _merge_trade(cls, existing: dict, incoming: dict) -> dict:
+        """같은 체결 — fill_log·브로커 쪽 filled_at 우선."""
+        merged = {**existing, **incoming}
+        for key in ("filled_at", "at", "source", "note", "fill_id", "order_id"):
+            val = incoming.get(key)
+            if val not in (None, ""):
+                merged[key] = val
+        ex_when = existing.get("filled_at") or existing.get("at") or ""
+        in_when = incoming.get("filled_at") or incoming.get("at") or ""
+        if in_when and (
+            not ex_when
+            or incoming.get("source") in ("broker", "sync")
+            or (ex_when[:10] == _today_str() and in_when[:10] != ex_when[:10])
+        ):
+            merged["filled_at"] = in_when
+            merged["at"] = in_when
+        return merged
+
+    @classmethod
     def _collect_trades(cls, sym_data: dict, symbol: str, fill_log: list | None = None) -> list[dict]:
-        """현재 회차 매매 내역 (중복 제거). fill_log는 표시용으로 쓰지 않음."""
-        _ = fill_log
-        trades = list((sym_data.get("current") or {}).get("trades") or [])
-        return cls._dedupe_trades(trades)
+        """현재 회차 매매 내역 — trades + fill_log 병합, 체결일 우선."""
+        by_key: dict[str, dict] = {}
+        for tr in (sym_data.get("current") or {}).get("trades") or []:
+            key = cls._trade_dedup_key(tr)
+            by_key[key] = tr
+        for entry in fill_log or []:
+            tr = cls._fill_log_to_trade(symbol, entry)
+            key = cls._trade_dedup_key(tr)
+            if key in by_key:
+                by_key[key] = cls._merge_trade(by_key[key], tr)
+            else:
+                by_key[key] = tr
+        return cls._dedupe_trades(list(by_key.values()))
 
     def sync_trades_from_fill_log(self, symbol: str, fill_log: list, principal: float) -> None:
         """fill_log → cycles.current.trades 영구 반영 + 중복 정리."""
@@ -383,14 +427,16 @@ class CycleTracker:
             sym["current"] = _new_current(sym["next_cycle_no"], principal)
         cur = sym["current"]
         trades = list(cur.get("trades") or [])
-        seen = {self._trade_dedup_key(t) for t in trades}
+        by_key = {self._trade_dedup_key(t): i for i, t in enumerate(trades)}
         for entry in fill_log or []:
             tr = self._fill_log_to_trade(symbol, entry)
             key = self._trade_dedup_key(tr)
-            if key in seen:
+            if key in by_key:
+                idx = by_key[key]
+                trades[idx] = self._merge_trade(trades[idx], tr)
                 continue
             trades.append(tr)
-            seen.add(key)
+            by_key[key] = len(trades) - 1
         cur["trades"] = self._dedupe_trades(trades)[-100:]
         self._save_all(data)
 
@@ -413,7 +459,7 @@ class CycleTracker:
         icon = "🟢" if side == "BUY" else "🔴"
         side_txt = "매수" if side == "BUY" else "매도"
         raw_when = tr.get("filled_at") or tr.get("at") or ""
-        when = raw_when[:10] if raw_when else "—"
+        when = _trade_date_display(raw_when)
         qty = int(tr.get("qty", 0))
         avg = tr.get("avg_after")
         if avg in (None, ""):
@@ -505,7 +551,7 @@ class CycleTracker:
         elif not trades:
             lines.append("📭 매매·완료 회차 기록 없음")
         if snap and snap.get("at"):
-            snap_at = snap["at"][:16].replace("T", " ")
+            snap_at = _trade_date_display(snap["at"])
             lines.append(f"\n<i>🔄 {snap_at} 동기화</i>")
         return "\n".join(lines)
 

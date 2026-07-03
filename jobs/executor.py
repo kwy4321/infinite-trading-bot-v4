@@ -90,6 +90,7 @@ class JobExecutor:
                     fill_price = ref_price if ref_price > 0 else limit_price
                     filled_qty = qty
                     status = "FILLED"
+                    fill_time = datetime.now(KST).isoformat(timespec="seconds")
                 else:
                     if oid:
                         FillReconciler.track_order(st, symbol, oid, side, qty)
@@ -101,6 +102,7 @@ class JobExecutor:
                         detail.get("average_filled_price") or ref_price or limit_price or 0
                     )
                     status = str(detail.get("status") or "")
+                    fill_time = detail.get("filled_at") or datetime.now(KST).isoformat(timespec="seconds")
 
                 grad = None
                 if filled_qty > 0:
@@ -108,6 +110,7 @@ class JobExecutor:
                         **order,
                         "price": round(fill_price, 2),
                         "qty": filled_qty,
+                        "filled_at": fill_time,
                     }
                     if notify:
                         await self._notify(

@@ -273,19 +273,22 @@ class TossClient:
         symbol: str | None = None,
         *,
         limit: int = 100,
+        max_orders: int = 200,
         from_date: str | None = None,
     ) -> list[dict]:
         """종료된 주문 목록 — execution.filledAt 포함 (페이지네이션)."""
         if self.dry_run:
             return []
-        params: dict = {"status": "CLOSED", "limit": min(max(limit, 1), 100)}
+        page_size = min(max(limit, 1), 100)
+        cap = max(max_orders, page_size)
+        params: dict = {"status": "CLOSED", "limit": page_size}
         if symbol:
             params["symbol"] = symbol.upper()
         if from_date:
             params["from"] = from_date
         all_orders: list[dict] = []
         cursor: str | None = None
-        while len(all_orders) < limit:
+        while len(all_orders) < cap:
             req = dict(params)
             if cursor:
                 req["cursor"] = cursor
@@ -298,7 +301,39 @@ class TossClient:
             if not result.get("hasNext") or not result.get("nextCursor"):
                 break
             cursor = str(result.get("nextCursor"))
-        return all_orders[:limit]
+        return all_orders[:cap]
+
+    def list_broker_fills(self, symbol: str, *, days: int = 90, max_orders: int = 200) -> list[dict]:
+        """체결된 CLOSED 주문 — side·qty·price·filledAt (시간순)."""
+        from_date = (
+            datetime.datetime.now(KST) - datetime.timedelta(days=days)
+        ).date().isoformat()
+        orders = self.get_closed_orders(
+            symbol, from_date=from_date, max_orders=max_orders,
+        )
+        fills: list[dict] = []
+        for order in orders:
+            exec_ = order.get("execution") or {}
+            qty = int(float(exec_.get("filledQuantity") or exec_.get("filled_quantity") or 0))
+            if qty <= 0:
+                continue
+            avg_raw = (
+                exec_.get("averageFilledPrice") or exec_.get("average_filled_price")
+                or order.get("price") or 0
+            )
+            ts = self.order_fill_timestamp(order)
+            oid = str(order.get("orderId") or order.get("order_id") or "")
+            if not ts or not oid:
+                continue
+            fills.append({
+                "order_id": oid,
+                "side": str(order.get("side") or "").upper(),
+                "qty": qty,
+                "price": round(float(avg_raw), 2),
+                "filled_at": ts,
+            })
+        fills.sort(key=lambda f: f["filled_at"])
+        return fills
 
     @staticmethod
     def order_fill_timestamp(order: dict) -> str:

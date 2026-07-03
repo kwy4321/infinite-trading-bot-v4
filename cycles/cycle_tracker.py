@@ -396,25 +396,116 @@ class CycleTracker:
 
     @classmethod
     def _merge_trade(cls, existing: dict, incoming: dict) -> dict:
-        """같은 체결 — fill_log·토스 filledAt 우선."""
+        """같은 체결 병합 — sync 추정일로 broker·기존 체결일 덮어쓰지 않음."""
         merged = {**existing, **incoming}
         in_when = incoming.get("filled_at") or incoming.get("at") or ""
         ex_when = existing.get("filled_at") or existing.get("at") or ""
         in_src = str(incoming.get("source") or "")
-        prefer = bool(in_when) and (
-            not ex_when
-            or in_src == "broker"
-            or incoming.get("order_id")
-            or (in_when != ex_when and in_src in ("broker", "sync", "bot"))
-        )
-        if prefer:
+        if incoming.get("order_id") or in_src == "broker":
+            if in_when:
+                merged["filled_at"] = in_when
+                merged["at"] = in_when
+        elif in_src == "sync" and ex_when:
+            merged["filled_at"] = ex_when
+            merged["at"] = ex_when
+        elif in_when and not ex_when:
             merged["filled_at"] = in_when
             merged["at"] = in_when
+        elif ex_when:
+            merged["filled_at"] = ex_when
+            merged["at"] = ex_when
         for key in ("order_id", "fill_id", "source", "note"):
             val = incoming.get(key)
             if val not in (None, ""):
                 merged[key] = val
         return merged
+
+    @classmethod
+    def apply_broker_fill_dates(cls, records: list[dict], broker_fills: list[dict]) -> int:
+        """토스 체결 목록과 매칭해 filled_at·order_id 보정. 갱신 건수 반환."""
+        if not records or not broker_fills:
+            return 0
+        used: set[str] = set()
+        updated = 0
+
+        def mark(rec: dict, fill: dict) -> None:
+            nonlocal updated
+            rec["filled_at"] = fill["filled_at"]
+            rec["at"] = fill["filled_at"]
+            rec["order_id"] = fill["order_id"]
+            used.add(fill["order_id"])
+            updated += 1
+
+        for rec in records:
+            oid = str(rec.get("order_id") or "")
+            if not oid:
+                continue
+            for fill in broker_fills:
+                if fill["order_id"] == oid and oid not in used:
+                    mark(rec, fill)
+                    break
+
+        for rec in records:
+            if str(rec.get("order_id") or "") in used:
+                continue
+            side = str(rec.get("side") or "").upper()
+            qty = int(rec.get("qty") or 0)
+            price = float(rec.get("price") or 0)
+            best = None
+            best_diff = None
+            for fill in broker_fills:
+                if fill["order_id"] in used:
+                    continue
+                if fill["side"] != side or fill["qty"] != qty:
+                    continue
+                diff = abs(fill["price"] - price)
+                if diff > max(0.15, price * 0.03):
+                    continue
+                if best is None or diff < best_diff:
+                    best = fill
+                    best_diff = diff
+            if best:
+                mark(rec, best)
+
+        pools: dict[tuple[str, int], list[dict]] = {}
+        for fill in broker_fills:
+            if fill["order_id"] in used:
+                continue
+            key = (fill["side"], fill["qty"])
+            pools.setdefault(key, []).append(fill)
+        for key in pools:
+            pools[key].sort(key=lambda f: f["filled_at"])
+
+        remaining = [
+            r for r in records
+            if str(r.get("order_id") or "") not in used
+        ]
+        remaining.sort(
+            key=lambda r: (
+                str(r.get("side") or ""),
+                float(r.get("t_after") if r.get("t_after") not in (None, "") else r.get("t_before") or 0),
+                float(r.get("price") or 0),
+            )
+        )
+        for rec in remaining:
+            key = (str(rec.get("side") or "").upper(), int(rec.get("qty") or 0))
+            pool = pools.get(key) or []
+            if not pool:
+                continue
+            mark(rec, pool.pop(0))
+
+        return updated
+
+    @classmethod
+    def _update_cycle_started_at(cls, cur: dict) -> None:
+        buy_dates = [
+            _trade_date_display(t.get("filled_at") or t.get("at") or "")
+            for t in cur.get("trades") or []
+            if t.get("side") == "BUY"
+            and _trade_date_display(t.get("filled_at") or t.get("at") or "") != "—"
+        ]
+        if buy_dates:
+            cur["started_at"] = min(buy_dates)
 
     @classmethod
     def _collect_trades(cls, sym_data: dict, symbol: str, fill_log: list | None = None) -> list[dict]:
@@ -455,30 +546,22 @@ class CycleTracker:
         cur["trades"] = self._dedupe_trades(trades)[-100:]
         self._save_all(data)
 
-    def refresh_trade_dates(self, symbol: str, order_times: dict[str, str]) -> None:
-        """토스 CLOSED 주문 filledAt으로 trades·started_at 보정."""
-        if not order_times:
-            return
+    def reconcile_trade_dates(self, symbol: str, broker_fills: list[dict]) -> int:
+        """토스 체결 목록으로 current.trades 날짜·order_id 재매칭."""
+        if not broker_fills:
+            return 0
         data = self._load_all()
         sym = self._get(data, symbol)
         cur = sym.get("current")
         if not cur:
-            return
-        for tr in cur.get("trades") or []:
-            oid = str(tr.get("order_id") or "")
-            if oid and oid in order_times:
-                fa = order_times[oid]
-                tr["filled_at"] = fa
-                tr["at"] = fa
-        buy_dates = [
-            _trade_date_display(t.get("filled_at") or t.get("at") or "")
-            for t in cur.get("trades") or []
-            if t.get("side") == "BUY"
-            and _trade_date_display(t.get("filled_at") or t.get("at") or "") != "—"
-        ]
-        if buy_dates:
-            cur["started_at"] = min(buy_dates)
+            return 0
+        trades = list(cur.get("trades") or [])
+        n = self.apply_broker_fill_dates(trades, broker_fills)
+        cur["trades"] = trades
+        if n:
+            self._update_cycle_started_at(cur)
         self._save_all(data)
+        return n
 
     def dedupe_symbol_trades(self, symbol: str) -> None:
         """저장된 매매 내역 중복 제거."""

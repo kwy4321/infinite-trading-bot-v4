@@ -56,8 +56,6 @@ class FillReconciler:
             skip_buys=bool(invest_applied),
         ))
 
-        self._refresh_fill_dates_from_closed_orders(symbol)
-
         if applied:
             self.app.state.save(symbol, st)
         elif broker_qty > 0 and "last_t_qty" not in st:
@@ -69,6 +67,7 @@ class FillReconciler:
             symbol, st.get("fill_log", []), float(st.get("principal", 0.0)),
         )
         self.app.cycles.dedupe_symbol_trades(symbol)
+        self._refresh_fill_dates_from_closed_orders(symbol)
         st = self.app.state.load(symbol)
         return {
             "applied": applied,
@@ -396,27 +395,19 @@ class FillReconciler:
         return None, price, "수동/외부 매도 (익절 추정)"
 
     def _refresh_fill_dates_from_closed_orders(self, symbol: str) -> None:
-        """토스 CLOSED 주문 API로 fill_log·trades 체결 시각 보정."""
+        """토스 CLOSED 주문과 side·qty·price·순서 매칭으로 체결일 보정."""
         try:
-            from broker.toss_client import TossClient
-            orders = self.app.broker.get_closed_orders(symbol, limit=100)
-            order_times = TossClient.build_order_fill_times(orders)
+            fills = self.app.broker.list_broker_fills(symbol, days=90, max_orders=200)
         except Exception:
             logger.exception("refresh fill dates failed %s", symbol)
             return
-        if not order_times:
+        if not fills:
             return
         st = self.app.state.load(symbol)
-        changed = False
-        for entry in st.get("fill_log", []):
-            oid = str(entry.get("order_id") or "")
-            if oid and oid in order_times:
-                entry["filled_at"] = order_times[oid]
-                entry["at"] = order_times[oid]
-                changed = True
-        if changed:
-            self.app.state.save(symbol, st)
-        self.app.cycles.refresh_trade_dates(symbol, order_times)
+        log = st.get("fill_log", [])
+        self.app.cycles.apply_broker_fill_dates(log, fills)
+        self.app.state.save(symbol, st)
+        self.app.cycles.reconcile_trade_dates(symbol, fills)
 
     @staticmethod
     def _is_processed(st: dict, fill_id: str) -> bool:

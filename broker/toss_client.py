@@ -153,11 +153,71 @@ class TossClient:
         price = self.get_price(symbol) if mkt == 0 and qty > 0 else (mkt / qty if qty else 0)
         return {"qty": qty, "avg_price": avg, "current_price": price}
 
-    def place_limit_order(self, symbol: str, side: str, price: float, qty: int) -> bool:
+    def _parse_order_response(self, data: dict) -> dict:
+        result = data.get("result", data)
+        return {
+            "order_id": str(result.get("orderId") or result.get("order_id") or ""),
+            "client_order_id": result.get("clientOrderId") or result.get("client_order_id"),
+        }
+
+    def _parse_order_detail(self, data: dict) -> dict:
+        result = data.get("result", data)
+        exec_ = result.get("execution") or {}
+        qty_raw = result.get("quantity") or 0
+        filled_raw = (
+            exec_.get("filledQuantity") or exec_.get("filled_quantity") or 0
+        )
+        avg_raw = exec_.get("averageFilledPrice") or exec_.get("average_filled_price")
+        return {
+            "order_id": str(result.get("orderId") or result.get("order_id") or ""),
+            "status": str(result.get("status") or ""),
+            "symbol": str(result.get("symbol") or ""),
+            "side": str(result.get("side") or ""),
+            "quantity": float(qty_raw or 0),
+            "filled_quantity": float(filled_raw or 0),
+            "average_filled_price": float(avg_raw) if avg_raw not in (None, "") else None,
+        }
+
+    def get_order(self, order_id: str) -> dict:
+        if self.dry_run or not order_id:
+            return {}
+        data = self._request(
+            "GET", f"/api/v1/orders/{order_id}", "ORDER_HISTORY", account=True,
+        )
+        return self._parse_order_detail(data)
+
+    def wait_for_fill(
+        self, order_id: str, timeout_sec: float = 20.0, poll_sec: float = 0.5,
+    ) -> dict:
+        """주문 체결 대기 — 타임아웃 시 마지막 상태 반환."""
+        if self.dry_run or not order_id:
+            return {}
+        deadline = time.monotonic() + timeout_sec
+        last: dict = {}
+        terminal_reject = {"REJECTED", "CANCELED", "CANCELLED", "REPLACE_REJECTED"}
+        while time.monotonic() < deadline:
+            last = self.get_order(order_id)
+            status = (last.get("status") or "").upper().replace("-", "_")
+            filled = float(last.get("filled_quantity") or 0)
+            qty = float(last.get("quantity") or 0)
+            if filled > 0 and (status == "FILLED" or (qty > 0 and filled >= qty)):
+                return last
+            if status in terminal_reject:
+                return last
+            if filled > 0 and status in ("PARTIAL_FILLED", "PARTIALFILLED"):
+                return last
+            time.sleep(poll_sec)
+        return last or self.get_order(order_id)
+
+    def _invalidate_holdings_cache(self) -> None:
+        self._holdings_cache = None
+        self._holdings_cache_at = 0.0
+
+    def place_limit_order(self, symbol: str, side: str, price: float, qty: int) -> dict:
+        client_order_id = str(uuid.uuid4())
         if self.dry_run:
             logger.info("[DRY_RUN] LOC대체 LIMIT %s %s %s @ %s", side, qty, symbol, price)
-            return True
-        # Toss: LOC 없음 → 장마감 직전 LIMIT+DAY (종가>=매도가 / 종가<=매수가 에 체결)
+            return {"order_id": f"dry-{client_order_id[:8]}", "client_order_id": client_order_id}
         body = {
             "symbol": symbol.upper(),
             "side": side.upper(),
@@ -165,27 +225,29 @@ class TossClient:
             "timeInForce": "DAY",
             "quantity": qty,
             "price": str(round(price, 2)),
-            "clientOrderId": str(uuid.uuid4()),
+            "clientOrderId": client_order_id,
         }
-        self._request("POST", "/api/v1/orders", "ORDER", account=True, json=body)
-        return True
+        data = self._request("POST", "/api/v1/orders", "ORDER", account=True, json=body)
+        self._invalidate_holdings_cache()
+        return self._parse_order_response(data)
 
-    def place_market_order(self, symbol: str, side: str, qty: int) -> str | None:
-        """시장가 주문 — 장 마감 30초 전 LOC 흉내(보장 체결, 종가 근사가로 체결)."""
+    def place_market_order(self, symbol: str, side: str, qty: int) -> dict:
+        """시장가 주문 — 장 마감 LOC 흉내. order_id 반환."""
+        client_order_id = str(uuid.uuid4())
         if self.dry_run:
             logger.info("[DRY_RUN] MARKET %s %s %s", side, qty, symbol)
-            return None
+            return {"order_id": f"dry-{client_order_id[:8]}", "client_order_id": client_order_id}
         body = {
             "symbol": symbol.upper(),
             "side": side.upper(),
             "orderType": "MARKET",
             "timeInForce": "DAY",
             "quantity": qty,
-            "clientOrderId": str(uuid.uuid4()),
+            "clientOrderId": client_order_id,
         }
         data = self._request("POST", "/api/v1/orders", "ORDER", account=True, json=body)
-        result = data.get("result", data)
-        return str(result.get("orderId") or data.get("orderId") or "") or None
+        self._invalidate_holdings_cache()
+        return self._parse_order_response(data)
 
     def get_open_orders(self, symbol: str | None = None) -> list[dict]:
         if self.dry_run:
@@ -199,14 +261,6 @@ class TossClient:
             sym = symbol.upper()
             orders = [o for o in orders if (o.get("symbol") or "").upper() == sym]
         return orders
-
-    def get_order(self, order_id: str) -> dict:
-        if self.dry_run:
-            return {}
-        data = self._request(
-            "GET", f"/api/v1/orders/{order_id}", "ORDER_HISTORY", account=True,
-        )
-        return data.get("result", data)
 
     def _parse_session_time(self, raw: str) -> datetime.time:
         parts = raw.split(":")

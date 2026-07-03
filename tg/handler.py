@@ -618,36 +618,20 @@ class TelegramHandler:
             take_profit_pct=st.get("take_profit_pct"),
         )
         orders = plan.get("buy_orders", []) + plan.get("sell_orders", [])
-        ok = 0
-        grad = None
-        for order in orders:
-            side = order["side"]
-            try:
-                if self.app.settings.dry_run or not self.app.settings.has_toss:
-                    success = True
-                else:
-                    success = self.app.broker.place_limit_order(
-                        symbol, side, order["price"], order["qty"],
-                    )
-                if success:
-                    ok += 1
-                    if side == "BUY":
-                        st = self.app.fills.apply_buy_fill(st, order, self.app.cycles, symbol)
-                    else:
-                        st, completed = self.app.fills.apply_sell_fill(
-                            st, order, self.app.cycles, symbol,
-                        )
-                        if completed:
-                            grad = self.app.cycles.format_graduation_message(completed, symbol)
-                    self.app.state.save(symbol, st)
-            except Exception as e:
-                logger.exception("Manual order failed")
-                await context.bot.send_message(chat_id, f"🚨 주문 실패: {e}")
-            await asyncio.sleep(0.3)
-        if grad:
-            await context.bot.send_message(chat_id, grad, parse_mode="HTML")
-        else:
-            await context.bot.send_message(chat_id, f"✅ [{symbol}] {ok}/{len(orders)}건")
+        if not orders:
+            await context.bot.send_message(chat_id, f"[{symbol}] 주문 없음")
+            return
+        ref = float(pos["current_price"] or 0)
+        try:
+            result = await self.executor.execute_orders(
+                symbol, orders, ref, use_market=False, notify_per_order=True,
+            )
+        except Exception as e:
+            logger.exception("Manual order failed")
+            await context.bot.send_message(chat_id, f"🚨 주문 실패: {e}")
+            return
+        if not result.get("grad_msg"):
+            await context.bot.send_message(chat_id, result["line"])
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):

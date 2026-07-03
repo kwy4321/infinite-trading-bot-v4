@@ -13,9 +13,19 @@ from strategy.order_planner import (
     gate_orders_by_close_price,
 )
 from strategy.fill_reconciler import FillReconciler
+from tg.notifications import (
+    format_market_close_report,
+    format_market_close_start,
+    format_market_open,
+    format_order_filled,
+    format_order_not_filled,
+    format_order_submitted,
+    order_label,
+)
 
 logger = logging.getLogger(__name__)
 KST = ZoneInfo("Asia/Seoul")
+_LOC_PHASES = (JobPhase.JOB1_LOC_CLOSE, JobPhase.JOB3_LOC_CLOSE)
 
 
 class JobExecutor:
@@ -33,7 +43,158 @@ class JobExecutor:
             return []
         return self.app.runtime.active_symbols()
 
-    async def run_for_symbol(self, symbol: str, phase: JobPhase, premium: int | None = None) -> str:
+    def _is_dry(self) -> bool:
+        return self.app.settings.dry_run or not self.app.settings.has_toss
+
+    async def _execute_one_order(
+        self,
+        symbol: str,
+        order: dict,
+        ref_price: float,
+        st: dict,
+        *,
+        use_market: bool,
+        notify: bool = True,
+    ) -> tuple[bool, bool, dict, str | None]:
+        """Returns (submitted, filled, state, graduation_message)."""
+        is_dry = self._is_dry()
+        side = order["side"]
+        qty = int(order["qty"])
+        label = order_label(order.get("desc", ""))
+        limit_price = float(order.get("price", 0))
+
+        for attempt in range(self._retry):
+            try:
+                if is_dry:
+                    placed = {"order_id": ""}
+                elif use_market:
+                    placed = await asyncio.to_thread(
+                        self.app.broker.place_market_order, symbol, side, qty,
+                    )
+                else:
+                    placed = await asyncio.to_thread(
+                        self.app.broker.place_limit_order,
+                        symbol, side, limit_price, qty,
+                    )
+
+                oid = str(placed.get("order_id") or "")
+                if notify:
+                    await self._notify(
+                        format_order_submitted(
+                            symbol, side, qty, label, order_id=oid, dry=is_dry,
+                        ),
+                        html=True,
+                    )
+
+                if is_dry:
+                    fill_price = ref_price if ref_price > 0 else limit_price
+                    filled_qty = qty
+                    status = "FILLED"
+                else:
+                    if oid:
+                        FillReconciler.track_order(st, symbol, oid, side, qty)
+                    detail = await asyncio.to_thread(
+                        self.app.broker.wait_for_fill, oid,
+                    )
+                    filled_qty = int(float(detail.get("filled_quantity") or 0))
+                    fill_price = float(
+                        detail.get("average_filled_price") or ref_price or limit_price or 0
+                    )
+                    status = str(detail.get("status") or "")
+
+                grad = None
+                if filled_qty > 0:
+                    filled_order = {
+                        **order,
+                        "price": round(fill_price, 2),
+                        "qty": filled_qty,
+                    }
+                    if notify:
+                        await self._notify(
+                            format_order_filled(
+                                symbol, side, filled_qty, fill_price, label, dry=is_dry,
+                            ),
+                            html=True,
+                        )
+                    if side == "BUY":
+                        st = self.app.fills.apply_buy_fill(
+                            st, filled_order, self.app.cycles, symbol,
+                        )
+                    else:
+                        st, completed = self.app.fills.apply_sell_fill(
+                            st, filled_order, self.app.cycles, symbol,
+                        )
+                        if completed:
+                            grad = self.app.cycles.format_graduation_message(
+                                completed, symbol,
+                            )
+                    return True, True, st, grad
+
+                if notify:
+                    await self._notify(
+                        format_order_not_filled(symbol, side, label, status),
+                        html=True,
+                    )
+                return True, False, st, None
+            except Exception as e:
+                logger.exception("Order failed %s attempt %s", symbol, attempt + 1)
+                if attempt == self._retry - 1:
+                    await self._notify(f"🚨 [{symbol}] 주문 실패: {e}")
+            await asyncio.sleep(0.3)
+        return False, False, st, None
+
+    async def execute_orders(
+        self,
+        symbol: str,
+        orders: list[dict],
+        ref_price: float,
+        *,
+        use_market: bool = True,
+        notify_per_order: bool = True,
+    ) -> dict:
+        """주문 실행. notify_per_order=False면 LOC 배치 시 건별 알림 생략."""
+        st = self.app.state.load(symbol)
+        submitted = filled = 0
+        grad_msg = None
+        is_dry = self._is_dry()
+
+        for order in orders:
+            work = dict(order)
+            if not is_dry and ref_price > 0:
+                work["price"] = round(ref_price, 2)
+            sub_ok, fill_ok, st, grad = await self._execute_one_order(
+                symbol, work, ref_price, st,
+                use_market=use_market, notify=notify_per_order,
+            )
+            if sub_ok:
+                submitted += 1
+            if fill_ok:
+                filled += 1
+            if grad:
+                grad_msg = grad
+
+        self.app.state.save(symbol, st)
+        if grad_msg:
+            await self._notify(grad_msg, html=True)
+
+        total = len(orders)
+        line = f"✅ [{symbol}] 접수 {submitted}/{total} · 체결 {filled}/{total}"
+        return {
+            "submitted": submitted,
+            "filled": filled,
+            "total": total,
+            "line": line,
+            "grad_msg": grad_msg,
+        }
+
+    async def run_for_symbol(
+        self,
+        symbol: str,
+        phase: JobPhase,
+        premium: int | None = None,
+        *,
+        notify_per_order: bool = True,
+    ) -> dict:
         if premium is None:
             premium = self.app.runtime.premium_default()
         st = self.app.state.load(symbol)
@@ -45,57 +206,25 @@ class JobExecutor:
             take_profit_pct=st.get("take_profit_pct"),
         )
         filtered = filter_orders_for_phase(plan, phase)
-
-        # 장 마감 30초 전 종가 근사가(price)로 LOC 흉내 — 조건 맞는 주문만 통과
-        is_dry = self.app.settings.dry_run or not self.app.settings.has_toss
+        is_dry = self._is_dry()
         gated = gate_orders_by_close_price(filtered, 0.0 if is_dry else price)
         orders = gated["buy_orders"] + gated["sell_orders"]
         if not orders:
-            return f"[{symbol}] {phase.value}: 주문 없음"
-
-        ok = 0
-        grad_msg = None
-        for order in orders:
-            side = order["side"]
-            # 시장가로 체결되므로 기록은 종가 근사가(price)로 남긴다
-            if not is_dry and price > 0:
-                order = {**order, "price": round(price, 2)}
-            for attempt in range(self._retry):
-                try:
-                    if is_dry:
-                        success = True
-                        order_id = None
-                    else:
-                        order_id = self.app.broker.place_market_order(
-                            symbol, side, order["qty"]
-                        )
-                        success = bool(order_id)
-                    if success:
-                        ok += 1
-                        if order_id:
-                            FillReconciler.track_order(st, symbol, order_id, side, order["qty"])
-                        if side == "BUY":
-                            st = self.app.fills.apply_buy_fill(
-                                st, order, self.app.cycles, symbol
-                            )
-                        else:
-                            st, completed = self.app.fills.apply_sell_fill(
-                                st, order, self.app.cycles, symbol
-                            )
-                            if completed:
-                                grad_msg = self.app.cycles.format_graduation_message(completed, symbol)
-                        self.app.state.save(symbol, st)
-                        break
-                except Exception as e:
-                    logger.exception("Order failed %s attempt %s", symbol, attempt + 1)
-                    if attempt == self._retry - 1:
-                        await self._notify(f"🚨 [{symbol}] 주문 실패: {e}")
-                await asyncio.sleep(0.3)
-
-        msg = f"✅ [{symbol}] {phase.value} {ok}/{len(orders)}건"
-        if grad_msg:
-            await self._notify(grad_msg, html=True)
-        return msg
+            return {
+                "submitted": 0, "filled": 0, "total": 0,
+                "line": f"[{symbol}] {phase.value}: 주문 없음",
+                "grad_msg": None,
+            }
+        result = await self.execute_orders(
+            symbol, orders, price,
+            use_market=True, notify_per_order=notify_per_order,
+        )
+        result["line"] = (
+            f"✅ [{symbol}] {phase.value} "
+            f"접수 {result['submitted']}/{result['total']} · "
+            f"체결 {result['filled']}/{result['total']}"
+        )
+        return result
 
     def _target_us_date_for_phase(self, phase: JobPhase) -> str:
         now = datetime.now(KST)
@@ -142,14 +271,38 @@ class JobExecutor:
             await self._notify("⚠️ 거래 종목이 없어요. /setting → 📡 거래 종목에서 켜주세요.")
             return
 
+        is_loc = phase in _LOC_PHASES
+        if is_loc:
+            now = datetime.now(KST).strftime("%H:%M:%S")
+            await self._notify(
+                format_market_close_start(now, len(symbols)), html=True,
+            )
+
         lines = []
+        total_sub = total_fill = total_orders = 0
         for sym in symbols:
             try:
-                lines.append(await self.run_for_symbol(sym, phase, premium))
+                result = await self.run_for_symbol(
+                    sym, phase, premium, notify_per_order=not is_loc,
+                )
+                lines.append(result["line"])
+                total_sub += result["submitted"]
+                total_fill += result["filled"]
+                total_orders += result["total"]
             except Exception as e:
                 logger.exception("run_for_symbol failed %s", sym)
                 lines.append(f"🚨 [{sym}] 실행 실패: {e}")
-        await self._notify("\n".join(lines))
+
+        if is_loc:
+            now = datetime.now(KST).strftime("%H:%M:%S")
+            await self._notify(
+                format_market_close_report(
+                    now, lines, total_sub, total_orders, total_fill,
+                ),
+                html=True,
+            )
+        elif lines:
+            await self._notify("\n".join(lines))
 
     async def run_morning_briefing(self) -> None:
         try:
@@ -182,8 +335,9 @@ class JobExecutor:
             logger.exception("plan broadcast build failed")
             await self._notify(f"🚨 주문계획 자동 전송 실패: {e}")
             return
-        header = "🔔 <b>미국 장 시작</b> — 오늘의 주문계획이에요.\n\n"
-        await self._notify(header + text, html=True)
+        now = datetime.now(KST).strftime("%H:%M")
+        await self._notify(format_market_open(now), html=True)
+        await self._notify(text, html=True)
 
     def sync_cycle_from_broker(self, symbol: str, premium: int | None = None) -> dict:
         """토스 실계좌·체결 내역으로 T·회차·평단·주수 동기화."""

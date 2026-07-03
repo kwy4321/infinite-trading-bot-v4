@@ -15,23 +15,34 @@ from config.settings import SYMBOLS, get_settings
 CYCLES_FILE = "cycles.json"
 DEFAULT_DATA = os.path.join("data", "accounts", "default")
 KST = ZoneInfo("Asia/Seoul")
+NY = ZoneInfo("America/New_York")
+
+
+def _parse_trade_dt(raw: str) -> datetime.datetime | None:
+    if not raw:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
 
 
 def _today_str() -> str:
-    return datetime.datetime.now(KST).date().isoformat()
+    """미국 장 거래일 (오늘, Eastern)."""
+    return datetime.datetime.now(NY).date().isoformat()
 
 
 def _trade_date_display(raw_when: str) -> str:
-    """체결 시각 → KST 날짜(YYYY-MM-DD) 표시."""
+    """체결 시각 → 미국 장 거래일 (US/Eastern, YYYY-MM-DD)."""
     if not raw_when:
         return "—"
-    if len(raw_when) >= 10 and raw_when[4] == "-" and "T" not in raw_when[:10]:
-        return raw_when[:10]
-    try:
-        dt = datetime.datetime.fromisoformat(raw_when.replace("Z", "+00:00"))
-        return dt.astimezone(KST).strftime("%Y-%m-%d")
-    except (TypeError, ValueError):
-        return raw_when[:10] if len(raw_when) >= 10 else "—"
+    text = str(raw_when).strip()
+    if len(text) == 10 and text[4] == "-" and "T" not in text:
+        return text
+    dt = _parse_trade_dt(text)
+    if not dt:
+        return text[:10] if len(text) >= 10 else "—"
+    return dt.astimezone(NY).date().isoformat()
 
 
 def _default_symbol_data() -> dict:
@@ -108,9 +119,7 @@ class CycleTracker:
         if sym["current"] is None:
             sym["current"] = _new_current(sym["next_cycle_no"], principal)
         cur = sym["current"]
-        # 회차 '시작일'은 레코드 생성일이 아니라 실제 첫 매수일로 기록한다.
-        if cur.get("buy_count", 0) == 0 and cur.get("total_buy_usd", 0.0) == 0:
-            cur["started_at"] = _today_str()
+        # record_trade에서 첫 매수 체결일로 started_at 설정
         cur["total_buy_usd"] = round(cur["total_buy_usd"] + max(0.0, usd_amount), 2)
         cur["buy_count"] = cur.get("buy_count", 0) + 1
         cur["max_T"] = max(cur.get("max_T", 0.0), float(t_after))
@@ -142,6 +151,8 @@ class CycleTracker:
         cur = sym["current"]
         trades = cur.setdefault("trades", [])
         when = filled_at or datetime.datetime.now(KST).isoformat(timespec="seconds")
+        if side.upper() == "BUY" and not trades:
+            cur["started_at"] = _trade_date_display(when)
         trades.append({
             "symbol": symbol.upper(),
             "side": side.upper(),
@@ -380,25 +391,29 @@ class CycleTracker:
             "filled_at": entry.get("filled_at") or entry.get("at"),
             "at": entry.get("filled_at") or entry.get("at"),
             "fill_id": entry.get("id"),
+            "order_id": entry.get("order_id"),
         }
 
     @classmethod
     def _merge_trade(cls, existing: dict, incoming: dict) -> dict:
-        """같은 체결 — fill_log·브로커 쪽 filled_at 우선."""
+        """같은 체결 — fill_log·토스 filledAt 우선."""
         merged = {**existing, **incoming}
-        for key in ("filled_at", "at", "source", "note", "fill_id", "order_id"):
+        in_when = incoming.get("filled_at") or incoming.get("at") or ""
+        ex_when = existing.get("filled_at") or existing.get("at") or ""
+        in_src = str(incoming.get("source") or "")
+        prefer = bool(in_when) and (
+            not ex_when
+            or in_src == "broker"
+            or incoming.get("order_id")
+            or (in_when != ex_when and in_src in ("broker", "sync", "bot"))
+        )
+        if prefer:
+            merged["filled_at"] = in_when
+            merged["at"] = in_when
+        for key in ("order_id", "fill_id", "source", "note"):
             val = incoming.get(key)
             if val not in (None, ""):
                 merged[key] = val
-        ex_when = existing.get("filled_at") or existing.get("at") or ""
-        in_when = incoming.get("filled_at") or incoming.get("at") or ""
-        if in_when and (
-            not ex_when
-            or incoming.get("source") in ("broker", "sync")
-            or (ex_when[:10] == _today_str() and in_when[:10] != ex_when[:10])
-        ):
-            merged["filled_at"] = in_when
-            merged["at"] = in_when
         return merged
 
     @classmethod
@@ -438,6 +453,31 @@ class CycleTracker:
             trades.append(tr)
             by_key[key] = len(trades) - 1
         cur["trades"] = self._dedupe_trades(trades)[-100:]
+        self._save_all(data)
+
+    def refresh_trade_dates(self, symbol: str, order_times: dict[str, str]) -> None:
+        """토스 CLOSED 주문 filledAt으로 trades·started_at 보정."""
+        if not order_times:
+            return
+        data = self._load_all()
+        sym = self._get(data, symbol)
+        cur = sym.get("current")
+        if not cur:
+            return
+        for tr in cur.get("trades") or []:
+            oid = str(tr.get("order_id") or "")
+            if oid and oid in order_times:
+                fa = order_times[oid]
+                tr["filled_at"] = fa
+                tr["at"] = fa
+        buy_dates = [
+            _trade_date_display(t.get("filled_at") or t.get("at") or "")
+            for t in cur.get("trades") or []
+            if t.get("side") == "BUY"
+            and _trade_date_display(t.get("filled_at") or t.get("at") or "") != "—"
+        ]
+        if buy_dates:
+            cur["started_at"] = min(buy_dates)
         self._save_all(data)
 
     def dedupe_symbol_trades(self, symbol: str) -> None:

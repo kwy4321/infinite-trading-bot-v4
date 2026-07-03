@@ -111,6 +111,7 @@ class JobExecutor:
                         "price": round(fill_price, 2),
                         "qty": filled_qty,
                         "filled_at": fill_time,
+                        "order_id": oid or None,
                     }
                     if notify:
                         await self._notify(

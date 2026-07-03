@@ -35,6 +35,7 @@ class FillProcessor:
             source=source, note=note or order.get("desc", ""),
             fill_id=order.get("fill_id"),
             filled_at=order.get("filled_at"),
+            order_id=order.get("order_id"),
         )
         return state
 
@@ -66,5 +67,6 @@ class FillProcessor:
             source=source, note=note or order.get("desc", ""),
             fill_id=order.get("fill_id"),
             filled_at=order.get("filled_at"),
+            order_id=order.get("order_id"),
         )
         return state, completed

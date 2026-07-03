@@ -268,6 +268,62 @@ class TossClient:
             orders = [o for o in orders if (o.get("symbol") or "").upper() == sym]
         return orders
 
+    def get_closed_orders(
+        self,
+        symbol: str | None = None,
+        *,
+        limit: int = 100,
+        from_date: str | None = None,
+    ) -> list[dict]:
+        """종료된 주문 목록 — execution.filledAt 포함 (페이지네이션)."""
+        if self.dry_run:
+            return []
+        params: dict = {"status": "CLOSED", "limit": min(max(limit, 1), 100)}
+        if symbol:
+            params["symbol"] = symbol.upper()
+        if from_date:
+            params["from"] = from_date
+        all_orders: list[dict] = []
+        cursor: str | None = None
+        while len(all_orders) < limit:
+            req = dict(params)
+            if cursor:
+                req["cursor"] = cursor
+            data = self._request(
+                "GET", "/api/v1/orders", "ORDER_HISTORY", account=True, params=req,
+            )
+            result = data.get("result", data)
+            batch = list(result.get("orders") or [])
+            all_orders.extend(batch)
+            if not result.get("hasNext") or not result.get("nextCursor"):
+                break
+            cursor = str(result.get("nextCursor"))
+        return all_orders[:limit]
+
+    @staticmethod
+    def order_fill_timestamp(order: dict) -> str:
+        """주문 dict에서 체결 시각 (filledAt 우선, 없으면 orderedAt)."""
+        exec_ = order.get("execution") or {}
+        for val in (
+            exec_.get("filledAt"), exec_.get("filled_at"),
+            order.get("filledAt"), order.get("filled_at"),
+            order.get("orderedAt"), order.get("ordered_at"),
+        ):
+            if val:
+                return str(val)
+        return ""
+
+    @staticmethod
+    def build_order_fill_times(orders: list[dict]) -> dict[str, str]:
+        """orderId → filledAt 매핑."""
+        out: dict[str, str] = {}
+        for order in orders:
+            oid = str(order.get("orderId") or order.get("order_id") or "")
+            ts = TossClient.order_fill_timestamp(order)
+            if oid and ts:
+                out[oid] = ts
+        return out
+
     def _parse_session_time(self, raw: str) -> datetime.time:
         parts = raw.split(":")
         return datetime.time(int(parts[0]), int(parts[1]), int(parts[2]) if len(parts) > 2 else 0)

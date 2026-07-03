@@ -15,7 +15,6 @@ from config.settings import SYMBOLS, get_settings
 CYCLES_FILE = "cycles.json"
 DEFAULT_DATA = os.path.join("data", "accounts", "default")
 KST = ZoneInfo("Asia/Seoul")
-NY = ZoneInfo("America/New_York")
 
 
 def _parse_trade_dt(raw: str) -> datetime.datetime | None:
@@ -28,12 +27,11 @@ def _parse_trade_dt(raw: str) -> datetime.datetime | None:
 
 
 def _today_str() -> str:
-    """미국 장 거래일 (오늘, Eastern)."""
-    return datetime.datetime.now(NY).date().isoformat()
+    return datetime.datetime.now(KST).date().isoformat()
 
 
 def _trade_date_display(raw_when: str) -> str:
-    """체결 시각 → 미국 장 거래일 (US/Eastern, YYYY-MM-DD)."""
+    """주문 접수 시각 → KST 날짜 (토스 주문내역과 동일)."""
     if not raw_when:
         return "—"
     text = str(raw_when).strip()
@@ -42,7 +40,7 @@ def _trade_date_display(raw_when: str) -> str:
     dt = _parse_trade_dt(text)
     if not dt:
         return text[:10] if len(text) >= 10 else "—"
-    return dt.astimezone(NY).date().isoformat()
+    return dt.astimezone(KST).strftime("%Y-%m-%d")
 
 
 def _default_symbol_data() -> dict:
@@ -167,6 +165,7 @@ class CycleTracker:
             "note": note,
             "order_id": order_id,
             "fill_id": fill_id,
+            "ordered_at": when,
             "filled_at": when,
             "at": when,
         })
@@ -371,7 +370,7 @@ class CycleTracker:
 
     @staticmethod
     def _trade_sort_key(tr: dict) -> str:
-        return tr.get("filled_at") or tr.get("at") or ""
+        return tr.get("ordered_at") or tr.get("filled_at") or tr.get("at") or ""
 
     @classmethod
     def _fill_log_to_trade(cls, symbol: str, entry: dict) -> dict:
@@ -388,8 +387,9 @@ class CycleTracker:
             "t_before": entry.get("t_before"),
             "t_after": entry.get("t_after"),
             "source": entry.get("source", "sync"),
-            "filled_at": entry.get("filled_at") or entry.get("at"),
-            "at": entry.get("filled_at") or entry.get("at"),
+            "ordered_at": entry.get("ordered_at") or entry.get("filled_at") or entry.get("at"),
+            "filled_at": entry.get("ordered_at") or entry.get("filled_at") or entry.get("at"),
+            "at": entry.get("ordered_at") or entry.get("filled_at") or entry.get("at"),
             "fill_id": entry.get("id"),
             "order_id": entry.get("order_id"),
         }
@@ -398,20 +398,24 @@ class CycleTracker:
     def _merge_trade(cls, existing: dict, incoming: dict) -> dict:
         """같은 체결 병합 — sync 추정일로 broker·기존 체결일 덮어쓰지 않음."""
         merged = {**existing, **incoming}
-        in_when = incoming.get("filled_at") or incoming.get("at") or ""
-        ex_when = existing.get("filled_at") or existing.get("at") or ""
+        in_when = incoming.get("ordered_at") or incoming.get("filled_at") or incoming.get("at") or ""
+        ex_when = existing.get("ordered_at") or existing.get("filled_at") or existing.get("at") or ""
         in_src = str(incoming.get("source") or "")
         if incoming.get("order_id") or in_src == "broker":
             if in_when:
+                merged["ordered_at"] = in_when
                 merged["filled_at"] = in_when
                 merged["at"] = in_when
         elif in_src == "sync" and ex_when:
+            merged["ordered_at"] = ex_when
             merged["filled_at"] = ex_when
             merged["at"] = ex_when
         elif in_when and not ex_when:
+            merged["ordered_at"] = in_when
             merged["filled_at"] = in_when
             merged["at"] = in_when
         elif ex_when:
+            merged["ordered_at"] = ex_when
             merged["filled_at"] = ex_when
             merged["at"] = ex_when
         for key in ("order_id", "fill_id", "source", "note"):
@@ -430,8 +434,10 @@ class CycleTracker:
 
         def mark(rec: dict, fill: dict) -> None:
             nonlocal updated
-            rec["filled_at"] = fill["filled_at"]
-            rec["at"] = fill["filled_at"]
+            when = fill.get("ordered_at") or fill.get("filled_at") or ""
+            rec["ordered_at"] = when
+            rec["filled_at"] = when
+            rec["at"] = when
             rec["order_id"] = fill["order_id"]
             used.add(fill["order_id"])
             updated += 1
@@ -474,7 +480,7 @@ class CycleTracker:
             key = (fill["side"], fill["qty"])
             pools.setdefault(key, []).append(fill)
         for key in pools:
-            pools[key].sort(key=lambda f: f["filled_at"])
+            pools[key].sort(key=lambda f: f.get("ordered_at") or f.get("filled_at") or "")
 
         remaining = [
             r for r in records
@@ -499,10 +505,10 @@ class CycleTracker:
     @classmethod
     def _update_cycle_started_at(cls, cur: dict) -> None:
         buy_dates = [
-            _trade_date_display(t.get("filled_at") or t.get("at") or "")
+            _trade_date_display(t.get("ordered_at") or t.get("filled_at") or t.get("at") or "")
             for t in cur.get("trades") or []
             if t.get("side") == "BUY"
-            and _trade_date_display(t.get("filled_at") or t.get("at") or "") != "—"
+            and _trade_date_display(t.get("ordered_at") or t.get("filled_at") or t.get("at") or "") != "—"
         ]
         if buy_dates:
             cur["started_at"] = min(buy_dates)
@@ -581,7 +587,7 @@ class CycleTracker:
         sym = tr.get("symbol") or symbol
         icon = "🟢" if side == "BUY" else "🔴"
         side_txt = "매수" if side == "BUY" else "매도"
-        raw_when = tr.get("filled_at") or tr.get("at") or ""
+        raw_when = tr.get("ordered_at") or tr.get("filled_at") or tr.get("at") or ""
         when = _trade_date_display(raw_when)
         qty = int(tr.get("qty", 0))
         avg = tr.get("avg_after")

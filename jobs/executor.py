@@ -102,7 +102,11 @@ class JobExecutor:
                         detail.get("average_filled_price") or ref_price or limit_price or 0
                     )
                     status = str(detail.get("status") or "")
-                    fill_time = detail.get("filled_at") or datetime.now(KST).isoformat(timespec="seconds")
+                    fill_time = (
+                        detail.get("ordered_at")
+                        or detail.get("filled_at")
+                        or datetime.now(KST).isoformat(timespec="seconds")
+                    )
 
                 grad = None
                 if filled_qty > 0:
@@ -110,6 +114,7 @@ class JobExecutor:
                         **order,
                         "price": round(fill_price, 2),
                         "qty": filled_qty,
+                        "ordered_at": fill_time,
                         "filled_at": fill_time,
                         "order_id": oid or None,
                     }

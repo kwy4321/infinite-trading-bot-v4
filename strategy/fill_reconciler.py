@@ -244,13 +244,13 @@ class FillReconciler:
             or 0
         )
         order_id = str(order.get("orderId") or order.get("order_id") or "")
-        filled_at = (
-            execution.get("filledAt") or execution.get("filled_at")
-            or order.get("filled_at")
-            or order.get("orderedAt") or order.get("ordered_at") or ""
+        order_date = (
+            order.get("orderedAt") or order.get("ordered_at")
+            or execution.get("filledAt") or execution.get("filled_at")
+            or order.get("filled_at") or ""
         )
         side = (order.get("side") or "").upper()
-        fill_id = f"{order_id}:{filled_qty}:{filled_at or 'na'}"
+        fill_id = f"{order_id}:{filled_qty}:{order_date or 'na'}"
         return [{
             "id": fill_id,
             "order_id": order_id,
@@ -260,7 +260,8 @@ class FillReconciler:
             "action": None,
             "source": "broker",
             "note": f"토스 체결 ({order.get('status', '')})",
-            "filled_at": filled_at,
+            "ordered_at": order_date,
+            "filled_at": order_date,
         }]
 
     def _apply_fill(self, symbol: str, st: dict, fill: dict, premium: int) -> dict:
@@ -275,6 +276,8 @@ class FillReconciler:
             order["fill_id"] = fill["id"]
         if fill.get("filled_at"):
             order["filled_at"] = fill["filled_at"]
+        if fill.get("ordered_at"):
+            order["ordered_at"] = fill["ordered_at"]
         src = fill.get("source", "sync")
         note = fill.get("note", "")
         if side == "BUY":
@@ -314,7 +317,8 @@ class FillReconciler:
             "t_after": t_after,
             "avg_after": float(st.get("avg_price", 0.0)),
             "qty_after": int(st.get("qty", 0)),
-            "at": fill.get("filled_at") or datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "ordered_at": fill.get("ordered_at") or fill.get("filled_at"),
+            "at": fill.get("ordered_at") or fill.get("filled_at") or datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         }
         if fill.get("order_id"):
             entry["order_id"] = fill["order_id"]

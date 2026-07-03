@@ -168,10 +168,8 @@ class TossClient:
             exec_.get("filledQuantity") or exec_.get("filled_quantity") or 0
         )
         avg_raw = exec_.get("averageFilledPrice") or exec_.get("average_filled_price")
-        filled_at = (
-            exec_.get("filledAt") or exec_.get("filled_at")
-            or result.get("orderedAt") or result.get("ordered_at") or ""
-        )
+        ordered_at = result.get("orderedAt") or result.get("ordered_at") or ""
+        exec_filled = exec_.get("filledAt") or exec_.get("filled_at") or ""
         return {
             "order_id": str(result.get("orderId") or result.get("order_id") or ""),
             "status": str(result.get("status") or ""),
@@ -180,7 +178,8 @@ class TossClient:
             "quantity": float(qty_raw or 0),
             "filled_quantity": float(filled_raw or 0),
             "average_filled_price": float(avg_raw) if avg_raw not in (None, "") else None,
-            "filled_at": str(filled_at) if filled_at else "",
+            "ordered_at": str(ordered_at) if ordered_at else "",
+            "filled_at": str(ordered_at or exec_filled or ""),
             "execution": exec_,
         }
 
@@ -304,7 +303,7 @@ class TossClient:
         return all_orders[:cap]
 
     def list_broker_fills(self, symbol: str, *, days: int = 90, max_orders: int = 200) -> list[dict]:
-        """체결된 CLOSED 주문 — side·qty·price·filledAt (시간순)."""
+        """체결된 CLOSED 주문 — side·qty·price·orderedAt (주문 접수일, 시간순)."""
         from_date = (
             datetime.datetime.now(KST) - datetime.timedelta(days=days)
         ).date().isoformat()
@@ -321,28 +320,38 @@ class TossClient:
                 exec_.get("averageFilledPrice") or exec_.get("average_filled_price")
                 or order.get("price") or 0
             )
-            ts = self.order_fill_timestamp(order)
+            ordered_at = self.order_placed_timestamp(order)
             oid = str(order.get("orderId") or order.get("order_id") or "")
-            if not ts or not oid:
+            if not ordered_at or not oid:
                 continue
             fills.append({
                 "order_id": oid,
                 "side": str(order.get("side") or "").upper(),
                 "qty": qty,
                 "price": round(float(avg_raw), 2),
-                "filled_at": ts,
+                "ordered_at": ordered_at,
+                "filled_at": ordered_at,
             })
-        fills.sort(key=lambda f: f["filled_at"])
+        fills.sort(key=lambda f: f["ordered_at"])
         return fills
 
     @staticmethod
+    def order_placed_timestamp(order: dict) -> str:
+        """주문 접수 시각 orderedAt (토스 주문내역 날짜 기준)."""
+        for val in (
+            order.get("orderedAt"), order.get("ordered_at"),
+        ):
+            if val:
+                return str(val)
+        return ""
+
+    @staticmethod
     def order_fill_timestamp(order: dict) -> str:
-        """주문 dict에서 체결 시각 (filledAt 우선, 없으면 orderedAt)."""
+        """체결 시각 filledAt (결제/체결 기준)."""
         exec_ = order.get("execution") or {}
         for val in (
             exec_.get("filledAt"), exec_.get("filled_at"),
             order.get("filledAt"), order.get("filled_at"),
-            order.get("orderedAt"), order.get("ordered_at"),
         ):
             if val:
                 return str(val)

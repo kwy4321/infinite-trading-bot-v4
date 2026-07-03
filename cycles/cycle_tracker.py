@@ -346,6 +346,13 @@ class CycleTracker:
 
     @classmethod
     def _trade_dedup_key(cls, tr: dict) -> str:
+        oid = str(tr.get("order_id") or "").strip()
+        if oid:
+            return f"oid:{oid}"
+        fid = str(tr.get("fill_id") or "").strip()
+        if fid:
+            return f"fid:{fid}"
+        when = tr.get("ordered_at") or tr.get("filled_at") or tr.get("at") or ""
         t_after = tr.get("t_after")
         t_before = tr.get("t_before")
         return "|".join([
@@ -354,6 +361,7 @@ class CycleTracker:
             f"{float(tr.get('price', 0)):.2f}",
             "" if t_before in (None, "") else f"{float(t_before):g}",
             "" if t_after in (None, "") else f"{float(t_after):g}",
+            str(when)[:19],
         ])
 
     @classmethod
@@ -503,6 +511,96 @@ class CycleTracker:
         return updated
 
     @classmethod
+    def select_position_fills(cls, broker_fills: list[dict], target_qty: int) -> list[dict]:
+        """현재 보유 수량을 설명하는 체결만 시간순 반환."""
+        if target_qty <= 0 or not broker_fills:
+            return []
+        sorted_fills = sorted(
+            broker_fills,
+            key=lambda f: f.get("ordered_at") or f.get("filled_at") or "",
+        )
+        net = 0
+        selected: list[dict] = []
+        for fill in reversed(sorted_fills):
+            side = str(fill.get("side") or "").upper()
+            qty = int(fill.get("qty") or 0)
+            if qty <= 0:
+                continue
+            if side == "BUY":
+                net += qty
+            elif side == "SELL":
+                net -= qty
+            else:
+                continue
+            selected.append(fill)
+            if net >= target_qty:
+                break
+        selected.reverse()
+        if net == target_qty:
+            return selected
+        buys = [f for f in sorted_fills if str(f.get("side") or "").upper() == "BUY"]
+        total = 0
+        out: list[dict] = []
+        for fill in buys:
+            out.append(fill)
+            total += int(fill.get("qty") or 0)
+            if total >= target_qty:
+                break
+        return out if total >= target_qty else selected
+
+    def rebuild_trades_from_broker(
+        self,
+        symbol: str,
+        broker_fills: list[dict],
+        fill_log: list[dict],
+        target_qty: int,
+    ) -> int:
+        """토스 체결(orderedAt) 기준으로 current.trades 재구성 — fill_log에서 T·action 보존."""
+        fills = self.select_position_fills(broker_fills, target_qty)
+        if not fills:
+            return 0
+        log_by_oid: dict[str, dict] = {}
+        for entry in fill_log or []:
+            oid = str(entry.get("order_id") or "").strip()
+            if oid:
+                log_by_oid[oid] = entry
+        new_trades: list[dict] = []
+        for fill in fills:
+            oid = str(fill.get("order_id") or "").strip()
+            entry = log_by_oid.get(oid)
+            when = fill.get("ordered_at") or fill.get("filled_at") or ""
+            tr: dict = {
+                "symbol": symbol.upper(),
+                "side": str(fill.get("side") or "").upper(),
+                "qty": int(fill.get("qty") or 0),
+                "price": round(float(fill.get("price") or 0), 2),
+                "ordered_at": when,
+                "filled_at": when,
+                "at": when,
+                "order_id": oid or None,
+                "source": "broker",
+            }
+            if entry:
+                tr["fill_id"] = entry.get("id")
+                tr["action"] = entry.get("action")
+                tr["t_before"] = entry.get("t_before")
+                tr["t_after"] = entry.get("t_after")
+                tr["avg_after"] = entry.get("avg_after")
+                tr["qty_after"] = entry.get("qty_after")
+                if entry.get("note"):
+                    tr["note"] = entry.get("note")
+            new_trades.append(tr)
+        data = self._load_all()
+        sym = self._get(data, symbol)
+        cur = sym.get("current")
+        if not cur:
+            return 0
+        cur["trades"] = new_trades
+        self._update_cycle_started_at(cur)
+        self._save_all(data)
+        return len(new_trades)
+
+    @classmethod
     def _update_cycle_started_at(cls, cur: dict) -> None:
         buy_dates = [
             _trade_date_display(t.get("ordered_at") or t.get("filled_at") or t.get("at") or "")
@@ -515,9 +613,12 @@ class CycleTracker:
 
     @classmethod
     def _collect_trades(cls, sym_data: dict, symbol: str, fill_log: list | None = None) -> list[dict]:
-        """현재 회차 매매 내역 — trades + fill_log 병합, 체결일 우선."""
+        """현재 회차 매매 내역 — broker order_id가 있으면 trades 우선."""
+        stored = list((sym_data.get("current") or {}).get("trades") or [])
+        if stored and any(str(t.get("order_id") or "").strip() for t in stored):
+            return cls._dedupe_trades(stored)
         by_key: dict[str, dict] = {}
-        for tr in (sym_data.get("current") or {}).get("trades") or []:
+        for tr in stored:
             key = cls._trade_dedup_key(tr)
             by_key[key] = tr
         for entry in fill_log or []:

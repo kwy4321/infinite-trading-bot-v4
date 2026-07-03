@@ -322,6 +322,12 @@ class TossClient:
             )
             ordered_at = self.order_placed_timestamp(order)
             oid = str(order.get("orderId") or order.get("order_id") or "")
+            if not ordered_at and oid:
+                try:
+                    detail = self.get_order(oid)
+                    ordered_at = detail.get("ordered_at") or self.order_placed_timestamp(detail)
+                except Exception:
+                    logger.debug("get_order orderedAt fallback failed %s", oid)
             if not ordered_at or not oid:
                 continue
             fills.append({

@@ -399,7 +399,7 @@ class FillReconciler:
         return None, price, "수동/외부 매도 (익절 추정)"
 
     def _refresh_fill_dates_from_closed_orders(self, symbol: str) -> None:
-        """토스 CLOSED 주문과 side·qty·price·순서 매칭으로 체결일 보정."""
+        """토스 CLOSED 주문 orderedAt으로 fill_log·trades 재구성."""
         try:
             fills = self.app.broker.list_broker_fills(symbol, days=90, max_orders=200)
         except Exception:
@@ -411,7 +411,14 @@ class FillReconciler:
         log = st.get("fill_log", [])
         self.app.cycles.apply_broker_fill_dates(log, fills)
         self.app.state.save(symbol, st)
-        self.app.cycles.reconcile_trade_dates(symbol, fills)
+        qty = int(st.get("qty", 0))
+        if qty <= 0:
+            try:
+                broker = self.app.broker.get_holdings_item(symbol)
+                qty = int(broker.get("qty", 0) or 0)
+            except Exception:
+                pass
+        self.app.cycles.rebuild_trades_from_broker(symbol, fills, log, qty)
 
     @staticmethod
     def _is_processed(st: dict, fill_id: str) -> bool:

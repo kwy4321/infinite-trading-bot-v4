@@ -411,7 +411,7 @@ class JobExecutor:
         lines = ["🔄 <b>회차 동기화</b> <i>(체결·실계좌 기준)</i>"]
         for sym in symbols:
             try:
-                r = self.sync_cycle_from_broker(sym, premium)
+                r = await asyncio.to_thread(self.sync_cycle_from_broker, sym, premium)
             except Exception as e:
                 logger.exception("cycle sync failed %s", sym)
                 lines.append(f"🚨 [{sym}] 동기화 실패: {e}")

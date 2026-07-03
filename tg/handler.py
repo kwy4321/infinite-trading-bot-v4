@@ -245,7 +245,7 @@ class TelegramHandler:
         await target.reply_text(text, reply_markup=markup)
 
     async def cmd_cycles_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """하단 메뉴 — 거래 중인 종목의 현재 회차·매매 내역."""
+        """하단 메뉴 — 동기화 후 거래 중인 종목의 현재 회차·매매 내역."""
         if not self._allowed(update):
             return await self._deny(update)
         active = self.app.runtime.active_symbols()
@@ -254,9 +254,9 @@ class TelegramHandler:
                 "⚠️ 거래 종목이 없어요. ⚙️ 설정 → 📡 거래 종목에서 켜주세요.",
             )
         if len(active) == 1:
-            return await self._send_cycles(update.message, active[0])
+            return await self._sync_then_send_cycles(update.message, active[0])
         symbols_csv = ",".join(active)
-        return await self._send_cycles(update.message, symbols_csv)
+        return await self._sync_then_send_cycles(update.message, symbols_csv)
 
     async def cmd_cycles(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
@@ -265,7 +265,7 @@ class TelegramHandler:
         if len(parts) > 1:
             symbol = parts[1].upper()
             if symbol in SYMBOLS or symbol == "ALL":
-                return await self._send_cycles(update.message, symbol)
+                return await self._sync_then_send_cycles(update.message, symbol)
         rows = [
             [InlineKeyboardButton(s, callback_data=f"CYCLES:{s}") for s in SYMBOLS],
             [InlineKeyboardButton("전체", callback_data="CYCLES:ALL")],
@@ -563,8 +563,19 @@ class TelegramHandler:
 
         if data.startswith("CYCLES:"):
             symbol = data.split(":")[1]
-            await self._send_cycles(query.message, symbol)
+            await self._sync_then_send_cycles(query.message, symbol)
             return
+
+    async def _sync_then_send_cycles(self, target, symbol: str):
+        """실계좌 동기화(/sync) 후 회차 내역 표시."""
+        is_live = not (self.app.settings.dry_run or not self.app.settings.has_toss)
+        if is_live:
+            await target.reply_text("🔄 토스 체결·실계좌에서 T·회차 동기화 중...")
+            try:
+                await self.executor.run_cycle_sync(notify=False)
+            except Exception:
+                logger.exception("cycle sync before report failed")
+        await self._send_cycles(target, symbol, refresh=not is_live)
 
     async def _send_cycles(self, target, symbol: str, *, refresh: bool = True):
         try:

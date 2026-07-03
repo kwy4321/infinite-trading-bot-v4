@@ -222,14 +222,22 @@ class FillReconciler:
         return applied
 
     def _extract_order_fills(self, order: dict, symbol: str) -> list[dict]:
-        if order.get("symbol", "").upper() != symbol.upper():
+        sym = str(order.get("symbol") or "").upper()
+        if sym and sym != symbol.upper():
             return []
         execution = order.get("execution") or {}
-        filled_qty = int(float(execution.get("filledQuantity", 0) or 0))
+        filled_qty = int(float(
+            execution.get("filledQuantity")
+            or execution.get("filled_quantity")
+            or order.get("filled_quantity")
+            or 0
+        ))
         if filled_qty <= 0:
             return []
         avg_price = float(
             execution.get("averageFilledPrice")
+            or execution.get("average_filled_price")
+            or order.get("average_filled_price")
             or order.get("price")
             or 0
         )

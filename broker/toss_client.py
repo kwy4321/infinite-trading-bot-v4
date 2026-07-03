@@ -12,6 +12,8 @@ from broker.toss_auth import BASE_URL, TossAuth
 from broker.rate_limiter import RateLimiter
 
 logger = logging.getLogger(__name__)
+KST = ZoneInfo("Asia/Seoul")
+NY = ZoneInfo("America/New_York")
 
 
 def _money(val, currency: str = "usd") -> float:
@@ -226,6 +228,52 @@ class TossClient:
             return "afterhours"
         return "off_hours"
 
+    def get_us_market_calendar(self) -> dict:
+        if self.dry_run:
+            today = datetime.datetime.now(NY).date().isoformat()
+            return {
+                "today": {"date": today, "regularMarket": {"startTime": "00:00", "endTime": "00:00"}},
+                "nextBusinessDay": {"date": today, "regularMarket": {"startTime": "00:00", "endTime": "00:00"}},
+                "previousBusinessDay": {"date": today, "regularMarket": {"startTime": "00:00", "endTime": "00:00"}},
+            }
+        data = self._request("GET", "/api/v1/market-calendar/US", "MARKET_INFO")
+        return data.get("result", data)
+
+    @staticmethod
+    def find_us_market_day(cal: dict, target_date: str) -> dict | None:
+        for key in ("today", "nextBusinessDay", "previousBusinessDay"):
+            day = cal.get(key) or {}
+            if day.get("date") == target_date:
+                return day
+        return None
+
+    def check_us_regular_session(self, target_date: str) -> tuple[bool, str]:
+        """Return (has_regular_session, us_date) for the given US calendar date."""
+        if self.dry_run:
+            return True, target_date
+        try:
+            cal = self.get_us_market_calendar()
+            day = self.find_us_market_day(cal, target_date)
+            if not day:
+                day = cal.get("today") or {}
+            us_date = day.get("date", target_date)
+            return day.get("regularMarket") is not None, us_date
+        except Exception:
+            logger.exception("US market calendar check failed")
+            return True, target_date
+
+    @staticmethod
+    def target_us_date_for_morning_job(kst_now: datetime.datetime | None = None) -> str:
+        """KST 새벽 Job — 오늘 밤(한국) 열릴 미국 정규장 = KST 날짜와 같은 US 거래일."""
+        now = kst_now or datetime.datetime.now(KST)
+        return now.date().isoformat()
+
+    @staticmethod
+    def target_us_date_for_ny_job(kst_now: datetime.datetime | None = None) -> str:
+        """미국 동부 시각 기준 당일 거래일."""
+        now = kst_now or datetime.datetime.now(KST)
+        return now.astimezone(NY).date().isoformat()
+
     def get_us_market_status(self) -> str:
         """Return US market phase: regular, premarket, afterhours, day, off_hours, closed."""
         if self.dry_run:
@@ -238,12 +286,11 @@ class TossClient:
             return self._market_status_fallback()
 
     def is_us_market_open_today(self) -> bool:
-        if self.dry_run:
-            return True
-        try:
-            data = self._request("GET", "/api/v1/market-calendar/US", "MARKET_INFO")
-            result = data.get("result", data)
-            today = result.get("today", {})
-            return today.get("regularMarket") is not None
-        except Exception:
-            return True
+        """대시보드용 — 지금 시각 기준 다음/당일 미국 정규장 개장 여부."""
+        now = datetime.datetime.now(KST)
+        if now.hour < 12:
+            target = self.target_us_date_for_morning_job(now)
+        else:
+            target = self.target_us_date_for_ny_job(now)
+        open_, _ = self.check_us_regular_session(target)
+        return open_

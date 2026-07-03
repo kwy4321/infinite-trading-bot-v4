@@ -6,6 +6,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from app import App
+from broker.toss_client import TossClient
 from strategy.order_planner import (
     JobPhase,
     filter_orders_for_phase,
@@ -91,6 +92,19 @@ class JobExecutor:
             await self._notify(grad_msg, html=True)
         return msg
 
+    def _target_us_date_for_phase(self, phase: JobPhase) -> str:
+        now = datetime.now(KST)
+        if phase in (JobPhase.JOB3_LOC_CLOSE, JobPhase.JOB1_LOC_CLOSE):
+            return TossClient.target_us_date_for_morning_job(now)
+        return TossClient.target_us_date_for_ny_job(now)
+
+    def _phase_label(self, phase: JobPhase) -> str:
+        return {
+            JobPhase.JOB1_LOC_CLOSE: "LOC",
+            JobPhase.JOB3_LOC_CLOSE: "LOC",
+            JobPhase.JOB2_SETTLE: "체결정리",
+        }.get(phase, phase.value)
+
     async def run_phase(self, phase: JobPhase, premium: int | None = None) -> None:
         if premium is None:
             premium = self.app.runtime.premium_default()
@@ -99,15 +113,24 @@ class JobExecutor:
             await self._notify("⏸️ 자동매매가 정지 상태예요. /resume 로 재개하세요.")
             return
 
-        try:
-            market_open = self.app.broker.is_us_market_open_today()
-        except Exception as e:
-            logger.exception("market open check failed")
-            await self._notify(f"🚨 장 개장 확인 실패: {e}")
-            return
-        if not market_open and phase != JobPhase.JOB4_REPORT:
-            await self._notify("📅 오늘은 미국 휴장이라 자동 실행을 건너뛰었어요.")
-            return
+        if phase != JobPhase.JOB4_REPORT:
+            target = self._target_us_date_for_phase(phase)
+            try:
+                open_, us_date = self.app.broker.check_us_regular_session(target)
+            except Exception as e:
+                logger.exception("market open check failed")
+                await self._notify(f"🚨 장 개장 확인 실패: {e}")
+                return
+            if not open_:
+                label = self._phase_label(phase)
+                hint = ""
+                if phase in (JobPhase.JOB3_LOC_CLOSE, JobPhase.JOB1_LOC_CLOSE):
+                    hint = "\n(한국 새벽 Job — 오늘 밤 열릴 미국 정규장 기준)"
+                await self._notify(
+                    f"📅 <b>{us_date}</b> 미국 정규장 휴장 — {label} Job 스킵 (주문 없음){hint}",
+                    html=True,
+                )
+                return
 
         symbols = self._active_symbols()
         if not symbols:

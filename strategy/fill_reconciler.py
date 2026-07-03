@@ -45,11 +45,15 @@ class FillReconciler:
 
         applied.extend(self._process_tracked_orders(symbol, st, premium))
         applied.extend(self._process_open_orders(symbol, st, premium))
-        applied.extend(self._reconcile_invested_gap(
+        invest_applied = self._reconcile_invested_gap(
             symbol, st, broker_qty, broker_avg, broker_price, premium,
-        ))
+        )
+        applied.extend(invest_applied)
+        if invest_applied:
+            st = self.app.state.load(symbol)
         applied.extend(self._reconcile_qty_delta(
             symbol, st, broker_qty, broker_avg, broker_price, premium,
+            skip_buys=bool(invest_applied),
         ))
 
         if applied:
@@ -162,12 +166,15 @@ class FillReconciler:
         broker_avg: float,
         broker_price: float,
         premium: int,
+        skip_buys: bool = False,
     ) -> list[dict]:
         """state 주수 vs 실계좌 주수 차이로 미반영 체결 추정."""
         state_qty = int(st.get("qty", 0))
         last_t_qty = int(st.get("last_t_qty", state_qty))
         tracked_qty = last_t_qty
         delta = broker_qty - max(state_qty, tracked_qty)
+        if delta > 0 and skip_buys:
+            delta = 0
         if delta == 0:
             sell_delta = min(state_qty, tracked_qty) - broker_qty
             if sell_delta <= 0:
@@ -250,6 +257,8 @@ class FillReconciler:
             "price": float(fill["price"]),
             "side": side,
         }
+        if fill.get("id"):
+            order["fill_id"] = fill["id"]
         src = fill.get("source", "sync")
         note = fill.get("note", "")
         if side == "BUY":

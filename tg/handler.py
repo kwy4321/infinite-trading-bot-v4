@@ -598,6 +598,7 @@ class TelegramHandler:
                 self.app.cycles.sync_trades_from_fill_log(
                     sym, st.get("fill_log", []), float(st.get("principal", 0.0)),
                 )
+                self.app.cycles.dedupe_symbol_trades(sym)
                 st = self.app.state.load(sym)
                 parts.append(self.app.cycles.format_cycles_report(
                     sym, st["qty"], st["avg_price"], price,

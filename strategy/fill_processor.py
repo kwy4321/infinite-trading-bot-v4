@@ -33,6 +33,7 @@ class FillProcessor:
             t_before=t_before, t_after=t_after,
             avg_after=state["avg_price"], qty_after=new_q,
             source=source, note=note or order.get("desc", ""),
+            fill_id=order.get("fill_id"),
         )
         return state
 
@@ -62,5 +63,6 @@ class FillProcessor:
             t_after=t_after if state["qty"] > 0 else 0.0,
             avg_after=state["avg_price"], qty_after=int(state["qty"]),
             source=source, note=note or order.get("desc", ""),
+            fill_id=order.get("fill_id"),
         )
         return state, completed

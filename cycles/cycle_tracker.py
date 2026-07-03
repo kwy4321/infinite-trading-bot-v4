@@ -116,6 +116,7 @@ class CycleTracker:
         source: str,
         note: str = "",
         order_id: str | None = None,
+        fill_id: str | None = None,
         filled_at: str | None = None,
     ) -> None:
         """현재 회차 매매 내역 기록 (체결 동기화·봇 주문 공통)."""
@@ -138,11 +139,11 @@ class CycleTracker:
             "source": source,
             "note": note,
             "order_id": order_id,
+            "fill_id": fill_id,
             "filled_at": filled_at or datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
             "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         })
-        if len(trades) > 100:
-            cur["trades"] = trades[-100:]
+        cur["trades"] = self._dedupe_trades(trades)[-100:]
         self._save_all(data)
 
     def record_sell(self, symbol: str, usd_amount: float, t_after: float,
@@ -317,6 +318,30 @@ class CycleTracker:
             "per_symbol": per_symbol,
         }
 
+    @classmethod
+    def _trade_dedup_key(cls, tr: dict) -> str:
+        t_after = tr.get("t_after")
+        t_before = tr.get("t_before")
+        return "|".join([
+            str(tr.get("side", "")).upper(),
+            str(int(tr.get("qty", 0))),
+            f"{float(tr.get('price', 0)):.2f}",
+            "" if t_before in (None, "") else f"{float(t_before):g}",
+            "" if t_after in (None, "") else f"{float(t_after):g}",
+        ])
+
+    @classmethod
+    def _dedupe_trades(cls, trades: list[dict]) -> list[dict]:
+        seen: set[str] = set()
+        out: list[dict] = []
+        for tr in sorted(trades, key=cls._trade_sort_key):
+            key = cls._trade_dedup_key(tr)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(tr)
+        return out
+
     @staticmethod
     def _trade_sort_key(tr: dict) -> str:
         return tr.get("filled_at") or tr.get("at") or ""
@@ -342,60 +367,47 @@ class CycleTracker:
         }
 
     @classmethod
-    def _collect_trades(cls, sym_data: dict, symbol: str, fill_log: list | None) -> list[dict]:
-        """현재 회차 trades + state fill_log 병합 (중복 제거)."""
-        seen: set[str] = set()
-        merged: list[dict] = []
-
-        def add(tr: dict) -> None:
-            fid = tr.get("fill_id") or tr.get("id")
-            if fid:
-                key = str(fid)
-            else:
-                key = "|".join([
-                    cls._trade_sort_key(tr),
-                    tr.get("side", ""),
-                    str(tr.get("qty", "")),
-                    str(tr.get("price", "")),
-                    str(tr.get("t_after", "")),
-                ])
-            if key in seen:
-                return
-            seen.add(key)
-            merged.append(tr)
-
-        for tr in (sym_data.get("current") or {}).get("trades") or []:
-            add(tr)
-        for entry in fill_log or []:
-            add(cls._fill_log_to_trade(symbol, entry))
-        merged.sort(key=cls._trade_sort_key)
-        return merged
+    def _collect_trades(cls, sym_data: dict, symbol: str, fill_log: list | None = None) -> list[dict]:
+        """현재 회차 매매 내역 (중복 제거). fill_log는 표시용으로 쓰지 않음."""
+        _ = fill_log
+        trades = list((sym_data.get("current") or {}).get("trades") or [])
+        return cls._dedupe_trades(trades)
 
     def sync_trades_from_fill_log(self, symbol: str, fill_log: list, principal: float) -> None:
-        """fill_log → cycles.current.trades 영구 반영 (서버 재시작·배포 후에도 유지)."""
-        if not fill_log:
-            return
+        """fill_log → cycles.current.trades 영구 반영 + 중복 정리."""
         data = self._load_all()
         sym = self._get(data, symbol)
         if sym["current"] is None:
+            if not fill_log:
+                return
             sym["current"] = _new_current(sym["next_cycle_no"], principal)
         cur = sym["current"]
-        trades = cur.setdefault("trades", [])
-        seen = {t.get("fill_id") for t in trades if t.get("fill_id")}
-        for entry in fill_log:
-            fid = entry.get("id")
-            if fid and fid in seen:
+        trades = list(cur.get("trades") or [])
+        seen = {self._trade_dedup_key(t) for t in trades}
+        for entry in fill_log or []:
+            tr = self._fill_log_to_trade(symbol, entry)
+            key = self._trade_dedup_key(tr)
+            if key in seen:
                 continue
-            trades.append(self._fill_log_to_trade(symbol, entry))
-            if fid:
-                seen.add(fid)
-        if len(trades) > 100:
-            cur["trades"] = trades[-100:]
+            trades.append(tr)
+            seen.add(key)
+        cur["trades"] = self._dedupe_trades(trades)[-100:]
+        self._save_all(data)
+
+    def dedupe_symbol_trades(self, symbol: str) -> None:
+        """저장된 매매 내역 중복 제거."""
+        data = self._load_all()
+        sym = self._get(data, symbol)
+        cur = sym.get("current")
+        if not cur:
+            return
+        trades = cur.get("trades") or []
+        cur["trades"] = self._dedupe_trades(trades)[-100:]
         self._save_all(data)
 
     @classmethod
-    def format_trade_line(cls, symbol: str, tr: dict) -> str:
-        """매매 1건 — 날짜 · 종목 · 매수/매도 · 수량 · 평단 · T (한 줄)."""
+    def format_trade_line(cls, symbol: str, tr: dict, *, index: int | None = None) -> str:
+        """매매 1건 — 연번 · 날짜 · 종목 · 매수/매도 · 수량 · 평단 · T (한 줄)."""
         side = tr.get("side", "")
         sym = tr.get("symbol") or symbol
         icon = "🟢" if side == "BUY" else "🔴"
@@ -415,10 +427,26 @@ class CycleTracker:
             t_txt = f"T {float(t_after):g}"
         else:
             t_txt = "T —"
+        prefix = f"<b>{index}.</b> " if index is not None else ""
         return (
-            f"  {when} · <b>{sym}</b> · {icon}{side_txt} · "
+            f"{prefix}{when} · <b>{sym}</b> · {icon}{side_txt} · "
             f"<b>{qty}</b>주 · ${avg_f:,.2f} · {t_txt}"
         )
+
+    @classmethod
+    def format_trade_block(cls, symbol: str, trades: list[dict]) -> list[str]:
+        """매매 내역 블록 — 연번 + 줄 간격."""
+        if not trades:
+            return []
+        lines = ["  📋 <b>매매 내역</b>", ""]
+        shown = trades[-20:]
+        start_no = max(1, len(trades) - len(shown) + 1)
+        for i, tr in enumerate(shown):
+            lines.append(f"  {cls.format_trade_line(symbol, tr, index=start_no + i)}")
+            if i < len(shown) - 1:
+                lines.append("")
+        lines.append("")
+        return lines
 
     def format_cycles_report(
         self,
@@ -458,23 +486,22 @@ class CycleTracker:
             lines.append("💤 진행 중인 회차 없음\n")
 
         if trades:
-            lines.append("  📋 <b>매매 내역</b>")
-            for tr in trades[-20:]:
-                lines.append(self.format_trade_line(symbol, tr))
-            lines.append("")
+            lines.extend(self.format_trade_block(symbol, trades))
 
         completed = sym.get("completed", [])
         if completed:
             lines.append(f"🏆 <b>완료된 회차 ({len(completed)}개)</b>")
+            lines.append("")
             for c in reversed(completed[-10:]):
                 sign = "+" if c["profit_usd"] >= 0 else ""
                 lines.append(
                     f"  #{c['cycle_no']} {c['ended_at']} · "
                     f"{sign}${c['profit_usd']:,.2f} ({sign}{c['profit_pct']:.2f}%)"
                 )
-                for tr in (c.get("trades") or [])[-10:]:
-                    lines.append(self.format_trade_line(symbol, tr))
-            lines.append("")
+                c_trades = self._dedupe_trades(c.get("trades") or [])
+                for j, tr in enumerate(c_trades[-10:], 1):
+                    lines.append(f"  {self.format_trade_line(symbol, tr, index=j)}")
+                lines.append("")
         elif not trades:
             lines.append("📭 매매·완료 회차 기록 없음")
         if snap and snap.get("at"):

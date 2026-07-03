@@ -302,42 +302,121 @@ class TossClient:
             cursor = str(result.get("nextCursor"))
         return all_orders[:cap]
 
-    def list_broker_fills(self, symbol: str, *, days: int = 90, max_orders: int = 200) -> list[dict]:
-        """체결된 CLOSED 주문 — side·qty·price·orderedAt (주문 접수일, 시간순)."""
+    def _order_to_fill(self, order: dict, symbol: str | None = None) -> dict | None:
+        sym = str(order.get("symbol") or "").upper()
+        if symbol and sym and sym != symbol.upper():
+            return None
+        exec_ = order.get("execution") or {}
+        qty = int(float(
+            exec_.get("filledQuantity") or exec_.get("filled_quantity")
+            or order.get("filled_quantity") or order.get("filledQuantity") or 0
+        ))
+        status = str(order.get("status") or "").upper()
+        if qty <= 0 and status == "FILLED":
+            qty = int(float(order.get("quantity") or order.get("qty") or 0))
+        if qty <= 0:
+            return None
+        avg_raw = (
+            exec_.get("averageFilledPrice") or exec_.get("average_filled_price")
+            or order.get("average_filled_price") or order.get("averageFilledPrice")
+            or order.get("price") or 0
+        )
+        ordered_at = self.order_placed_timestamp(order)
+        oid = str(order.get("orderId") or order.get("order_id") or "")
+        if not ordered_at or not oid:
+            return None
+        return {
+            "order_id": oid,
+            "symbol": sym,
+            "side": str(order.get("side") or "").upper(),
+            "qty": qty,
+            "price": round(float(avg_raw), 2),
+            "ordered_at": ordered_at,
+            "filled_at": ordered_at,
+        }
+
+    def _detail_to_fill(self, detail: dict, symbol: str | None = None) -> dict | None:
+        if not detail:
+            return None
+        sym = str(detail.get("symbol") or "").upper()
+        if symbol and sym and sym != symbol.upper():
+            return None
+        qty = int(float(detail.get("filled_quantity") or 0))
+        if qty <= 0:
+            return None
+        ordered_at = str(detail.get("ordered_at") or "")
+        oid = str(detail.get("order_id") or "")
+        if not ordered_at or not oid:
+            return None
+        avg = detail.get("average_filled_price") or 0
+        return {
+            "order_id": oid,
+            "symbol": sym,
+            "side": str(detail.get("side") or "").upper(),
+            "qty": qty,
+            "price": round(float(avg), 2),
+            "ordered_at": ordered_at,
+            "filled_at": ordered_at,
+        }
+
+    def list_broker_fills(
+        self,
+        symbol: str,
+        *,
+        days: int = 90,
+        max_orders: int = 200,
+        extra_order_ids: list[str] | None = None,
+    ) -> list[dict]:
+        """체결 주문 — CLOSED 목록 + 알려진 orderId 단건 조회 fallback."""
         from_date = (
             datetime.datetime.now(KST) - datetime.timedelta(days=days)
         ).date().isoformat()
-        orders = self.get_closed_orders(
-            symbol, from_date=from_date, max_orders=max_orders,
-        )
         fills: list[dict] = []
-        for order in orders:
-            exec_ = order.get("execution") or {}
-            qty = int(float(exec_.get("filledQuantity") or exec_.get("filled_quantity") or 0))
-            if qty <= 0:
+        seen: set[str] = set()
+
+        def add_fill(raw: dict | None) -> None:
+            if not raw:
+                return
+            oid = str(raw.get("order_id") or "")
+            if not oid or oid in seen:
+                return
+            seen.add(oid)
+            fills.append(raw)
+
+        closed_attempts = [
+            {"symbol": symbol, "from_date": from_date},
+            {"symbol": symbol, "from_date": None},
+            {"symbol": None, "from_date": from_date},
+            {"symbol": None, "from_date": None},
+        ]
+        for params in closed_attempts:
+            try:
+                orders = self.get_closed_orders(
+                    params["symbol"],
+                    from_date=params["from_date"],
+                    max_orders=max_orders,
+                )
+            except requests.HTTPError as exc:
+                code = exc.response.status_code if exc.response is not None else None
+                if code == 400:
+                    logger.warning("CLOSED order list rejected (%s): %s", params, exc)
+                    continue
+                raise
+            for order in orders:
+                add_fill(self._order_to_fill(order, symbol))
+            if fills:
+                break
+
+        for oid in extra_order_ids or []:
+            oid = str(oid or "").strip()
+            if not oid or oid in seen:
                 continue
-            avg_raw = (
-                exec_.get("averageFilledPrice") or exec_.get("average_filled_price")
-                or order.get("price") or 0
-            )
-            ordered_at = self.order_placed_timestamp(order)
-            oid = str(order.get("orderId") or order.get("order_id") or "")
-            if not ordered_at and oid:
-                try:
-                    detail = self.get_order(oid)
-                    ordered_at = detail.get("ordered_at") or self.order_placed_timestamp(detail)
-                except Exception:
-                    logger.debug("get_order orderedAt fallback failed %s", oid)
-            if not ordered_at or not oid:
-                continue
-            fills.append({
-                "order_id": oid,
-                "side": str(order.get("side") or "").upper(),
-                "qty": qty,
-                "price": round(float(avg_raw), 2),
-                "ordered_at": ordered_at,
-                "filled_at": ordered_at,
-            })
+            try:
+                detail = self.get_order(oid)
+                add_fill(self._detail_to_fill(detail, symbol))
+            except Exception:
+                logger.exception("get_order fill fetch failed %s", oid)
+
         fills.sort(key=lambda f: f["ordered_at"])
         return fills
 

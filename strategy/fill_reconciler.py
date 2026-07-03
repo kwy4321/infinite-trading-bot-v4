@@ -394,19 +394,49 @@ class FillReconciler:
             return "SELL_QUARTER", price, "수동/외부 매도 (쿼터 추정)"
         return None, price, "수동/외부 매도 (익절 추정)"
 
+    @staticmethod
+    def collect_known_order_ids(app: "App", symbol: str) -> list[str]:
+        """state·회차 기록에 저장된 orderId 수집 (CLOSED 목록 API fallback용)."""
+        sym = symbol.upper()
+        ids: list[str] = []
+        seen: set[str] = set()
+
+        def add(raw) -> None:
+            oid = str(raw or "").strip()
+            if oid and oid not in seen:
+                seen.add(oid)
+                ids.append(oid)
+
+        st = app.state.load(sym)
+        for entry in st.get("fill_log") or []:
+            add(entry.get("order_id"))
+        for entry in st.get("tracked_orders") or []:
+            if str(entry.get("symbol") or "").upper() == sym:
+                add(entry.get("order_id"))
+        cur = app.cycles.get_symbol_data(sym).get("current") or {}
+        for tr in cur.get("trades") or []:
+            add(tr.get("order_id"))
+        return ids
+
     def _refresh_fill_dates_from_closed_orders(
         self, symbol: str, target_qty: int | None = None,
     ) -> int:
         """토스 CLOSED 주문 orderedAt으로 fill_log·trades 재구성."""
+        st = self.app.state.load(symbol)
+        order_ids = self.collect_known_order_ids(self.app, symbol)
         try:
-            fills = self.app.broker.list_broker_fills(symbol, days=90, max_orders=200)
+            fills = self.app.broker.list_broker_fills(
+                symbol, days=90, max_orders=200, extra_order_ids=order_ids,
+            )
         except Exception:
             logger.exception("refresh fill dates failed %s", symbol)
             return 0
         if not fills:
-            logger.warning("no broker fills for %s", symbol)
+            logger.warning(
+                "no broker fills for %s (closed=0, known_order_ids=%d)",
+                symbol, len(order_ids),
+            )
             return 0
-        st = self.app.state.load(symbol)
         qty = int(target_qty if target_qty is not None else st.get("qty", 0))
         if qty <= 0:
             try:

@@ -2,8 +2,6 @@
 
 서버 실행:
   bash scripts/inspect_broker_fills.sh SOXL
-  # 또는
-  .venv/bin/python scripts/inspect_broker_fills.py SOXL
 """
 
 import os
@@ -39,7 +37,7 @@ from account.account import AccountPaths
 from broker.rate_limiter import RateLimiter
 from broker.toss_auth import TossAuth
 from broker.toss_client import TossClient
-from cycles.cycle_tracker import _trade_date_display
+from cycles.cycle_tracker import CycleTracker, _trade_date_display
 
 
 def main() -> int:
@@ -60,21 +58,56 @@ def main() -> int:
     auth = TossAuth(client_id, client_secret, paths.token_cache, RateLimiter())
     broker = TossClient(auth, account_seq, RateLimiter(), dry_run=False)
 
-    fills = broker.list_broker_fills(symbol, days=90, max_orders=50)
+    closed = broker.get_closed_orders(symbol, max_orders=20)
+    closed_all = broker.get_closed_orders(None, max_orders=20)
+
+    from state.state import StateStore
+
+    state = StateStore(paths)
+    cycles = CycleTracker(str(paths.root))
+    order_ids: list[str] = []
+    seen: set[str] = set()
+    st = state.load(symbol)
+    for entry in st.get("fill_log") or []:
+        oid = str(entry.get("order_id") or "").strip()
+        if oid and oid not in seen:
+            seen.add(oid)
+            order_ids.append(oid)
+    for entry in st.get("tracked_orders") or []:
+        if str(entry.get("symbol") or "").upper() != symbol:
+            continue
+        oid = str(entry.get("order_id") or "").strip()
+        if oid and oid not in seen:
+            seen.add(oid)
+            order_ids.append(oid)
+    cur = cycles.get_symbol_data(symbol).get("current") or {}
+    for tr in cur.get("trades") or []:
+        oid = str(tr.get("order_id") or "").strip()
+        if oid and oid not in seen:
+            seen.add(oid)
+            order_ids.append(oid)
+
+    fills = broker.list_broker_fills(symbol, days=90, max_orders=50, extra_order_ids=order_ids)
     pos = broker.get_holdings_item(symbol)
     qty = int(pos.get("qty", 0) or 0)
-    selected = __import__("cycles.cycle_tracker", fromlist=["CycleTracker"]).CycleTracker.select_position_fills(
-        fills, qty,
-    )
+    selected = CycleTracker.select_position_fills(fills, qty)
 
     print(f"=== {symbol} 보유 {qty}주 ===")
-    print(f"CLOSED 체결 {len(fills)}건, 현재 포지션 설명 {len(selected)}건\n")
+    print(f"CLOSED 목록(symbol) {len(closed)}건 · CLOSED(전체) {len(closed_all)}건")
+    print(f"저장된 orderId {len(order_ids)}개 · 체결 {len(fills)}건 · 포지션 매칭 {len(selected)}건")
+    if order_ids:
+        print(f"  orderIds: {', '.join(o[:12] + '…' for o in order_ids[:5])}")
+    print()
     for i, f in enumerate(selected, 1):
         raw = f.get("ordered_at") or f.get("filled_at") or ""
         print(
             f"{i}. {_trade_date_display(raw)} | {f.get('side')} {f.get('qty')}주 "
-            f"@ ${f.get('price')} | orderedAt={raw} | id={str(f.get('order_id', ''))[:16]}…"
+            f"@ ${f.get('price')} | orderedAt={raw}"
         )
+    if not selected and order_ids:
+        print("orderId는 있으나 get_order 체결 조회 실패 — 토큰·계좌번호 확인")
+    elif not selected and not order_ids:
+        print("저장된 orderId 없음 — 봇 주문 후 sync 필요")
     return 0
 
 

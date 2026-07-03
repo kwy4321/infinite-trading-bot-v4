@@ -110,6 +110,7 @@ class JobExecutor:
 
                 grad = None
                 if filled_qty > 0:
+                    t_before = float(st.get("T", 0.0))
                     filled_order = {
                         **order,
                         "price": round(fill_price, 2),
@@ -137,6 +138,25 @@ class JobExecutor:
                             grad = self.app.cycles.format_graduation_message(
                                 completed, symbol,
                             )
+                    if oid and not is_dry:
+                        fill_id = f"{oid}:{filled_qty}:{fill_time}"
+                        if not FillReconciler._is_processed(st, fill_id):
+                            FillReconciler._append_fill_log(st, {
+                                "id": fill_id,
+                                "order_id": oid,
+                                "symbol": symbol.upper(),
+                                "side": side,
+                                "qty": filled_qty,
+                                "price": round(fill_price, 2),
+                                "ordered_at": fill_time,
+                                "filled_at": fill_time,
+                                "at": fill_time,
+                                "source": "bot",
+                                "t_before": t_before,
+                                "t_after": float(st.get("T", 0.0)),
+                                "qty_after": int(st.get("qty", 0)),
+                                "avg_after": float(st.get("avg_price", 0.0)),
+                            })
                     return True, True, st, grad
 
                 if notify:

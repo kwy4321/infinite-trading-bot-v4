@@ -278,9 +278,13 @@ class FillReconciler:
         t_after = float(st.get("T", 0.0))
         entry = {
             **fill,
+            "symbol": symbol.upper(),
+            "side": side,
             "action": order.get("action"),
             "t_before": t_before,
             "t_after": t_after,
+            "avg_after": float(st.get("avg_price", 0.0)),
+            "qty_after": int(st.get("qty", 0)),
             "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         }
         self._append_fill_log(st, entry)

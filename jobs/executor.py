@@ -265,13 +265,13 @@ class JobExecutor:
                 f"💵 평가금액 <b>${r['eval']:,.2f}</b> <i>(투입 ${r['invested']:,.2f})</i>"
             )
             for fill in r.get("reconciled", []):
-                side = fill.get("side", "")
-                icon = "🟢" if side == "BUY" else "🔴"
-                act = fill.get("action") or side
-                lines.append(
-                    f"  {icon} 반영: {act} {fill.get('qty', 0)}주 "
-                    f"@ ${fill.get('price', 0):,.2f} → T {fill.get('t_after', 0):g}"
-                )
+                sym = r["symbol"]
+                fill.setdefault("symbol", sym)
+                if fill.get("avg_after") is None:
+                    fill["avg_after"] = r["avg"]
+                if fill.get("qty_after") is None:
+                    fill["qty_after"] = r["qty"]
+                lines.append(self.app.cycles.format_trade_line(sym, fill).strip())
         if notify:
             await self._notify("\n".join(lines), html=True)
 

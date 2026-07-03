@@ -15,7 +15,8 @@ class FillProcessor:
         price = float(order["price"])
         usd = price * qty
         action = order.get("action", "BUY_FULL")
-        t_after = self.strategy.calc_next_t(float(state["T"]), action)
+        t_before = float(state["T"])
+        t_after = self.strategy.calc_next_t(t_before, action)
 
         old_q, old_a = int(state["qty"]), float(state["avg_price"])
         new_q = old_q + qty
@@ -29,7 +30,9 @@ class FillProcessor:
         cycles.record_buy(symbol, usd, t_after, state["principal"])
         cycles.record_trade(
             symbol, side="BUY", qty=qty, price=price, action=action,
-            t_after=t_after, source=source, note=note or order.get("desc", ""),
+            t_before=t_before, t_after=t_after,
+            avg_after=state["avg_price"], qty_after=new_q,
+            source=source, note=note or order.get("desc", ""),
         )
         return state
 
@@ -41,9 +44,10 @@ class FillProcessor:
         price = float(order["price"])
         usd = price * qty
         action = order.get("action")
-        t_after = float(state["T"])
+        t_before = float(state["T"])
+        t_after = t_before
         if action:
-            t_after = self.strategy.calc_next_t(t_after, action)
+            t_after = self.strategy.calc_next_t(t_before, action)
 
         state["qty"] = max(0, int(state["qty"]) - qty)
         if state["qty"] == 0:
@@ -54,7 +58,9 @@ class FillProcessor:
         completed = cycles.record_sell(symbol, usd, t_after, state["qty"], state["principal"])
         cycles.record_trade(
             symbol, side="SELL", qty=qty, price=price, action=action,
+            t_before=t_before,
             t_after=t_after if state["qty"] > 0 else 0.0,
+            avg_after=state["avg_price"], qty_after=int(state["qty"]),
             source=source, note=note or order.get("desc", ""),
         )
         return state, completed

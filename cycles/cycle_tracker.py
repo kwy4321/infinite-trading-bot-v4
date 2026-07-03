@@ -109,7 +109,10 @@ class CycleTracker:
         qty: int,
         price: float,
         action: str | None,
+        t_before: float,
         t_after: float,
+        avg_after: float,
+        qty_after: int,
         source: str,
         note: str = "",
         order_id: str | None = None,
@@ -123,10 +126,14 @@ class CycleTracker:
         cur = sym["current"]
         trades = cur.setdefault("trades", [])
         trades.append({
+            "symbol": symbol.upper(),
             "side": side.upper(),
             "qty": int(qty),
             "price": round(float(price), 2),
+            "avg_after": round(float(avg_after), 4),
+            "qty_after": int(qty_after),
             "action": action,
+            "t_before": round(float(t_before), 2),
             "t_after": round(float(t_after), 2),
             "source": source,
             "note": note,
@@ -309,6 +316,60 @@ class CycleTracker:
             "per_symbol": per_symbol,
         }
 
+    @staticmethod
+    def _action_label(action: str | None, side: str) -> str:
+        labels = {
+            "BUY_FULL": "풀매수",
+            "BUY_HALF": "별매수",
+            "SELL_QUARTER": "쿼터매도",
+            "SELL_AND_BUY_FULL": "매도+풀매수",
+            "SELL_AND_BUY_HALF": "매도+별매수",
+        }
+        if action and action in labels:
+            return labels[action]
+        return "매수" if side == "BUY" else "매도"
+
+    @classmethod
+    def format_trade_line(cls, symbol: str, tr: dict) -> str:
+        """매매 1건 — 종목·주수·평단·T 변화."""
+        side = tr.get("side", "")
+        sym = tr.get("symbol") or symbol
+        qty = int(tr.get("qty", 0))
+        fill_price = float(tr.get("price", 0))
+        avg_after = tr.get("avg_after")
+        qty_after = tr.get("qty_after")
+        t_before = tr.get("t_before")
+        t_after = tr.get("t_after", 0)
+        act = cls._action_label(tr.get("action"), side)
+        when = (tr.get("filled_at") or tr.get("at") or "")[:16].replace("T", " ")
+
+        if side == "BUY":
+            avg_txt = f"${float(avg_after):,.2f}" if avg_after not in (None, "") else f"${fill_price:,.2f}"
+            hold_txt = f" · 보유 <b>{qty_after}</b>주" if qty_after not in (None, "") else ""
+            if t_before not in (None, ""):
+                t_txt = f"T <b>{float(t_before):g}</b> → <b>{float(t_after):g}</b>"
+            else:
+                t_txt = f"T → <b>{float(t_after):g}</b>"
+            return (
+                f"  🟢 <b>{sym}</b> {act} <b>{qty}</b>주 @ ${fill_price:,.2f}\n"
+                f"     평단 {avg_txt}{hold_txt} · {t_txt} · <i>{when}</i>"
+            )
+
+        avg_txt = ""
+        if avg_after not in (None, "") and float(avg_after) > 0:
+            avg_txt = f" · 평단 ${float(avg_after):,.2f}"
+        hold_txt = f" · 보유 <b>{qty_after}</b>주" if qty_after not in (None, "") else ""
+        if t_before not in (None, "") and float(t_before) != float(t_after):
+            t_txt = f"T <b>{float(t_before):g}</b> → <b>{float(t_after):g}</b>"
+        elif t_after not in (None, ""):
+            t_txt = f"T <b>{float(t_after):g}</b>"
+        else:
+            t_txt = "T 유지"
+        return (
+            f"  🔴 <b>{sym}</b> {act} <b>{qty}</b>주 @ ${fill_price:,.2f}{avg_txt}{hold_txt}\n"
+            f"     {t_txt} · <i>{when}</i>"
+        )
+
     def format_cycles_report(self, symbol: str, qty: int, avg_price: float, current_price: float) -> str:
         sym = self.get_symbol_data(symbol)
         lines = [f"📒 <b>[{symbol}] 회차 기록</b>\n"]
@@ -331,17 +392,8 @@ class CycleTracker:
             trades = sym.get("current", {}).get("trades") or []
             if trades:
                 lines.append("  📋 <b>매매 내역</b>")
-                for tr in trades[-8:]:
-                    side = tr.get("side", "")
-                    icon = "🟢" if side == "BUY" else "🔴"
-                    act = tr.get("action") or ("매수" if side == "BUY" else "매도")
-                    src = tr.get("source", "")
-                    src_tag = "🤖" if src == "bot" else "🔄" if src in ("sync", "broker") else "✋"
-                    when = (tr.get("filled_at") or tr.get("at") or "")[:16].replace("T", " ")
-                    lines.append(
-                        f"  {icon}{src_tag} {when} · {act} · <b>{tr.get('qty', 0)}</b>주 "
-                        f"@ ${tr.get('price', 0):,.2f} → T <b>{tr.get('t_after', 0):g}</b>"
-                    )
+                for tr in trades[-10:]:
+                    lines.append(self.format_trade_line(symbol, tr))
                 lines.append("")
         else:
             lines.append("💤 진행 중인 회차 없음\n")

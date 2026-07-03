@@ -388,10 +388,19 @@ class JobExecutor:
         self.app.state.save(symbol, st)
 
         st = self.app.state.load(symbol)
-        self.app.cycles.sync_trades_from_fill_log(
-            symbol, st.get("fill_log", []), float(st.get("principal", 0.0)),
+        is_live = self.app.reconciler and not (
+            self.app.settings.dry_run or not self.app.settings.has_toss
         )
-        self.app.cycles.dedupe_symbol_trades(symbol)
+        if is_live:
+            try:
+                self.app.reconciler._refresh_fill_dates_from_closed_orders(symbol, qty)
+            except Exception:
+                logger.exception("trade rebuild failed %s", symbol)
+        else:
+            self.app.cycles.sync_trades_from_fill_log(
+                symbol, st.get("fill_log", []), float(st.get("principal", 0.0)),
+            )
+            self.app.cycles.dedupe_symbol_trades(symbol)
         st = self.app.state.load(symbol)
         t_val = float(st.get("T", 0.0))
         self.app.cycles.ensure_current(symbol, st["principal"])

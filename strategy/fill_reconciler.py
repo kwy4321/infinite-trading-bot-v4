@@ -63,11 +63,7 @@ class FillReconciler:
             self.app.state.save(symbol, st)
 
         st = self.app.state.load(symbol)
-        self.app.cycles.sync_trades_from_fill_log(
-            symbol, st.get("fill_log", []), float(st.get("principal", 0.0)),
-        )
-        self.app.cycles.dedupe_symbol_trades(symbol)
-        self._refresh_fill_dates_from_closed_orders(symbol)
+        self._refresh_fill_dates_from_closed_orders(symbol, broker_qty)
         st = self.app.state.load(symbol)
         return {
             "applied": applied,
@@ -398,27 +394,39 @@ class FillReconciler:
             return "SELL_QUARTER", price, "수동/외부 매도 (쿼터 추정)"
         return None, price, "수동/외부 매도 (익절 추정)"
 
-    def _refresh_fill_dates_from_closed_orders(self, symbol: str) -> None:
+    def _refresh_fill_dates_from_closed_orders(
+        self, symbol: str, target_qty: int | None = None,
+    ) -> int:
         """토스 CLOSED 주문 orderedAt으로 fill_log·trades 재구성."""
         try:
             fills = self.app.broker.list_broker_fills(symbol, days=90, max_orders=200)
         except Exception:
             logger.exception("refresh fill dates failed %s", symbol)
-            return
+            return 0
         if not fills:
-            return
+            logger.warning("no broker fills for %s", symbol)
+            return 0
         st = self.app.state.load(symbol)
-        log = st.get("fill_log", [])
-        self.app.cycles.apply_broker_fill_dates(log, fills)
-        self.app.state.save(symbol, st)
-        qty = int(st.get("qty", 0))
+        qty = int(target_qty if target_qty is not None else st.get("qty", 0))
         if qty <= 0:
             try:
                 broker = self.app.broker.get_holdings_item(symbol)
                 qty = int(broker.get("qty", 0) or 0)
             except Exception:
                 pass
-        self.app.cycles.rebuild_trades_from_broker(symbol, fills, log, qty)
+        if qty <= 0:
+            return 0
+        log = st.get("fill_log", [])
+        self.app.cycles.apply_broker_fill_dates(log, fills)
+        self.app.state.save(symbol, st)
+        self.app.cycles.ensure_current(symbol, float(st.get("principal", 0.0)))
+        n = self.app.cycles.rebuild_trades_from_broker(symbol, fills, log, qty)
+        if n:
+            logger.info(
+                "rebuilt %s trades for %s from %d broker fills (qty=%d)",
+                n, symbol, len(fills), qty,
+            )
+        return n
 
     @staticmethod
     def _is_processed(st: dict, fill_id: str) -> bool:

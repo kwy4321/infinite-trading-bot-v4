@@ -613,9 +613,9 @@ class CycleTracker:
 
     @classmethod
     def _collect_trades(cls, sym_data: dict, symbol: str, fill_log: list | None = None) -> list[dict]:
-        """현재 회차 매매 내역 — broker order_id가 있으면 trades 우선."""
+        """현재 회차 매매 내역 — 저장된 trades 우선 (fill_log 병합으로 날짜 덮어쓰지 않음)."""
         stored = list((sym_data.get("current") or {}).get("trades") or [])
-        if stored and any(str(t.get("order_id") or "").strip() for t in stored):
+        if stored:
             return cls._dedupe_trades(stored)
         by_key: dict[str, dict] = {}
         for tr in stored:

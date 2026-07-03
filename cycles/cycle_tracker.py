@@ -182,6 +182,7 @@ class CycleTracker:
             "max_T": cur.get("max_T", 0.0),
             "buy_count": cur.get("buy_count", 0),
             "sell_count": cur.get("sell_count", 0),
+            "trades": list(cur.get("trades") or []),
             "note": note,
         }
         sym["completed"].append(completed)
@@ -316,6 +317,82 @@ class CycleTracker:
             "per_symbol": per_symbol,
         }
 
+    @staticmethod
+    def _trade_sort_key(tr: dict) -> str:
+        return tr.get("filled_at") or tr.get("at") or ""
+
+    @classmethod
+    def _fill_log_to_trade(cls, symbol: str, entry: dict) -> dict:
+        side = (entry.get("side") or "BUY").upper()
+        price = float(entry.get("price", 0))
+        return {
+            "symbol": (entry.get("symbol") or symbol).upper(),
+            "side": side,
+            "qty": int(entry.get("qty", 0)),
+            "price": round(price, 2),
+            "avg_after": round(float(entry.get("avg_after", price)), 4),
+            "qty_after": int(entry.get("qty_after", 0)),
+            "action": entry.get("action"),
+            "t_before": entry.get("t_before"),
+            "t_after": entry.get("t_after"),
+            "source": entry.get("source", "sync"),
+            "filled_at": entry.get("filled_at") or entry.get("at"),
+            "at": entry.get("at") or entry.get("filled_at"),
+            "fill_id": entry.get("id"),
+        }
+
+    @classmethod
+    def _collect_trades(cls, sym_data: dict, symbol: str, fill_log: list | None) -> list[dict]:
+        """현재 회차 trades + state fill_log 병합 (중복 제거)."""
+        seen: set[str] = set()
+        merged: list[dict] = []
+
+        def add(tr: dict) -> None:
+            fid = tr.get("fill_id") or tr.get("id")
+            if fid:
+                key = str(fid)
+            else:
+                key = "|".join([
+                    cls._trade_sort_key(tr),
+                    tr.get("side", ""),
+                    str(tr.get("qty", "")),
+                    str(tr.get("price", "")),
+                    str(tr.get("t_after", "")),
+                ])
+            if key in seen:
+                return
+            seen.add(key)
+            merged.append(tr)
+
+        for tr in (sym_data.get("current") or {}).get("trades") or []:
+            add(tr)
+        for entry in fill_log or []:
+            add(cls._fill_log_to_trade(symbol, entry))
+        merged.sort(key=cls._trade_sort_key)
+        return merged
+
+    def sync_trades_from_fill_log(self, symbol: str, fill_log: list, principal: float) -> None:
+        """fill_log → cycles.current.trades 영구 반영 (서버 재시작·배포 후에도 유지)."""
+        if not fill_log:
+            return
+        data = self._load_all()
+        sym = self._get(data, symbol)
+        if sym["current"] is None:
+            sym["current"] = _new_current(sym["next_cycle_no"], principal)
+        cur = sym["current"]
+        trades = cur.setdefault("trades", [])
+        seen = {t.get("fill_id") for t in trades if t.get("fill_id")}
+        for entry in fill_log:
+            fid = entry.get("id")
+            if fid and fid in seen:
+                continue
+            trades.append(self._fill_log_to_trade(symbol, entry))
+            if fid:
+                seen.add(fid)
+        if len(trades) > 100:
+            cur["trades"] = trades[-100:]
+        self._save_all(data)
+
     @classmethod
     def format_trade_line(cls, symbol: str, tr: dict) -> str:
         """매매 1건 — 날짜 · 종목 · 매수/매도 · 수량 · 평단 · T (한 줄)."""
@@ -343,11 +420,20 @@ class CycleTracker:
             f"<b>{qty}</b>주 · ${avg_f:,.2f} · {t_txt}"
         )
 
-    def format_cycles_report(self, symbol: str, qty: int, avg_price: float, current_price: float) -> str:
+    def format_cycles_report(
+        self,
+        symbol: str,
+        qty: int,
+        avg_price: float,
+        current_price: float,
+        fill_log: list | None = None,
+    ) -> str:
         sym = self.get_symbol_data(symbol)
         lines = [f"📒 <b>[{symbol}] 회차 기록</b>\n"]
         snap = sym.get("current", {}).get("snapshot") if sym.get("current") else None
         live = self.calc_unrealized_pnl(symbol, qty, avg_price, current_price)
+        trades = self._collect_trades(sym, symbol, fill_log)
+
         if live:
             sign = "+" if live["cycle_pnl_usd"] >= 0 else ""
             lines += [
@@ -362,22 +448,35 @@ class CycleTracker:
             lines += [
                 f"  회차 손익: {sign}${live['cycle_pnl_usd']:,.2f} ({sign}{live['cycle_pnl_pct']:.2f}%)", "",
             ]
-            trades = sym.get("current", {}).get("trades") or []
-            if trades:
-                lines.append("  📋 <b>매매 내역</b>")
-                for tr in trades[-10:]:
-                    lines.append(self.format_trade_line(symbol, tr))
-                lines.append("")
+        elif qty > 0 or trades:
+            cycle_no = (sym.get("current") or {}).get("cycle_no", 1)
+            lines += [
+                f"🔵 <b>진행 중 — {cycle_no}회차</b>",
+                f"  🎯 T · 평단 <b>${avg_price:,.2f}</b> · <b>{qty}</b>주", "",
+            ]
         else:
             lines.append("💤 진행 중인 회차 없음\n")
+
+        if trades:
+            lines.append("  📋 <b>매매 내역</b>")
+            for tr in trades[-20:]:
+                lines.append(self.format_trade_line(symbol, tr))
+            lines.append("")
+
         completed = sym.get("completed", [])
         if completed:
-            lines.append(f"🏆 <b>완료 ({len(completed)}개)</b>")
+            lines.append(f"🏆 <b>완료된 회차 ({len(completed)}개)</b>")
             for c in reversed(completed[-10:]):
                 sign = "+" if c["profit_usd"] >= 0 else ""
-                lines.append(f"  #{c['cycle_no']} {c['ended_at']} | {sign}${c['profit_usd']:,.2f} ({sign}{c['profit_pct']:.2f}%)")
-        else:
-            lines.append("📭 완료된 회차 없음")
+                lines.append(
+                    f"  #{c['cycle_no']} {c['ended_at']} · "
+                    f"{sign}${c['profit_usd']:,.2f} ({sign}{c['profit_pct']:.2f}%)"
+                )
+                for tr in (c.get("trades") or [])[-10:]:
+                    lines.append(self.format_trade_line(symbol, tr))
+            lines.append("")
+        elif not trades:
+            lines.append("📭 매매·완료 회차 기록 없음")
         if snap and snap.get("at"):
             snap_at = snap["at"][:16].replace("T", " ")
             lines.append(f"\n<i>🔄 {snap_at} 동기화</i>")

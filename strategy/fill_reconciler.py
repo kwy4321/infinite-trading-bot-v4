@@ -59,6 +59,10 @@ class FillReconciler:
             self.app.state.save(symbol, st)
 
         st = self.app.state.load(symbol)
+        self.app.cycles.sync_trades_from_fill_log(
+            symbol, st.get("fill_log", []), float(st.get("principal", 0.0)),
+        )
+        st = self.app.state.load(symbol)
         return {
             "applied": applied,
             "t_before": t_before,
@@ -126,7 +130,7 @@ class FillReconciler:
         recorded_buy = float(cur.get("total_buy_usd", 0.0))
         actual_invested = round(broker_qty * broker_avg, 2)
         gap_usd = round(actual_invested - recorded_buy, 2)
-        if gap_usd < 5.0:
+        if gap_usd < 1.0:
             return []
 
         price = broker_price or broker_avg

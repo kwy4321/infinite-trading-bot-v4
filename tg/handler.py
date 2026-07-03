@@ -255,19 +255,8 @@ class TelegramHandler:
             )
         if len(active) == 1:
             return await self._send_cycles(update.message, active[0])
-        parts = []
-        for sym in active:
-            st = self.app.state.load(sym)
-            try:
-                price = self._pos(sym)["current_price"]
-            except Exception:
-                logger.exception("holdings fetch failed %s", sym)
-                price = 0.0
-            self.app.cycles.ensure_current(sym, st["principal"])
-            parts.append(self.app.cycles.format_cycles_report(
-                sym, st["qty"], st["avg_price"], price,
-            ))
-        await update.message.reply_text("\n\n".join(parts), parse_mode="HTML")
+        symbols_csv = ",".join(active)
+        return await self._send_cycles(update.message, symbols_csv)
 
     async def cmd_cycles(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
@@ -577,11 +566,28 @@ class TelegramHandler:
             await self._send_cycles(query.message, symbol)
             return
 
-    async def _send_cycles(self, target, symbol: str):
+    async def _send_cycles(self, target, symbol: str, *, refresh: bool = True):
         try:
-            symbols = list(self.app.state.list_symbols()) if symbol == "ALL" else [symbol]
+            if symbol == "ALL":
+                symbols = list(self.app.state.list_symbols())
+            elif "," in symbol:
+                symbols = [
+                    s.strip().upper() for s in symbol.split(",")
+                    if s.strip().upper() in SYMBOLS
+                ]
+            else:
+                symbols = [symbol.upper()]
+            is_live = not (self.app.settings.dry_run or not self.app.settings.has_toss)
+            premium = self.app.runtime.premium_default()
             parts = []
             for sym in symbols:
+                if refresh and is_live:
+                    try:
+                        await asyncio.to_thread(
+                            self.executor.sync_cycle_from_broker, sym, premium,
+                        )
+                    except Exception:
+                        logger.exception("cycle refresh failed %s", sym)
                 st = self.app.state.load(sym)
                 try:
                     price = self._pos(sym)["current_price"]
@@ -589,8 +595,13 @@ class TelegramHandler:
                     logger.exception("holdings fetch failed %s", sym)
                     price = 0.0
                 self.app.cycles.ensure_current(sym, st["principal"])
+                self.app.cycles.sync_trades_from_fill_log(
+                    sym, st.get("fill_log", []), float(st.get("principal", 0.0)),
+                )
+                st = self.app.state.load(sym)
                 parts.append(self.app.cycles.format_cycles_report(
                     sym, st["qty"], st["avg_price"], price,
+                    fill_log=st.get("fill_log", []),
                 ))
             await target.reply_text("\n\n".join(parts), parse_mode="HTML")
         except Exception as e:

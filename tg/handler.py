@@ -12,6 +12,7 @@ from telegram.ext import ContextTypes
 
 from app import App
 from jobs.executor import JobExecutor
+from strategy.fill_reconciler import FillReconciler
 from strategy.split_handler import apply_split, calc_adjustment, format_preview, parse_ratio
 from config.settings import SYMBOLS
 from tg.home_formatter import format_home
@@ -608,9 +609,22 @@ class TelegramHandler:
                     except Exception:
                         logger.exception("cycle refresh failed %s", sym)
                 st = self.app.state.load(sym)
+                broker_fills = None
                 if is_live:
                     pos = self.app.broker.get_holdings_item(sym)
                     price = float(pos.get("current_price") or st.get("avg_price") or 0)
+                    qty = int(st.get("qty", 0) or pos.get("qty", 0) or 0)
+                    order_ids = FillReconciler.collect_known_order_ids(
+                        self.app, sym, st=st,
+                    )
+                    self.app.broker._invalidate_holdings_cache()
+                    broker_fills = self.app.broker.list_broker_fills(
+                        sym, days=90, max_orders=200, extra_order_ids=order_ids,
+                    )
+                    if broker_fills and qty > 0:
+                        self.app.cycles.rebuild_trades_from_broker(
+                            sym, broker_fills, st.get("fill_log", []), qty,
+                        )
                 else:
                     try:
                         price = self._pos(sym)["current_price"]
@@ -627,6 +641,7 @@ class TelegramHandler:
                 parts.append(self.app.cycles.format_cycles_report(
                     sym, st["qty"], st["avg_price"], price,
                     fill_log=st.get("fill_log", []),
+                    broker_fills=broker_fills,
                 ))
             await target.reply_text("\n\n".join(parts), parse_mode="HTML")
         except Exception as e:

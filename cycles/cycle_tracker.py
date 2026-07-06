@@ -440,6 +440,7 @@ class CycleTracker:
         in_when = incoming.get("ordered_at") or incoming.get("filled_at") or incoming.get("at") or ""
         ex_when = existing.get("ordered_at") or existing.get("filled_at") or existing.get("at") or ""
         in_src = str(incoming.get("source") or "")
+        ex_src = str(existing.get("source") or "")
         if incoming.get("order_id") or in_src == "broker":
             if in_when:
                 merged["ordered_at"] = in_when
@@ -448,6 +449,12 @@ class CycleTracker:
             in_price = incoming.get("price")
             if in_price not in (None, ""):
                 merged["price"] = round(float(in_price), 2)
+        elif in_src == "sync" and (ex_src == "broker" or existing.get("order_id")):
+            merged["ordered_at"] = ex_when or in_when
+            merged["filled_at"] = ex_when or in_when
+            merged["at"] = ex_when or in_when
+            if existing.get("price") not in (None, ""):
+                merged["price"] = round(float(existing["price"]), 2)
         elif in_src == "sync" and ex_when:
             merged["ordered_at"] = ex_when
             merged["filled_at"] = ex_when
@@ -687,6 +694,55 @@ class CycleTracker:
                 by_key[key] = tr
         return cls._dedupe_trades(list(by_key.values()))
 
+    @classmethod
+    def display_trades_from_broker(
+        cls,
+        symbol: str,
+        broker_fills: list[dict],
+        sym_data: dict,
+        fill_log: list[dict] | None,
+        target_qty: int,
+    ) -> list[dict]:
+        """텔레그램 표시용 — broker 체결가·날짜 + cycles/fill_log T·action."""
+        fills = cls.select_position_fills(broker_fills, target_qty)
+        if not fills:
+            return cls._collect_trades(sym_data, symbol, fill_log)
+        log_by_oid: dict[str, dict] = {}
+        for entry in fill_log or []:
+            oid = str(entry.get("order_id") or "").strip()
+            if oid:
+                log_by_oid[oid] = entry
+        stored_by_oid: dict[str, dict] = {}
+        for tr in (sym_data.get("current") or {}).get("trades") or []:
+            oid = str(tr.get("order_id") or "").strip()
+            if oid:
+                stored_by_oid[oid] = tr
+        out: list[dict] = []
+        for fill in fills:
+            oid = str(fill.get("order_id") or "").strip()
+            when = fill.get("ordered_at") or fill.get("filled_at") or ""
+            tr: dict = {
+                "symbol": symbol.upper(),
+                "side": str(fill.get("side") or "").upper(),
+                "qty": int(fill.get("qty") or 0),
+                "price": round(float(fill.get("price") or 0), 2),
+                "ordered_at": when,
+                "filled_at": when,
+                "at": when,
+                "order_id": oid or None,
+                "source": "broker",
+            }
+            meta = log_by_oid.get(oid) or stored_by_oid.get(oid)
+            if meta:
+                for key in (
+                    "fill_id", "action", "t_before", "t_after",
+                    "avg_after", "qty_after", "note",
+                ):
+                    if meta.get(key) not in (None, ""):
+                        tr[key] = meta[key]
+            out.append(tr)
+        return cls._dedupe_trades(out)
+
     def sync_trades_from_fill_log(self, symbol: str, fill_log: list, principal: float) -> None:
         """fill_log → cycles.current.trades 영구 반영 + 중복 정리."""
         data = self._load_all()
@@ -790,12 +846,19 @@ class CycleTracker:
         avg_price: float,
         current_price: float,
         fill_log: list | None = None,
+        *,
+        broker_fills: list[dict] | None = None,
     ) -> str:
         sym = self.get_symbol_data(symbol)
         lines = [f"📒 <b>[{symbol}] 회차 기록</b>\n"]
         snap = sym.get("current", {}).get("snapshot") if sym.get("current") else None
         live = self.calc_unrealized_pnl(symbol, qty, avg_price, current_price)
-        trades = self._collect_trades(sym, symbol, fill_log)
+        if broker_fills and qty > 0:
+            trades = self.display_trades_from_broker(
+                symbol, broker_fills, sym, fill_log, qty,
+            )
+        else:
+            trades = self._collect_trades(sym, symbol, fill_log)
 
         if live:
             sign = "+" if live["cycle_pnl_usd"] >= 0 else ""

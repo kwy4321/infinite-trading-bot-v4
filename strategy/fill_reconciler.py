@@ -612,6 +612,11 @@ class FillReconciler:
         if qty <= 0:
             return 0
         log = st.get("fill_log", [])
+        by_oid = {str(f.get("order_id") or ""): f for f in fills}
+        for entry in log:
+            oid = str(entry.get("order_id") or "")
+            if oid and oid in by_oid:
+                entry["price"] = by_oid[oid]["price"]
         self.app.cycles.apply_broker_fill_dates(log, fills)
         self.app.state.save(symbol, st)
         self.app.cycles.ensure_current(symbol, float(st.get("principal", 0.0)))

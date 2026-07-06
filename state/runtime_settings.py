@@ -4,6 +4,7 @@ import json
 import threading
 from pathlib import Path
 
+from config.json_io import save_json
 from config.settings import ROOT, SYMBOLS
 
 RUNTIME_PATH = ROOT / "data" / "runtime_settings.json"
@@ -13,6 +14,7 @@ DEFAULT = {
     "active_symbols": ["TQQQ"],
     "default_symbol": "TQQQ",
     "premium_pct_default": 10,
+    "last_job3_us_date": "",
 }
 
 
@@ -52,8 +54,7 @@ class RuntimeSettings:
 
     def save(self, data: dict) -> None:
         with self._lock:
-            with open(self.path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
+            save_json(self.path, data, compact=False)
             self._cache = dict(data)
 
     def is_paused(self) -> bool:
@@ -135,4 +136,12 @@ class RuntimeSettings:
     def set_premium_default(self, pct: int) -> None:
         data = self.load()
         data["premium_pct_default"] = int(pct)
+        self.save(data)
+
+    def last_job3_us_date(self) -> str:
+        return str(self.load().get("last_job3_us_date") or "")
+
+    def mark_job3_run(self, us_date: str) -> None:
+        data = self.load()
+        data["last_job3_us_date"] = str(us_date)
         self.save(data)

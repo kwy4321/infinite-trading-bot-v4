@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from app import App
 from broker.toss_client import TossClient
 from strategy.order_planner import (
+    CLOSE_LEAD_SECONDS,
     JobPhase,
     filter_orders_for_phase,
     gate_orders_by_close_price,
@@ -22,6 +23,7 @@ from tg.notifications import (
     format_order_submitted,
     order_label,
 )
+from tg.ui import dim
 
 logger = logging.getLogger(__name__)
 KST = ZoneInfo("Asia/Seoul")
@@ -49,13 +51,15 @@ class JobExecutor:
 
     @staticmethod
     def _in_close_order_window(kst_now: datetime | None = None) -> bool:
-        """자동 주문 허용 — 미국 정규장 종가 직전(KST 새벽)만. 아침·낮·저녁 차단."""
+        """자동 주문 허용 — 미국 종가 직전 ±3분만 (재시작·수동 오주문 방지)."""
         now = kst_now or datetime.now(KST)
         is_summer = now.astimezone(NY).dst() != timedelta(0)
-        t = now.time()
-        if is_summer:
-            return time(4, 45) <= t <= time(5, 15)
-        return time(5, 45) <= t <= time(6, 15)
+        close_h, close_m = (5, 0) if is_summer else (6, 0)
+        scheduled = datetime(
+            now.year, now.month, now.day, close_h, close_m, 0, tzinfo=KST,
+        ) - timedelta(seconds=CLOSE_LEAD_SECONDS)
+        margin = timedelta(minutes=3)
+        return scheduled - margin <= now <= scheduled + margin
 
     async def _execute_one_order(
         self,
@@ -118,13 +122,25 @@ class JobExecutor:
                     )
                     status = str(detail.get("status") or "")
                     fill_time = (
-                        detail.get("ordered_at")
-                        or detail.get("filled_at")
+                        detail.get("filled_at")
+                        or detail.get("ordered_at")
                         or datetime.now(KST).isoformat(timespec="seconds")
                     )
 
                 grad = None
                 if filled_qty > 0:
+                    fill_id = (
+                        FillReconciler.make_fill_id(oid, filled_qty, side)
+                        if oid else ""
+                    )
+                    if oid and FillReconciler._is_processed(
+                        st, fill_id,
+                        order_id=oid, qty=filled_qty, side=side,
+                    ):
+                        FillReconciler.untrack_order(st, oid)
+                        self.app.state.save(symbol, st)
+                        return True, True, st, None
+
                     t_before = float(st.get("T", 0.0))
                     filled_order = {
                         **order,
@@ -133,6 +149,7 @@ class JobExecutor:
                         "ordered_at": fill_time,
                         "filled_at": fill_time,
                         "order_id": oid or None,
+                        "fill_id": fill_id or None,
                     }
                     if notify:
                         await self._notify(
@@ -154,8 +171,10 @@ class JobExecutor:
                                 completed, symbol,
                             )
                     if oid and not is_dry:
-                        fill_id = f"{oid}:{filled_qty}:{fill_time}"
-                        if not FillReconciler._is_processed(st, fill_id):
+                        if fill_id and not FillReconciler._is_processed(
+                            st, fill_id,
+                            order_id=oid, qty=filled_qty, side=side,
+                        ):
                             FillReconciler._append_fill_log(st, {
                                 "id": fill_id,
                                 "order_id": oid,
@@ -309,13 +328,20 @@ class JobExecutor:
         if phase != JobPhase.JOB4_REPORT:
             target = self._target_us_date_for_phase(phase)
             try:
-                open_, us_date = self.app.broker.check_us_regular_session(target)
+                open_, us_date, cal_ok = self.app.broker.check_us_regular_session(target)
             except Exception as e:
                 logger.exception("market open check failed")
                 await self._notify(f"🚨 장 개장 확인 실패: {e}")
                 return
+            label = self._phase_label(phase)
+            if not cal_ok:
+                await self._notify(
+                    f"⚠️ 미국 휴장 확인 실패 — {label} 주문 스킵\n"
+                    f"{dim('토스 캘린더 API 오류. 잠시 후 /sync 또는 재시도하세요.')}",
+                    html=True,
+                )
+                return
             if not open_:
-                label = self._phase_label(phase)
                 hint = ""
                 if phase in _LOC_PHASES:
                     hint = "\n(한국 새벽 — 미국 정규장 종가 직전)"
@@ -324,6 +350,8 @@ class JobExecutor:
                     html=True,
                 )
                 return
+            if phase in _LOC_PHASES:
+                self.app.runtime.mark_job3_run(us_date)
 
         symbols = self._active_symbols()
         if not symbols:
@@ -403,7 +431,10 @@ class JobExecutor:
         if premium is None:
             premium = self.app.runtime.premium_default()
 
-        reconcile = {"applied": [], "t_before": 0.0, "t_after": 0.0, "holdings": {}}
+        reconcile = {
+            "applied": [], "t_before": 0.0, "t_after": 0.0,
+            "holdings": {}, "warnings": [],
+        }
         is_live = self.app.reconciler and not (
             self.app.settings.dry_run or not self.app.settings.has_toss
         )
@@ -412,6 +443,10 @@ class JobExecutor:
                 reconcile = self.app.reconciler.reconcile_symbol(symbol, premium)
             except Exception:
                 logger.exception("fill reconcile failed %s", symbol)
+                reconcile = {
+                    "applied": [], "warnings": ["체결 reconcile 실패 — T 미반영 가능"],
+                    "t_before": 0.0, "t_after": 0.0, "holdings": {},
+                }
 
         item = reconcile.get("holdings") or {}
         if not item:
@@ -435,6 +470,7 @@ class JobExecutor:
                 "reconciled": reconcile.get("applied", []),
                 "t_before": reconcile.get("t_before", 0.0),
                 "t_after": reconcile.get("t_after", 0.0),
+                "warnings": reconcile.get("warnings", []),
             }
 
         st["qty"] = qty
@@ -460,6 +496,7 @@ class JobExecutor:
             "reconciled": reconcile.get("applied", []),
             "t_before": reconcile.get("t_before", t_val),
             "t_after": t_val,
+            "warnings": reconcile.get("warnings", []),
         }
 
     async def run_cycle_sync(
@@ -483,6 +520,8 @@ class JobExecutor:
                 continue
             if r["qty"] <= 0:
                 lines.append(f"◆ <b>{sym}</b> — 보유 없음")
+                for w in r.get("warnings") or []:
+                    lines.append(f"⚠️ <b>{sym}</b> {w}")
                 continue
             t_line = f"🎯 T <b>{r['T']:g}</b>"
             if r.get("reconciled"):
@@ -502,6 +541,8 @@ class JobExecutor:
                 if fill.get("qty_after") is None:
                     fill["qty_after"] = r["qty"]
                 lines.append(self.app.cycles.format_trade_line(sym, fill).strip())
+            for w in r.get("warnings") or []:
+                lines.append(f"⚠️ <b>{sym}</b> {w}")
         if notify:
             await self._notify("\n".join(lines), html=True)
 
@@ -519,9 +560,13 @@ class JobExecutor:
     async def run_job2(self, **_):
         await self._notify("job2는 사용하지 않아요. 종가 LOC 주문은 /job3 입니다.")
 
-    async def run_job3(self, premium: int | None = None, **_):
+    async def run_job3(self, premium: int | None = None, *, scheduled: bool = True, **_):
         if not self._in_close_order_window():
             logger.info("job3 skipped — outside US close window")
+            return
+        target = self._target_us_date_for_phase(JobPhase.JOB3_LOC_CLOSE)
+        if scheduled and self.app.runtime.last_job3_us_date() == target:
+            logger.info("job3 skipped — already ran for US date %s", target)
             return
         await self.run_phase(JobPhase.JOB3_LOC_CLOSE, premium)
 
@@ -537,7 +582,7 @@ class JobExecutor:
         mapping = {
             "job1": lambda **kw: self.run_job1(premium=premium),
             "job2": self.run_job2,
-            "job3": lambda **kw: self.run_job3(premium=premium),
+            "job3": lambda **kw: self.run_job3(premium=premium, scheduled=False),
             "job4": self.run_job4,
             "briefing": self.run_morning_briefing,
         }

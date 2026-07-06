@@ -36,6 +36,7 @@ class FillReconciler:
                 "t_after": t_before,
                 "qty_before": qty_before,
                 "qty_after": qty_before,
+                "warnings": [],
             }
 
         broker = self.app.broker.get_holdings_item(symbol)
@@ -44,6 +45,11 @@ class FillReconciler:
         broker_price = float(broker.get("current_price", 0.0) or 0.0)
 
         applied.extend(self._process_tracked_orders(symbol, st, premium))
+        order_ids = self.collect_known_order_ids(self.app, symbol, st=st)
+        broker_applied, broker_fills_ok = self._process_broker_fills(
+            symbol, st, premium, broker_qty, order_ids,
+        )
+        applied.extend(broker_applied)
         sym_tracked = [
             e for e in st.get("tracked_orders") or []
             if str(e.get("symbol") or "").upper() == symbol.upper()
@@ -52,16 +58,18 @@ class FillReconciler:
         if needs_open:
             applied.extend(self._process_open_orders(symbol, st, premium))
         plan = self._plan_for_state(symbol, st, broker_price, premium)
-        invest_applied = self._reconcile_invested_gap(
-            symbol, st, broker_qty, broker_avg, broker_price, premium, plan=plan,
-        )
-        applied.extend(invest_applied)
-        if invest_applied:
-            plan = self._plan_for_state(symbol, st, broker_price, premium)
-        applied.extend(self._reconcile_qty_delta(
-            symbol, st, broker_qty, broker_avg, broker_price, premium,
-            skip_buys=bool(invest_applied), plan=plan,
-        ))
+        invest_applied: list[dict] = []
+        if self._needs_synthetic_reconcile(symbol, st, broker_qty, broker_avg):
+            invest_applied = self._reconcile_invested_gap(
+                symbol, st, broker_qty, broker_avg, broker_price, premium, plan=plan,
+            )
+            applied.extend(invest_applied)
+            if invest_applied:
+                plan = self._plan_for_state(symbol, st, broker_price, premium)
+            applied.extend(self._reconcile_qty_delta(
+                symbol, st, broker_qty, broker_avg, broker_price, premium,
+                skip_buys=bool(invest_applied), plan=plan,
+            ))
 
         if applied:
             self.app.state.save(symbol, st)
@@ -69,9 +77,11 @@ class FillReconciler:
             st["last_t_qty"] = broker_qty
             self.app.state.save(symbol, st)
 
-        order_ids = self.collect_known_order_ids(self.app, symbol, st=st)
         self._refresh_fill_dates_from_closed_orders(
             symbol, broker_qty, st=st, order_ids=order_ids,
+        )
+        warnings = self._build_reconcile_warnings(
+            applied, st, broker_qty, broker_fills_ok,
         )
         return {
             "applied": applied,
@@ -79,6 +89,7 @@ class FillReconciler:
             "t_after": float(st.get("T", 0.0)),
             "qty_before": qty_before,
             "qty_after": int(st.get("qty", 0)),
+            "warnings": warnings,
             "holdings": {
                 "qty": broker_qty,
                 "avg_price": broker_avg,
@@ -104,7 +115,12 @@ class FillReconciler:
                 continue
             fills = self._extract_order_fills(order, symbol)
             for fill in fills:
-                if self._is_processed(st, fill["id"]):
+                if self._is_processed(
+                    st, fill["id"],
+                    order_id=fill.get("order_id"),
+                    qty=fill.get("qty"),
+                    side=fill.get("side"),
+                ):
                     continue
                 applied.append(self._apply_fill(symbol, st, fill, premium))
             status = (order.get("status") or "").upper()
@@ -112,6 +128,89 @@ class FillReconciler:
                 remaining.append(entry)
         st["tracked_orders"] = remaining
         return applied
+
+    def _process_broker_fills(
+        self,
+        symbol: str,
+        st: dict,
+        premium: int,
+        broker_qty: int,
+        order_ids: list[str],
+    ) -> tuple[list[dict], bool]:
+        """토스 CLOSED·단건 조회 체결을 먼저 반영 (추정 reconciler 전)."""
+        applied: list[dict] = []
+        try:
+            fills = self.app.broker.list_broker_fills(
+                symbol, days=90, max_orders=200, extra_order_ids=order_ids,
+            )
+        except Exception:
+            logger.exception("list_broker_fills failed %s", symbol)
+            return applied, False
+        if not fills:
+            return applied, False
+
+        position_fills = self.app.cycles.select_position_fills(fills, broker_qty)
+        for raw in position_fills:
+            fill = self._broker_fill_to_entry(raw)
+            if self._is_processed(
+                st, fill["id"],
+                order_id=fill.get("order_id"),
+                qty=fill["qty"],
+                side=fill["side"],
+            ):
+                continue
+            applied.append(self._apply_fill(symbol, st, fill, premium))
+        return applied, True
+
+    def _needs_synthetic_reconcile(
+        self, symbol: str, st: dict, broker_qty: int, broker_avg: float,
+    ) -> bool:
+        """브로커 체결 후에도 state·회차가 어긋날 때만 추정 reconciler 실행."""
+        if int(st.get("qty", 0)) != broker_qty:
+            return True
+        if broker_qty <= 0 or broker_avg <= 0:
+            return False
+        cur = self.app.cycles.get_symbol_data(symbol).get("current") or {}
+        recorded_buy = float(cur.get("total_buy_usd", 0.0))
+        actual_invested = round(broker_qty * broker_avg, 2)
+        return round(actual_invested - recorded_buy, 2) >= 1.0
+
+    @staticmethod
+    def _build_reconcile_warnings(
+        applied: list[dict], st: dict, broker_qty: int, broker_fills_ok: bool,
+    ) -> list[str]:
+        warnings: list[str] = []
+        state_qty = int(st.get("qty", 0))
+        if state_qty != broker_qty:
+            warnings.append(
+                f"주수 불일치 — 기록 {state_qty}주 vs 계좌 {broker_qty}주 (T 미반영 가능)",
+            )
+        synthetic = [f for f in applied if f.get("source") == "sync"]
+        if synthetic:
+            warnings.append(f"추정 체결 {len(synthetic)}건 반영 (브로커 미조회분)")
+        if broker_qty > 0 and not broker_fills_ok and not synthetic:
+            warnings.append("토스 CLOSED 체결 조회 없음 — /sync 후 날짜·T 확인")
+        return warnings
+
+    @staticmethod
+    def _broker_fill_to_entry(raw: dict) -> dict:
+        oid = str(raw.get("order_id") or "")
+        side = str(raw.get("side") or "").upper()
+        qty = int(raw.get("qty") or 0)
+        ordered_at = raw.get("ordered_at") or raw.get("filled_at") or ""
+        filled_at = raw.get("filled_at") or raw.get("ordered_at") or ""
+        return {
+            "id": FillReconciler.make_fill_id(oid, qty, side),
+            "order_id": oid,
+            "side": side,
+            "qty": qty,
+            "price": round(float(raw.get("price") or 0), 2),
+            "action": None,
+            "source": "broker",
+            "note": "토스 체결 (CLOSED)",
+            "ordered_at": ordered_at,
+            "filled_at": filled_at,
+        }
 
     def _process_open_orders(self, symbol: str, st: dict, premium: int) -> list[dict]:
         applied = []
@@ -123,7 +222,12 @@ class FillReconciler:
         for order in orders:
             fills = self._extract_order_fills(order, symbol)
             for fill in fills:
-                if self._is_processed(st, fill["id"]):
+                if self._is_processed(
+                    st, fill["id"],
+                    order_id=fill.get("order_id"),
+                    qty=fill.get("qty"),
+                    side=fill.get("side"),
+                ):
                     continue
                 applied.append(self._apply_fill(symbol, st, fill, premium))
         return applied
@@ -151,27 +255,32 @@ class FillReconciler:
             return []
 
         price = broker_price or broker_avg
-        est_qty = max(1, int(round(gap_usd / price)))
-        if est_qty > broker_qty:
-            est_qty = broker_qty
-
-        action, _, note = self._infer_buy_action(
-            st, symbol, est_qty, price, premium, plan=plan,
-        )
-        fill = {
-            "id": f"invest-gap:{symbol}:{datetime.date.today().isoformat()}:{est_qty}",
-            "order_id": None,
-            "side": "BUY",
-            "qty": est_qty,
-            "price": round(price, 2),
-            "action": action,
-            "source": "sync",
-            "note": note or "실계좌 투입금 차이 — 미반영 매수 추정",
-            "filled_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-        }
-        if self._is_processed(st, fill["id"]):
+        n_shares = max(1, int(round(gap_usd / price)))
+        state_qty = int(st.get("qty", 0))
+        n_shares = min(n_shares, broker_qty - state_qty) if broker_qty > state_qty else n_shares
+        if n_shares <= 0:
             return []
-        return [self._apply_fill(symbol, st, fill, premium)]
+
+        applied: list[dict] = []
+        for i in range(n_shares):
+            action, use_price, note = self._infer_buy_action(
+                st, symbol, 1, price, premium, plan=plan,
+            )
+            fill = {
+                "id": f"invest-gap:{symbol}:{datetime.date.today().isoformat()}:{i}",
+                "order_id": None,
+                "side": "BUY",
+                "qty": 1,
+                "price": round(use_price, 2),
+                "action": action,
+                "source": "sync",
+                "note": note or "실계좌 투입금 차이 — 미반영 매수 추정",
+                "filled_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+            }
+            if self._is_processed(st, fill["id"]):
+                continue
+            applied.append(self._apply_fill(symbol, st, fill, premium))
+        return applied
 
     def _reconcile_qty_delta(
         self,
@@ -217,13 +326,14 @@ class FillReconciler:
         applied = []
         remaining = delta
         price = broker_price or broker_avg or float(st.get("avg_price", 0.0))
+        idx = 0
         while remaining > 0:
-            chunk = remaining
+            chunk = 1
             action, use_price, note = self._infer_buy_action(
                 st, symbol, chunk, price, premium, plan=plan,
             )
             fill = {
-                "id": f"qty-delta:buy:{symbol}:{datetime.date.today().isoformat()}:{chunk}:{len(applied)}",
+                "id": f"qty-delta:buy:{symbol}:{datetime.date.today().isoformat()}:{idx}",
                 "order_id": None,
                 "side": "BUY",
                 "qty": chunk,
@@ -237,8 +347,7 @@ class FillReconciler:
                 break
             applied.append(self._apply_fill(symbol, st, fill, premium))
             remaining -= chunk
-            if chunk <= 0:
-                break
+            idx += 1
         return applied
 
     def _extract_order_fills(self, order: dict, symbol: str) -> list[dict]:
@@ -258,17 +367,25 @@ class FillReconciler:
             execution.get("averageFilledPrice")
             or execution.get("average_filled_price")
             or order.get("average_filled_price")
+            or order.get("averageFilledPrice")
             or order.get("price")
             or 0
         )
         order_id = str(order.get("orderId") or order.get("order_id") or "")
-        order_date = (
-            order.get("orderedAt") or order.get("ordered_at")
-            or execution.get("filledAt") or execution.get("filled_at")
-            or order.get("filled_at") or ""
+        ordered_at = (
+            order.get("ordered_at")
+            or order.get("orderedAt")
+            or ""
         )
+        filled_at = (
+            execution.get("filledAt") or execution.get("filled_at")
+            or order.get("filled_at") or order.get("filledAt")
+            or ordered_at
+        )
+        if not ordered_at:
+            ordered_at = filled_at
         side = (order.get("side") or "").upper()
-        fill_id = f"{order_id}:{filled_qty}:{order_date or 'na'}"
+        fill_id = self.make_fill_id(order_id, filled_qty, side)
         return [{
             "id": fill_id,
             "order_id": order_id,
@@ -278,8 +395,8 @@ class FillReconciler:
             "action": None,
             "source": "broker",
             "note": f"토스 체결 ({order.get('status', '')})",
-            "ordered_at": order_date,
-            "filled_at": order_date,
+            "ordered_at": ordered_at,
+            "filled_at": filled_at,
         }]
 
     def _apply_fill(self, symbol: str, st: dict, fill: dict, premium: int) -> dict:
@@ -489,14 +606,45 @@ class FillReconciler:
         return n
 
     @staticmethod
-    def _is_processed(st: dict, fill_id: str) -> bool:
-        return any(e.get("id") == fill_id for e in st.get("fill_log", []))
+    def make_fill_id(order_id: str, qty: int, side: str = "") -> str:
+        """order_id·수량·매매방향 기준 안정적 fill_id (타임스탬프 제외)."""
+        oid = str(order_id or "").strip()
+        if not oid:
+            return ""
+        s = str(side or "").upper()
+        if s:
+            return f"{oid}:{s}:{int(qty)}"
+        return f"{oid}:{int(qty)}"
+
+    @staticmethod
+    def _is_processed(
+        st: dict,
+        fill_id: str,
+        *,
+        order_id: str | None = None,
+        qty: int | None = None,
+        side: str | None = None,
+    ) -> bool:
+        log = st.get("fill_log") or []
+        if fill_id and any(str(e.get("id") or "") == fill_id for e in log):
+            return True
+        oid = str(order_id or "").strip()
+        if oid:
+            stable = FillReconciler.make_fill_id(oid, qty or 0, side or "")
+            if stable and any(str(e.get("id") or "") == stable for e in log):
+                return True
+            if any(str(e.get("order_id") or "") == oid for e in log):
+                return True
+            prefix = f"{oid}:"
+            if any(str(e.get("id") or "").startswith(prefix) for e in log):
+                return True
+        return False
 
     @staticmethod
     def _append_fill_log(st: dict, entry: dict) -> None:
         log = st.setdefault("fill_log", [])
         log.append(entry)
-        limit = 100
+        limit = 300
         if len(log) > limit:
             st["fill_log"] = log[-limit:]
 

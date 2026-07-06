@@ -364,6 +364,8 @@ class TelegramHandler:
         await context.bot.send_message(chat_id, f"⏳ {label} 실행 중...")
         if name == "briefing":
             await self.executor.run_morning_briefing()
+        elif name == "job3":
+            await self.executor.run_job3(scheduled=False)
         else:
             await getattr(self.executor, f"run_{name}")()
 

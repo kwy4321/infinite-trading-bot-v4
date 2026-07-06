@@ -75,7 +75,9 @@ def _register_jobs(app_tg, executor: JobExecutor):
 
 def main():
     application_app = App.create()
-    log_level = getattr(logging, application_app.settings.log_level, logging.WARNING)
+    dry = application_app.settings.dry_run or not application_app.settings.has_toss
+    default_level = "INFO" if not dry else application_app.settings.log_level
+    log_level = getattr(logging, default_level, logging.INFO)
     logging.basicConfig(
         level=log_level,
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
@@ -118,7 +120,17 @@ def main():
 
     _register_jobs(tg, executor)
 
-    dry = application_app.settings.dry_run or not application_app.settings.has_toss
+    async def startup_heal(context):
+        if dry:
+            return
+        try:
+            logger.info("startup heal sync — reconciling broker fills")
+            await executor.run_cycle_sync(notify=False)
+        except Exception:
+            logger.exception("startup heal sync failed")
+
+    tg.job_queue.run_once(startup_heal, when=15)
+
     mode = "DRY_RUN" if dry else "LIVE"
     logger.info("🚀 라오어 무한매수 4.0 v1.0 시작 (%s)", mode)
     tg.run_polling(drop_pending_updates=True)

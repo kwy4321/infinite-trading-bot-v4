@@ -182,7 +182,7 @@ class TossClient:
             "filled_quantity": float(filled_raw or 0),
             "average_filled_price": float(avg_raw) if avg_raw not in (None, "") else None,
             "ordered_at": str(ordered_at) if ordered_at else "",
-            "filled_at": str(ordered_at or exec_filled or ""),
+            "filled_at": str(exec_filled or ordered_at or ""),
             "execution": exec_,
         }
 
@@ -195,7 +195,7 @@ class TossClient:
         return self._parse_order_detail(data)
 
     def wait_for_fill(
-        self, order_id: str, timeout_sec: float = 20.0, poll_sec: float = 0.5,
+        self, order_id: str, timeout_sec: float = 90.0, poll_sec: float = 0.5,
     ) -> dict:
         """주문 체결 대기 — 타임아웃 시 마지막 상태 반환."""
         if self.dry_run or not order_id:
@@ -344,8 +344,9 @@ class TossClient:
             or order.get("price") or 0
         )
         ordered_at = self.order_placed_timestamp(order)
+        filled_at = self.order_fill_timestamp(order) or ordered_at
         oid = str(order.get("orderId") or order.get("order_id") or "")
-        if not ordered_at or not oid:
+        if not oid or not (ordered_at or filled_at):
             return None
         return {
             "order_id": oid,
@@ -353,8 +354,8 @@ class TossClient:
             "side": str(order.get("side") or "").upper(),
             "qty": qty,
             "price": round(float(avg_raw), 2),
-            "ordered_at": ordered_at,
-            "filled_at": ordered_at,
+            "ordered_at": ordered_at or filled_at,
+            "filled_at": filled_at or ordered_at,
         }
 
     def _detail_to_fill(self, detail: dict, symbol: str | None = None) -> dict | None:
@@ -367,8 +368,9 @@ class TossClient:
         if qty <= 0:
             return None
         ordered_at = str(detail.get("ordered_at") or "")
+        filled_at = str(detail.get("filled_at") or ordered_at or "")
         oid = str(detail.get("order_id") or "")
-        if not ordered_at or not oid:
+        if not oid or not (ordered_at or filled_at):
             return None
         avg = detail.get("average_filled_price") or 0
         return {
@@ -377,8 +379,8 @@ class TossClient:
             "side": str(detail.get("side") or "").upper(),
             "qty": qty,
             "price": round(float(avg), 2),
-            "ordered_at": ordered_at,
-            "filled_at": ordered_at,
+            "ordered_at": ordered_at or filled_at,
+            "filled_at": filled_at or ordered_at,
         }
 
     def list_broker_fills(
@@ -434,8 +436,6 @@ class TossClient:
                 raise
             for order in orders:
                 add_fill(self._order_to_fill(order, symbol))
-            if fills:
-                break
 
         for oid in extra_order_ids or []:
             oid = str(oid or "").strip()
@@ -537,20 +537,30 @@ class TossClient:
                 return day
         return None
 
-    def check_us_regular_session(self, target_date: str) -> tuple[bool, str]:
-        """Return (has_regular_session, us_date) for the given US calendar date."""
+    def check_us_regular_session(self, target_date: str) -> tuple[bool, str, bool]:
+        """Return (has_regular_session, us_date, calendar_ok). API 실패 시 fail-closed."""
         if self.dry_run:
-            return True, target_date
+            return True, target_date, True
         try:
             cal = self.get_us_market_calendar()
             day = self.find_us_market_day(cal, target_date)
             if not day:
                 day = cal.get("today") or {}
             us_date = day.get("date", target_date)
-            return day.get("regularMarket") is not None, us_date
+            return day.get("regularMarket") is not None, us_date, True
         except Exception:
             logger.exception("US market calendar check failed")
-            return True, target_date
+            return False, target_date, False
+
+    def is_us_market_open_today(self) -> bool:
+        """대시보드용 — 지금 시각 기준 다음/당일 미국 정규장 개장 여부."""
+        now = datetime.datetime.now(KST)
+        if now.hour < 12:
+            target = self.target_us_date_for_morning_job(now)
+        else:
+            target = self.target_us_date_for_ny_job(now)
+        open_, _, cal_ok = self.check_us_regular_session(target)
+        return open_ if cal_ok else False
 
     @staticmethod
     def target_us_date_for_morning_job(kst_now: datetime.datetime | None = None) -> str:
@@ -574,12 +584,5 @@ class TossClient:
         except Exception:
             return self._market_status_fallback()
 
-    def is_us_market_open_today(self) -> bool:
-        """대시보드용 — 지금 시각 기준 다음/당일 미국 정규장 개장 여부."""
-        now = datetime.datetime.now(KST)
-        if now.hour < 12:
-            target = self.target_us_date_for_morning_job(now)
-        else:
-            target = self.target_us_date_for_ny_job(now)
-        open_, _ = self.check_us_regular_session(target)
-        return open_
+    @staticmethod
+    def target_us_date_for_morning_job(kst_now: datetime.datetime | None = None) -> str:

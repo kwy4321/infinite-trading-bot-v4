@@ -32,4 +32,4 @@ jobs:
         run: python -m compileall -q .
 
       - name: Import check
-        run: python -c "import main; print('import main: OK')"
+        run: python -c "import main; print('import main OK')"

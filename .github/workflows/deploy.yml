@@ -20,7 +20,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install --no-cache-dir -r requirements.txt
       - run: python -m compileall -q .
-      - run: python -c "import main; print('import main: OK')"
+      - run: python -c "import main; print('import main OK')"
 
   deploy:
     needs: check

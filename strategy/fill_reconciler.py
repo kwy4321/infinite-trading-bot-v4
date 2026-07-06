@@ -384,9 +384,10 @@ class FillReconciler:
             or execution.get("average_filled_price")
             or order.get("average_filled_price")
             or order.get("averageFilledPrice")
-            or order.get("price")
             or 0
         )
+        if avg_price <= 0:
+            return []
         order_id = str(order.get("orderId") or order.get("order_id") or "")
         ordered_at = (
             order.get("ordered_at")
@@ -587,6 +588,7 @@ class FillReconciler:
             st = self.app.state.load(symbol)
         if order_ids is None:
             order_ids = self.collect_known_order_ids(self.app, symbol, st=st)
+        self.app.broker._invalidate_holdings_cache()
         try:
             fills = self.app.broker.list_broker_fills(
                 symbol, days=90, max_orders=200, extra_order_ids=order_ids,

@@ -326,6 +326,18 @@ class TossClient:
             cursor = str(result.get("nextCursor"))
         return all_orders[:cap]
 
+    @staticmethod
+    def _execution_avg_price(order: dict) -> float | None:
+        """체결 평균가 — order.price(지정가)는 사용하지 않음."""
+        exec_ = order.get("execution") or {}
+        avg = (
+            exec_.get("averageFilledPrice") or exec_.get("average_filled_price")
+            or order.get("average_filled_price") or order.get("averageFilledPrice")
+        )
+        if avg in (None, ""):
+            return None
+        return round(float(avg), 4)
+
     def _order_to_fill(self, order: dict, symbol: str | None = None) -> dict | None:
         sym = str(order.get("symbol") or "").upper()
         if symbol and sym and sym != symbol.upper():
@@ -340,11 +352,9 @@ class TossClient:
             qty = int(float(order.get("quantity") or order.get("qty") or 0))
         if qty <= 0:
             return None
-        avg_raw = (
-            exec_.get("averageFilledPrice") or exec_.get("average_filled_price")
-            or order.get("average_filled_price") or order.get("averageFilledPrice")
-            or order.get("price") or 0
-        )
+        avg = self._execution_avg_price(order)
+        if avg is None:
+            return None
         ordered_at = self.order_placed_timestamp(order)
         filled_at = self.order_fill_timestamp(order) or ordered_at
         oid = str(order.get("orderId") or order.get("order_id") or "")
@@ -355,10 +365,28 @@ class TossClient:
             "symbol": sym,
             "side": str(order.get("side") or "").upper(),
             "qty": qty,
-            "price": round(float(avg_raw), 2),
+            "price": round(float(avg), 2),
             "ordered_at": ordered_at or filled_at,
             "filled_at": filled_at or ordered_at,
         }
+
+    def _enrich_fill_from_order(self, fill: dict, symbol: str | None = None) -> dict | None:
+        """단건 조회로 averageFilledPrice 확정 — CLOSED 목록의 지정가 오염 방지."""
+        oid = str(fill.get("order_id") or "")
+        if not oid:
+            return fill
+        try:
+            detail = self.get_order(oid)
+            refined = self._detail_to_fill(detail, symbol)
+            if refined:
+                return refined
+        except Exception:
+            logger.exception("enrich fill from get_order failed %s", oid)
+        return fill
+
+    @staticmethod
+    def _collect_order_id(order: dict) -> str:
+        return str(order.get("orderId") or order.get("order_id") or "").strip()
 
     def _detail_to_fill(self, detail: dict, symbol: str | None = None) -> dict | None:
         if not detail:
@@ -374,7 +402,9 @@ class TossClient:
         oid = str(detail.get("order_id") or "")
         if not oid or not (ordered_at or filled_at):
             return None
-        avg = detail.get("average_filled_price") or 0
+        avg = detail.get("average_filled_price")
+        if avg in (None, ""):
+            return None
         return {
             "order_id": oid,
             "symbol": sym,
@@ -407,6 +437,7 @@ class TossClient:
         ).date().isoformat()
         fills: list[dict] = []
         seen: set[str] = set()
+        pending_oids: list[str] = []
 
         def add_fill(raw: dict | None) -> None:
             if not raw:
@@ -435,7 +466,13 @@ class TossClient:
                     continue
                 raise
             for order in orders:
-                add_fill(self._order_to_fill(order, symbol))
+                parsed = self._order_to_fill(order, symbol)
+                if parsed:
+                    add_fill(parsed)
+                else:
+                    oid = self._collect_order_id(order)
+                    if oid and oid not in seen and oid not in pending_oids:
+                        pending_oids.append(oid)
 
         if not fills:
             for params in (
@@ -455,11 +492,17 @@ class TossClient:
                         continue
                     raise
                 for order in orders:
-                    add_fill(self._order_to_fill(order, symbol))
+                    parsed = self._order_to_fill(order, symbol)
+                    if parsed:
+                        add_fill(parsed)
+                    else:
+                        oid = self._collect_order_id(order)
+                        if oid and oid not in seen and oid not in pending_oids:
+                            pending_oids.append(oid)
                 if fills:
                     break
 
-        for oid in extra_order_ids or []:
+        for oid in list(pending_oids) + list(extra_order_ids or []):
             oid = str(oid or "").strip()
             if not oid or oid in seen:
                 continue
@@ -469,6 +512,12 @@ class TossClient:
             except Exception:
                 logger.exception("get_order fill fetch failed %s", oid)
 
+        enriched: list[dict] = []
+        for raw in fills:
+            item = self._enrich_fill_from_order(raw, sym)
+            if item:
+                enriched.append(item)
+        fills = enriched
         fills.sort(key=lambda f: f["ordered_at"])
         self._fills_cache[cache_key] = (now, list(fills))
         return fills

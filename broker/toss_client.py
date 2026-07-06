@@ -418,8 +418,6 @@ class TossClient:
         closed_attempts = [
             {"symbol": symbol, "from_date": from_date},
             {"symbol": symbol, "from_date": None},
-            {"symbol": None, "from_date": from_date},
-            {"symbol": None, "from_date": None},
         ]
         for params in closed_attempts:
             try:
@@ -436,6 +434,28 @@ class TossClient:
                 raise
             for order in orders:
                 add_fill(self._order_to_fill(order, symbol))
+
+        if not fills:
+            for params in (
+                {"symbol": None, "from_date": from_date},
+                {"symbol": None, "from_date": None},
+            ):
+                try:
+                    orders = self.get_closed_orders(
+                        params["symbol"],
+                        from_date=params["from_date"],
+                        max_orders=max_orders,
+                    )
+                except requests.HTTPError as exc:
+                    code = exc.response.status_code if exc.response is not None else None
+                    if code == 400:
+                        logger.warning("CLOSED order list rejected (%s): %s", params, exc)
+                        continue
+                    raise
+                for order in orders:
+                    add_fill(self._order_to_fill(order, symbol))
+                if fills:
+                    break
 
         for oid in extra_order_ids or []:
             oid = str(oid or "").strip()

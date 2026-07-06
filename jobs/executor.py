@@ -513,7 +513,14 @@ class JobExecutor:
         lines = ["🔄 <b>회차 동기화</b> <i>(체결·실계좌 기준)</i>"]
         for sym in targets:
             try:
-                r = await asyncio.to_thread(self.sync_cycle_from_broker, sym, premium)
+                r = await asyncio.wait_for(
+                    asyncio.to_thread(self.sync_cycle_from_broker, sym, premium),
+                    timeout=120.0,
+                )
+            except asyncio.TimeoutError:
+                logger.error("cycle sync timed out %s", sym)
+                lines.append(f"⚠️ [{sym}] 동기화 시간 초과 (120초) — 나중에 /sync 재시도")
+                continue
             except Exception as e:
                 logger.exception("cycle sync failed %s", sym)
                 lines.append(f"🚨 [{sym}] 동기화 실패: {e}")

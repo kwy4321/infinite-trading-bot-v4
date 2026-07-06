@@ -120,17 +120,6 @@ def main():
 
     _register_jobs(tg, executor)
 
-    async def startup_heal(context):
-        if dry:
-            return
-        try:
-            logger.info("startup heal sync — reconciling broker fills")
-            await executor.run_cycle_sync(notify=False)
-        except Exception:
-            logger.exception("startup heal sync failed")
-
-    tg.job_queue.run_once(startup_heal, when=15)
-
     mode = "DRY_RUN" if dry else "LIVE"
     logger.info("🚀 라오어 무한매수 4.0 v1.0 시작 (%s)", mode)
     tg.run_polling(drop_pending_updates=True)

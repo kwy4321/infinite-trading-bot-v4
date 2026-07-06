@@ -149,6 +149,14 @@ class FillReconciler:
         if not fills:
             return applied, False
 
+        state_qty = int(st.get("qty", 0))
+        if state_qty == broker_qty:
+            logger.debug(
+                "broker fills found for %s but qty already matches (%d) — skip T re-apply",
+                symbol, broker_qty,
+            )
+            return applied, True
+
         position_fills = self.app.cycles.select_position_fills(fills, broker_qty)
         for raw in position_fills:
             fill = self._broker_fill_to_entry(raw)
@@ -159,7 +167,15 @@ class FillReconciler:
                 side=fill["side"],
             ):
                 continue
+            side = str(fill.get("side") or "").upper()
+            cur_qty = int(st.get("qty", 0))
+            if side == "BUY" and cur_qty >= broker_qty:
+                continue
+            if side == "SELL" and cur_qty <= broker_qty:
+                continue
             applied.append(self._apply_fill(symbol, st, fill, premium))
+            if int(st.get("qty", 0)) == broker_qty:
+                break
         return applied, True
 
     def _needs_synthetic_reconcile(

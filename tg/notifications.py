@@ -14,8 +14,31 @@ def _side_icon(side: str) -> str:
 def format_market_open(now_kst: str) -> str:
     return (
         f"🔔 <b>미국 장 시작</b>  <i>{now_kst} KST</i>\n"
-        f"{dim('오늘 주문계획을 이어서 보내드려요.')}"
+        f"{dim('전략 계획가로 예약 주문을 넣어요.')}"
     )
+
+
+def format_market_open_start(now_kst: str, symbol_count: int) -> str:
+    sym = f"{symbol_count}종목" if symbol_count else "—"
+    return (
+        f"🔔 <b>미국 장 시작</b>  <i>{now_kst} KST</i>\n"
+        f"예약 주문 접수 · {code(sym)}"
+    )
+
+
+def format_market_open_report(
+    now_kst: str,
+    symbol_lines: list[str],
+    ok: int,
+    total: int,
+) -> str:
+    """장 개장 예약 — 종목별 접수 결과."""
+    header = f"🔔 <b>장 개장 예약 완료</b>  <i>{now_kst}</i>"
+    if total <= 0:
+        return f"{header}\n{dim('오늘 예약할 주문 없음')}"
+    body = "\n".join(symbol_lines)
+    footer = f"접수 {code(str(ok))}/{code(str(total))}건 · {dim('체결은 장중·새벽 sync 반영')}"
+    return f"{header}\n\n{body}\n\n{footer}"
 
 
 def format_market_close_start(now_kst: str, symbol_count: int) -> str:

@@ -7,16 +7,12 @@ from zoneinfo import ZoneInfo
 
 from app import App
 from broker.toss_client import TossClient
-from strategy.order_planner import (
-    JobPhase,
-    filter_orders_for_phase,
-    gate_orders_by_close_price,
-)
+from strategy.order_planner import JobPhase, filter_orders_for_phase
 from strategy.fill_reconciler import FillReconciler
 from tg.notifications import (
-    format_market_close_report,
-    format_market_close_start,
     format_market_open,
+    format_market_open_report,
+    format_market_open_start,
     format_order_filled,
     format_order_not_filled,
     format_order_submitted,
@@ -55,6 +51,7 @@ class JobExecutor:
         *,
         use_market: bool,
         notify: bool = True,
+        wait_fill: bool = True,
     ) -> tuple[bool, bool, dict, str | None]:
         """Returns (submitted, filled, state, graduation_message)."""
         is_dry = self._is_dry()
@@ -94,6 +91,9 @@ class JobExecutor:
                 else:
                     if oid:
                         FillReconciler.track_order(st, symbol, oid, side, qty)
+                    if not wait_fill:
+                        self.app.state.save(symbol, st)
+                        return True, False, st, None
                     detail = await asyncio.to_thread(
                         self.app.broker.wait_for_fill, oid,
                     )
@@ -181,8 +181,9 @@ class JobExecutor:
         *,
         use_market: bool = True,
         notify_per_order: bool = True,
+        wait_fill: bool = True,
     ) -> dict:
-        """주문 실행. notify_per_order=False면 LOC 배치 시 건별 알림 생략."""
+        """주문 실행. notify_per_order=False면 배치 시 건별 알림 생략."""
         st = self.app.state.load(symbol)
         submitted = filled = 0
         grad_msg = None
@@ -190,11 +191,11 @@ class JobExecutor:
 
         for order in orders:
             work = dict(order)
-            if not is_dry and ref_price > 0:
+            if not is_dry and ref_price > 0 and use_market:
                 work["price"] = round(ref_price, 2)
             sub_ok, fill_ok, st, grad = await self._execute_one_order(
                 symbol, work, ref_price, st,
-                use_market=use_market, notify=notify_per_order,
+                use_market=use_market, notify=notify_per_order, wait_fill=wait_fill,
             )
             if sub_ok:
                 submitted += 1
@@ -236,9 +237,7 @@ class JobExecutor:
             take_profit_pct=st.get("take_profit_pct"),
         )
         filtered = filter_orders_for_phase(plan, phase)
-        is_dry = self._is_dry()
-        gated = gate_orders_by_close_price(filtered, 0.0 if is_dry else price)
-        orders = gated["buy_orders"] + gated["sell_orders"]
+        orders = filtered["buy_orders"] + filtered["sell_orders"]
         if not orders:
             return {
                 "submitted": 0, "filled": 0, "total": 0,
@@ -247,25 +246,25 @@ class JobExecutor:
             }
         result = await self.execute_orders(
             symbol, orders, price,
-            use_market=True, notify_per_order=notify_per_order,
+            use_market=False,
+            notify_per_order=notify_per_order,
+            wait_fill=False,
         )
         result["line"] = (
-            f"✅ [{symbol}] {phase.value} "
-            f"접수 {result['submitted']}/{result['total']} · "
-            f"체결 {result['filled']}/{result['total']}"
+            f"✅ [{symbol}] 예약 {result['submitted']}/{result['total']}건"
         )
         return result
 
     def _target_us_date_for_phase(self, phase: JobPhase) -> str:
         now = datetime.now(KST)
-        if phase in (JobPhase.JOB3_LOC_CLOSE, JobPhase.JOB1_LOC_CLOSE):
+        if phase == JobPhase.JOB4_REPORT:
             return TossClient.target_us_date_for_morning_job(now)
         return TossClient.target_us_date_for_ny_job(now)
 
     def _phase_label(self, phase: JobPhase) -> str:
         return {
-            JobPhase.JOB1_LOC_CLOSE: "LOC",
-            JobPhase.JOB3_LOC_CLOSE: "LOC",
+            JobPhase.JOB1_LOC_CLOSE: "장개장 예약",
+            JobPhase.JOB3_LOC_CLOSE: "장개장 예약",
             JobPhase.JOB2_SETTLE: "체결정리",
         }.get(phase, phase.value)
 
@@ -289,7 +288,7 @@ class JobExecutor:
                 label = self._phase_label(phase)
                 hint = ""
                 if phase in (JobPhase.JOB3_LOC_CLOSE, JobPhase.JOB1_LOC_CLOSE):
-                    hint = "\n(한국 새벽 Job — 오늘 밤 열릴 미국 정규장 기준)"
+                    hint = "\n(한국 저녁 — 미국 정규장 개장 시각 기준)"
                 await self._notify(
                     f"📅 <b>{us_date}</b> 미국 정규장 휴장 — {label} Job 스킵 (주문 없음){hint}",
                     html=True,
@@ -303,9 +302,18 @@ class JobExecutor:
 
         is_loc = phase in _LOC_PHASES
         if is_loc:
-            now = datetime.now(KST).strftime("%H:%M:%S")
+            now = datetime.now(KST).strftime("%H:%M")
+            await self._notify(format_market_open(now), html=True)
+            from tg.plan_formatter import format_plans
+            try:
+                plan_text = format_plans(self.app, symbols, premium)
+                await self._notify(plan_text, html=True)
+            except Exception as e:
+                logger.exception("plan broadcast build failed")
+                await self._notify(f"🚨 주문계획 생성 실패: {e}")
+            now_sec = datetime.now(KST).strftime("%H:%M:%S")
             await self._notify(
-                format_market_close_start(now, len(symbols)), html=True,
+                format_market_open_start(now_sec, len(symbols)), html=True,
             )
 
         lines = []
@@ -326,9 +334,7 @@ class JobExecutor:
         if is_loc:
             now = datetime.now(KST).strftime("%H:%M:%S")
             await self._notify(
-                format_market_close_report(
-                    now, lines, total_sub, total_orders, total_fill,
-                ),
+                format_market_open_report(now, lines, total_sub, total_orders),
                 html=True,
             )
         elif lines:
@@ -488,7 +494,7 @@ class JobExecutor:
         await self.run_phase(JobPhase.JOB3_LOC_CLOSE, premium)
 
     async def run_job2(self, **_):
-        await self._notify("job2는 사용하지 않아요. 장 마감 LOC는 /job3 입니다.")
+        await self._notify("job2는 사용하지 않아요. 장 개장 예약주문은 /job3 입니다.")
 
     async def run_job3(self, premium: int | None = None, **_):
         await self.run_phase(JobPhase.JOB3_LOC_CLOSE, premium)

@@ -45,9 +45,9 @@ from tg.ui import DIVIDER, badge_on, code, quote, row, section, usd
 logger = logging.getLogger(__name__)
 
 JOB_LABELS = {
-    "job1": "장마감 LOC (job3와 동일)",
+    "job1": "장개장 예약주문 (job3와 동일)",
     "job2": "(미사용)",
-    "job3": "장마감 LOC (매수·매도)",
+    "job3": "장개장 예약주문 (매수·매도)",
     "job4": "오늘 마무리",
     "briefing": "아침 브리핑",
     "morning_briefing": "아침 브리핑",

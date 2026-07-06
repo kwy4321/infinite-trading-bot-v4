@@ -1,0 +1,35 @@
+# push / PR 시 Python 문법·import 검사 (서버 배포 전에 깨진 코드 차단)
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 서버(GCP)는 보통 3.9~3.10 — 둘 다 통과해야 배포
+        python-version: ["3.9", "3.10"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: pip install --no-cache-dir -r requirements.txt
+
+      - name: Syntax check (compileall)
+        run: python -m compileall -q .
+
+      - name: Import check
+        run: python -c "import main; print('import main: OK')"

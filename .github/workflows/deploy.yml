@@ -1,3 +1,4 @@
+# main push 시 CI 통과 후에만 서버 배포
 name: Deploy to Server
 
 on:
@@ -6,7 +7,23 @@ on:
   workflow_dispatch:
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install --no-cache-dir -r requirements.txt
+      - run: python -m compileall -q .
+      - run: python -c "import main; print('import main: OK')"
+
   deploy:
+    needs: check
     runs-on: ubuntu-latest
     steps:
       - name: Deploy via SSH

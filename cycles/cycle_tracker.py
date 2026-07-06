@@ -445,6 +445,9 @@ class CycleTracker:
                 merged["ordered_at"] = in_when
                 merged["filled_at"] = in_when
                 merged["at"] = in_when
+            in_price = incoming.get("price")
+            if in_price not in (None, ""):
+                merged["price"] = round(float(in_price), 2)
         elif in_src == "sync" and ex_when:
             merged["ordered_at"] = ex_when
             merged["filled_at"] = ex_when
@@ -478,6 +481,7 @@ class CycleTracker:
             rec["filled_at"] = when
             rec["at"] = when
             rec["order_id"] = fill["order_id"]
+            rec["price"] = round(float(fill.get("price") or rec.get("price") or 0), 2)
             used.add(fill["order_id"])
             updated += 1
 
@@ -579,6 +583,27 @@ class CycleTracker:
                 break
         return out if total >= target_qty else selected
 
+    @staticmethod
+    def _recompute_cycle_totals_from_trades(cur: dict) -> None:
+        """trades 체결가 기준으로 total_buy_usd·total_sell_usd 재계산."""
+        buy_usd = sell_usd = 0.0
+        buy_count = sell_count = 0
+        for tr in cur.get("trades") or []:
+            side = str(tr.get("side") or "").upper()
+            qty = int(tr.get("qty") or 0)
+            price = float(tr.get("price") or 0)
+            usd = round(price * qty, 2)
+            if side == "BUY":
+                buy_usd += usd
+                buy_count += 1
+            elif side == "SELL":
+                sell_usd += usd
+                sell_count += 1
+        cur["total_buy_usd"] = round(buy_usd, 2)
+        cur["total_sell_usd"] = round(sell_usd, 2)
+        cur["buy_count"] = buy_count
+        cur["sell_count"] = sell_count
+
     def rebuild_trades_from_broker(
         self,
         symbol: str,
@@ -627,6 +652,7 @@ class CycleTracker:
         if not cur:
             return 0
         cur["trades"] = new_trades
+        self._recompute_cycle_totals_from_trades(cur)
         self._update_cycle_started_at(cur)
         self._save_all(data)
         return len(new_trades)
@@ -714,7 +740,7 @@ class CycleTracker:
 
     @classmethod
     def format_trade_line(cls, symbol: str, tr: dict, *, index: int | None = None) -> str:
-        """매매 1건 — 연번 · 날짜 · 종목 · 매수/매도 · 수량 · 평단 · T (한 줄)."""
+        """매매 1건 — 연번 · 날짜 · 종목 · 매수/매도 · 수량 · 체결가 · 합계 · T (한 줄)."""
         side = tr.get("side", "")
         sym = tr.get("symbol") or symbol
         icon = "🟢" if side == "BUY" else "🔴"
@@ -722,10 +748,8 @@ class CycleTracker:
         raw_when = tr.get("ordered_at") or tr.get("filled_at") or tr.get("at") or ""
         when = _trade_date_display(raw_when)
         qty = int(tr.get("qty", 0))
-        avg = tr.get("avg_after")
-        if avg in (None, ""):
-            avg = tr.get("price", 0)
-        avg_f = float(avg)
+        exec_price = float(tr.get("price") or 0)
+        total_usd = round(exec_price * qty, 2)
         t_after = tr.get("t_after")
         t_before = tr.get("t_before")
         if t_before not in (None, "") and float(t_before) != float(t_after or 0):
@@ -735,9 +759,13 @@ class CycleTracker:
         else:
             t_txt = "T —"
         prefix = f"<b>{index}.</b> " if index is not None else ""
+        if qty > 1:
+            amt_txt = f"${exec_price:,.2f} · 합 ${total_usd:,.2f}"
+        else:
+            amt_txt = f"${exec_price:,.2f}"
         return (
             f"{prefix}{when} · <b>{sym}</b> · {icon}{side_txt} · "
-            f"<b>{qty}</b>주 · ${avg_f:,.2f} · {t_txt}"
+            f"<b>{qty}</b>주 · {amt_txt} · {t_txt}"
         )
 
     @classmethod

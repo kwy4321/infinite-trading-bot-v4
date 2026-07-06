@@ -16,6 +16,10 @@ from strategy.order_planner import (
     gate_orders_by_close_price,
 )
 from strategy.fill_reconciler import FillReconciler
+from strategy.session_fill import (
+    has_us_session_fill_from_broker,
+    has_us_session_fill_in_state,
+)
 from tg.notifications import (
     format_market_close_report,
     format_market_close_start,
@@ -50,6 +54,24 @@ class JobExecutor:
 
     def _is_dry(self) -> bool:
         return self.app.settings.dry_run or not self.app.settings.has_toss
+
+    async def _already_traded_for_us_session(
+        self, symbol: str, us_date: str, *, st: dict | None = None,
+    ) -> bool:
+        """해당 미국 거래일(ET)에 이미 체결됐으면 True — 종가 LOC 중복 방지."""
+        if st is None:
+            st = self.app.state.load(symbol)
+        if has_us_session_fill_in_state(st, symbol, us_date, self.app.cycles):
+            return True
+        if not self._is_dry():
+            try:
+                return await asyncio.to_thread(
+                    has_us_session_fill_from_broker,
+                    self.app.broker, symbol, us_date,
+                )
+            except Exception:
+                logger.exception("broker session fill check failed %s", symbol)
+        return False
 
     @staticmethod
     def _in_close_order_window(kst_now: datetime | None = None) -> bool:
@@ -261,10 +283,25 @@ class JobExecutor:
         premium: int | None = None,
         *,
         notify_per_order: bool = True,
+        force: bool = False,
     ) -> dict:
         if premium is None:
             premium = self.app.runtime.premium_default()
         st = self.app.state.load(symbol)
+        if phase in _LOC_PHASES and not force:
+            us_date = self._target_us_date_for_phase(phase)
+            if await self._already_traded_for_us_session(symbol, us_date, st=st):
+                return {
+                    "submitted": 0,
+                    "filled": 0,
+                    "total": 0,
+                    "skipped": True,
+                    "line": (
+                        f"⏭️ [{symbol}] {us_date} 미국 거래일 — "
+                        f"이미 체결됨, 종가 주문 스킵"
+                    ),
+                    "grad_msg": None,
+                }
         api = self.app.broker.get_holdings_item(symbol)
         price = api["current_price"] or self.app.broker.get_price(symbol)
         plan = self.app.strategy.get_plan(
@@ -352,8 +389,6 @@ class JobExecutor:
                     html=True,
                 )
                 return
-            if phase in _LOC_PHASES:
-                self.app.runtime.mark_job3_run(us_date)
 
         symbols = self._active_symbols()
         if not symbols:
@@ -372,7 +407,9 @@ class JobExecutor:
         for sym in symbols:
             try:
                 result = await self.run_for_symbol(
-                    sym, phase, premium, notify_per_order=not is_loc,
+                    sym, phase, premium,
+                    notify_per_order=not is_loc,
+                    force=force,
                 )
                 lines.append(result["line"])
                 total_sub += result["submitted"]
@@ -383,6 +420,8 @@ class JobExecutor:
                 lines.append(f"🚨 [{sym}] 실행 실패: {e}")
 
         if is_loc:
+            target = self._target_us_date_for_phase(phase)
+            self.app.runtime.mark_job3_run(target)
             now = datetime.now(KST).strftime("%H:%M:%S")
             await self._notify(
                 format_market_close_report(
@@ -577,6 +616,26 @@ class JobExecutor:
         if scheduled and self.app.runtime.last_job3_us_date() == target:
             logger.info("job3 skipped — already ran for US date %s", target)
             return
+        if scheduled and not self.app.runtime.is_paused():
+            symbols = self._active_symbols()
+            skipped = []
+            for sym in symbols:
+                if await self._already_traded_for_us_session(sym, target):
+                    skipped.append(sym)
+            if symbols and len(skipped) == len(symbols):
+                logger.info(
+                    "job3 skipped — all symbols already filled for US date %s",
+                    target,
+                )
+                await self._notify(
+                    f"⏭️ <b>종가 LOC 스킵</b>\n"
+                    f"📅 미국 거래일 <b>{target}</b> — 이미 체결됨\n"
+                    f"{dim('(저녁 주문계획과 별개 · 체결된 날은 새벽 주문 없음)')}\n"
+                    + "\n".join(f"· {s}" for s in skipped),
+                    html=True,
+                )
+                self.app.runtime.mark_job3_run(target)
+                return
         await self.run_phase(JobPhase.JOB3_LOC_CLOSE, premium)
 
     async def run_job4(self, **_):

@@ -11,6 +11,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from app import App
+from broker.toss_client import TossClient
 from jobs.executor import JobExecutor
 from strategy.fill_reconciler import FillReconciler
 from strategy.split_handler import apply_split, calc_adjustment, format_preview, parse_ratio
@@ -665,6 +666,14 @@ class TelegramHandler:
                 chat_id,
                 "⏭️ 지금은 종가 주문 시간이 아니에요. "
                 "자동 주문은 미국 종가 직전(한국 새벽)에만 들어갑니다.",
+            )
+            return
+        target = TossClient.target_us_date_for_ny_job()
+        if await self.executor._already_traded_for_us_session(symbol, target, st=st):
+            await context.bot.send_message(
+                chat_id,
+                f"⏭️ [{symbol}] {target} 미국 거래일 — "
+                f"이미 체결됐어요. 종가 주문은 스킵합니다.",
             )
             return
         ref = float(pos["current_price"] or 0)

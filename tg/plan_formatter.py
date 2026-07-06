@@ -4,6 +4,7 @@ import datetime
 from zoneinfo import ZoneInfo
 
 from app import App
+from broker.toss_client import TossClient
 from tg.format_helpers import is_dry, resolve_price
 from tg.ui import (
     code,
@@ -15,6 +16,7 @@ from tg.ui import (
     symbol_card,
     THIN,
 )
+from strategy.session_fill import has_us_session_fill_in_state
 
 
 def _short_label(desc: str) -> str:
@@ -172,14 +174,28 @@ def format_plan_block(app: App, symbol: str, premium: int) -> str:
 def format_plans(app: App, symbols: list[str], premium: int) -> str:
     kst = ZoneInfo("Asia/Seoul")
     today = datetime.datetime.now(kst).strftime("%Y-%m-%d")
+    us_close_date = TossClient.target_us_date_for_ny_job()
     blocks = [
         section("오늘 주문계획", "📋"),
-        dim(today),
+        dim(f"{today} KST · 미국 거래일 {us_close_date}"),
+        dim("※ 계획만 표시 · 실제 주문은 미국 종가 직전(한국 새벽)"),
         "",
     ]
     if not symbols:
         blocks.append(quote(empty("거래 종목 없음 · /setting → 📡 거래 종목")))
         return "\n".join(blocks)
+    skip_notes = []
+    for symbol in symbols:
+        st = app.state.load(symbol)
+        if has_us_session_fill_in_state(st, symbol, us_close_date, app.cycles):
+            skip_notes.append(
+                f"⏭️ {symbol_card(symbol)} — {us_close_date} 미국장 이미 체결 "
+                f"(내일 새벽 자동 주문 스킵)"
+            )
     cards = [format_plan_block(app, symbol, premium) for symbol in symbols]
     blocks.append("\n\n".join(cards))
+    if skip_notes:
+        blocks.append("")
+        blocks.append(dim("종가 LOC 자동 실행"))
+        blocks.extend(skip_notes)
     return "\n".join(blocks)

@@ -1,5 +1,7 @@
 """Application wiring — shared by main, executor, telegram."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 from account.account import AccountPaths

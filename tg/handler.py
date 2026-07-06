@@ -1,5 +1,7 @@
 """Telegram command handlers — uses App + JobExecutor, no direct broker orders except manual exec."""
 
+from __future__ import annotations
+
 import asyncio
 import datetime
 import logging

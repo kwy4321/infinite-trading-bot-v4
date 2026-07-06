@@ -1,5 +1,7 @@
 """무한매수 회차(사이클) 추적."""
 
+from __future__ import annotations
+
 import datetime
 import os
 import random

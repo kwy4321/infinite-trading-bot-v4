@@ -1,5 +1,7 @@
 """OAuth2 token cache for Toss Open API."""
 
+from __future__ import annotations
+
 import json
 import threading
 import datetime

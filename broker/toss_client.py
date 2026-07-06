@@ -1,5 +1,7 @@
 """Toss Open API HTTP client."""
 
+from __future__ import annotations
+
 import datetime
 import logging
 import time
@@ -603,6 +605,3 @@ class TossClient:
             return self._market_status_from_calendar(cal.get("today", {}))
         except Exception:
             return self._market_status_fallback()
-
-    @staticmethod
-    def target_us_date_for_morning_job(kst_now: datetime.datetime | None = None) -> str:

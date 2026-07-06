@@ -1,5 +1,7 @@
 """Entry point — thin wiring: App, scheduler, Telegram polling."""
 
+from __future__ import annotations
+
 import datetime
 import logging
 from zoneinfo import ZoneInfo

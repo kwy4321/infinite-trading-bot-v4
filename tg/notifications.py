@@ -14,7 +14,7 @@ def _side_icon(side: str) -> str:
 def format_market_open(now_kst: str) -> str:
     return (
         f"🔔 <b>미국 장 시작</b>  <i>{now_kst} KST</i>\n"
-        f"{dim('전략 계획가로 예약 주문을 넣어요.')}"
+        f"{dim('오늘 주문계획만 보내드려요. 실제 주문은 종가(한국 새벽)에 들어갑니다.')}"
     )
 
 

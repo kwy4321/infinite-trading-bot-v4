@@ -45,9 +45,9 @@ from tg.ui import DIVIDER, badge_on, code, quote, row, section, usd
 logger = logging.getLogger(__name__)
 
 JOB_LABELS = {
-    "job1": "장개장 예약주문 (job3와 동일)",
+    "job1": "종가 LOC (job3와 동일)",
     "job2": "(미사용)",
-    "job3": "장개장 예약주문 (매수·매도)",
+    "job3": "종가 LOC (매수·매도)",
     "job4": "오늘 마무리",
     "briefing": "아침 브리핑",
     "morning_briefing": "아침 브리핑",
@@ -641,10 +641,26 @@ class TelegramHandler:
         if not orders:
             await context.bot.send_message(chat_id, f"[{symbol}] 주문 없음")
             return
+        if not JobExecutor._in_close_order_window():
+            await context.bot.send_message(
+                chat_id,
+                "⏭️ 지금은 종가 주문 시간이 아니에요. "
+                "자동 주문은 미국 종가 직전(한국 새벽)에만 들어갑니다.",
+            )
+            return
         ref = float(pos["current_price"] or 0)
+        from strategy.order_planner import gate_orders_by_close_price
+        gated = gate_orders_by_close_price(
+            {"buy_orders": plan.get("buy_orders", []), "sell_orders": plan.get("sell_orders", [])},
+            ref,
+        )
+        orders = gated["buy_orders"] + gated["sell_orders"]
+        if not orders:
+            await context.bot.send_message(chat_id, f"[{symbol}] 종가 기준 체결 조건 없음")
+            return
         try:
             result = await self.executor.execute_orders(
-                symbol, orders, ref, use_market=False, notify_per_order=True,
+                symbol, orders, ref, use_market=True, notify_per_order=True, wait_fill=True,
             )
         except Exception as e:
             logger.exception("Manual order failed")

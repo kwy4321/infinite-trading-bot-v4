@@ -8,6 +8,7 @@ from telegram.ext import ApplicationBuilder, CallbackQueryHandler, CommandHandle
 
 from app import App
 from jobs.executor import JobExecutor
+from strategy.order_planner import CLOSE_LEAD_SECONDS
 from tg.handler import TelegramHandler
 from tg.sender import TelegramSender
 
@@ -21,8 +22,15 @@ def _is_us_summer() -> bool:
     return ny.dst() != datetime.timedelta(0)
 
 
+def _lead_time(close_hour: int, close_minute: int) -> datetime.time:
+    """미국 장 마감(KST) 직전 CLOSE_LEAD_SECONDS."""
+    base = datetime.datetime(2000, 1, 1, close_hour, close_minute, 0)
+    early = base - datetime.timedelta(seconds=CLOSE_LEAD_SECONDS)
+    return early.time().replace(tzinfo=KST)
+
+
 def _register_jobs(app_tg, executor: JobExecutor):
-    """Register KST daily jobs — orders at US 09:30 ET open."""
+    """Register KST daily jobs — LOC orders at US close only; plan at US open."""
 
     async def job3_summer(ctx):
         if not _is_us_summer():
@@ -40,15 +48,29 @@ def _register_jobs(app_tg, executor: JobExecutor):
     async def briefing(ctx):
         await executor.run_morning_briefing()
 
+    async def plan_open_summer(ctx):
+        if not _is_us_summer():
+            return
+        await executor.run_market_open_plan()
+
+    async def plan_open_winter(ctx):
+        if _is_us_summer():
+            return
+        await executor.run_market_open_plan()
+
     chat_ids = list(app_tg.bot_data.get("chat_ids") or [])
     chat_id = chat_ids[0] if chat_ids else None
 
     jq = app_tg.job_queue
     if executor.app.settings.briefing_enabled:
         jq.run_daily(briefing, time=datetime.time(7, 0, tzinfo=KST), chat_id=chat_id, name="briefing")
-    jq.run_daily(job3_summer, time=datetime.time(22, 30, tzinfo=KST), chat_id=chat_id, name="job3_summer")
-    jq.run_daily(job3_winter, time=datetime.time(23, 30, tzinfo=KST), chat_id=chat_id, name="job3_winter")
+    # 종가 LOC — 한국 새벽(미국 16:00 ET 직전)만
+    jq.run_daily(job3_summer, time=_lead_time(5, 0), chat_id=chat_id, name="job3_summer")
+    jq.run_daily(job3_winter, time=_lead_time(6, 0), chat_id=chat_id, name="job3_winter")
     jq.run_daily(job4, time=datetime.time(6, 15, tzinfo=KST), chat_id=chat_id, name="job4")
+    # 저녁: 주문계획 알림만 (주문 없음)
+    jq.run_daily(plan_open_summer, time=datetime.time(22, 30, tzinfo=KST), chat_id=chat_id, name="plan_open_summer")
+    jq.run_daily(plan_open_winter, time=datetime.time(23, 30, tzinfo=KST), chat_id=chat_id, name="plan_open_winter")
 
 
 def main():

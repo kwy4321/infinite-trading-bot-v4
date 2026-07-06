@@ -20,7 +20,6 @@ source .venv/bin/activate
 pip install --no-cache-dir -U pip -q
 pip install --no-cache-dir -r requirements.txt -q
 
-bash scripts/check_python.sh
 PYTHON="$ROOT/.venv/bin/python" bash scripts/check_python.sh
 
 if systemctl is-active --quiet infinite-trading-bot 2>/dev/null; then

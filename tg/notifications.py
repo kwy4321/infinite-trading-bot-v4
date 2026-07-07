@@ -14,7 +14,7 @@ def _side_icon(side: str) -> str:
 def format_market_open(now_kst: str) -> str:
     return (
         f"🔔 <b>미국 장 시작</b>  <i>{now_kst} KST</i>\n"
-        f"{dim('오늘 주문계획만 보내드려요. 실제 주문은 종가(한국 새벽)에 들어갑니다.')}"
+        f"{dim('오늘 LOC 주문계획만 보내드려요. 실제 주문은 종가(한국 새벽)에 LIMIT+CLS로 들어갑니다.')}"
     )
 
 
@@ -76,11 +76,13 @@ def format_order_submitted(
     *,
     order_id: str = "",
     dry: bool = False,
+    loc: bool = False,
 ) -> str:
     tag = f"  {dim('[DRY]')}" if dry else ""
+    kind = f"  {dim('LOC')}" if loc else ""
     oid = f"\n{dim('주문')} {code(order_id)}" if order_id else ""
     return (
-        f"📥 <b>{symbol}</b> {_side_ko(side)} <b>접수</b>{tag}\n"
+        f"📥 <b>{symbol}</b> {_side_ko(side)} <b>접수</b>{tag}{kind}\n"
         f"{_side_icon(side)} {label} · {code(f'{qty}주')}{oid}"
     )
 

@@ -92,11 +92,12 @@ class JobExecutor:
         ref_price: float,
         st: dict,
         *,
-        use_market: bool,
+        use_market: bool = False,
+        use_loc: bool = False,
         notify: bool = True,
         wait_fill: bool = True,
-    ) -> tuple[bool, bool, dict, str | None]:
-        """Returns (submitted, filled, state, graduation_message)."""
+    ) -> tuple[bool, bool, dict, str | None, str]:
+        """Returns (submitted, filled, state, graduation_message, order_id)."""
         is_dry = self._is_dry()
         side = order["side"]
         qty = int(order["qty"])
@@ -107,6 +108,10 @@ class JobExecutor:
             try:
                 if is_dry:
                     placed = {"order_id": ""}
+                elif use_loc:
+                    placed = await asyncio.to_thread(
+                        self.app.broker.place_loc_order, symbol, side, limit_price, qty,
+                    )
                 elif use_market:
                     placed = await asyncio.to_thread(
                         self.app.broker.place_market_order, symbol, side, qty,
@@ -122,6 +127,7 @@ class JobExecutor:
                     await self._notify(
                         format_order_submitted(
                             symbol, side, qty, label, order_id=oid, dry=is_dry,
+                            loc=use_loc and not is_dry,
                         ),
                         html=True,
                     )
@@ -136,9 +142,10 @@ class JobExecutor:
                         FillReconciler.track_order(st, symbol, oid, side, qty)
                     if not wait_fill:
                         self.app.state.save(symbol, st)
-                        return True, False, st, None
+                        return True, False, st, None, oid
+                    fill_timeout = 120.0 if use_loc else 90.0
                     detail = await asyncio.to_thread(
-                        self.app.broker.wait_for_fill, oid,
+                        self.app.broker.wait_for_fill, oid, fill_timeout,
                     )
                     filled_qty = int(float(detail.get("filled_quantity") or 0))
                     fill_price = float(
@@ -163,7 +170,7 @@ class JobExecutor:
                     ):
                         FillReconciler.untrack_order(st, oid)
                         self.app.state.save(symbol, st)
-                        return True, True, st, None
+                        return True, True, st, None, oid
 
                     t_before = float(st.get("T", 0.0))
                     filled_order = {
@@ -216,20 +223,120 @@ class JobExecutor:
                                 "avg_after": float(st.get("avg_price", 0.0)),
                             })
                         FillReconciler.untrack_order(st, oid)
-                    return True, True, st, grad
+                    return True, True, st, grad, oid
 
                 if notify:
                     await self._notify(
                         format_order_not_filled(symbol, side, label, status),
                         html=True,
                     )
-                return True, False, st, None
+                if oid and not is_dry:
+                    FillReconciler.untrack_order(st, oid)
+                return True, False, st, None, oid
             except Exception as e:
                 logger.exception("Order failed %s attempt %s", symbol, attempt + 1)
                 if attempt == self._retry - 1:
                     await self._notify(f"🚨 [{symbol}] 주문 실패: {e}")
             await asyncio.sleep(0.3)
-        return False, False, st, None
+        return False, False, st, None, ""
+
+    async def _wait_loc_fill(
+        self,
+        symbol: str,
+        order: dict,
+        oid: str,
+        ref_price: float,
+        st: dict,
+        *,
+        notify: bool = True,
+    ) -> tuple[bool, dict, str | None]:
+        """LOC 접수 후 종가 경매 체결 대기."""
+        side = order["side"]
+        qty = int(order["qty"])
+        label = order_label(order.get("desc", ""))
+        limit_price = float(order.get("price", 0))
+
+        detail = await asyncio.to_thread(
+            self.app.broker.wait_for_fill, oid, 120.0,
+        )
+        filled_qty = int(float(detail.get("filled_quantity") or 0))
+        fill_price = float(
+            detail.get("average_filled_price") or ref_price or limit_price or 0
+        )
+        status = str(detail.get("status") or "")
+        fill_time = (
+            detail.get("filled_at")
+            or detail.get("ordered_at")
+            or datetime.now(KST).isoformat(timespec="seconds")
+        )
+
+        grad = None
+        if filled_qty > 0:
+            fill_id = FillReconciler.make_fill_id(oid, filled_qty, side)
+            if FillReconciler._is_processed(
+                st, fill_id, order_id=oid, qty=filled_qty, side=side,
+            ):
+                FillReconciler.untrack_order(st, oid)
+                return True, st, None
+
+            t_before = float(st.get("T", 0.0))
+            filled_order = {
+                **order,
+                "price": round(fill_price, 2),
+                "qty": filled_qty,
+                "ordered_at": fill_time,
+                "filled_at": fill_time,
+                "order_id": oid,
+                "fill_id": fill_id,
+            }
+            if notify:
+                await self._notify(
+                    format_order_filled(
+                        symbol, side, filled_qty, fill_price, label,
+                    ),
+                    html=True,
+                )
+            if side == "BUY":
+                st = self.app.fills.apply_buy_fill(
+                    st, filled_order, self.app.cycles, symbol,
+                )
+            else:
+                st, completed = self.app.fills.apply_sell_fill(
+                    st, filled_order, self.app.cycles, symbol,
+                )
+                if completed:
+                    grad = self.app.cycles.format_graduation_message(
+                        completed, symbol,
+                    )
+            if not FillReconciler._is_processed(
+                st, fill_id, order_id=oid, qty=filled_qty, side=side,
+            ):
+                FillReconciler._append_fill_log(st, {
+                    "id": fill_id,
+                    "order_id": oid,
+                    "symbol": symbol.upper(),
+                    "side": side,
+                    "qty": filled_qty,
+                    "price": round(fill_price, 2),
+                    "ordered_at": fill_time,
+                    "filled_at": fill_time,
+                    "at": fill_time,
+                    "source": "bot",
+                    "t_before": t_before,
+                    "t_after": float(st.get("T", 0.0)),
+                    "qty_after": int(st.get("qty", 0)),
+                    "avg_after": float(st.get("avg_price", 0.0)),
+                })
+            FillReconciler.untrack_order(st, oid)
+            return True, st, grad
+
+        if notify:
+            await self._notify(
+                format_order_not_filled(symbol, side, label, status),
+                html=True,
+            )
+        FillReconciler.untrack_order(st, oid)
+        return False, st, None
 
     async def execute_orders(
         self,
@@ -237,7 +344,8 @@ class JobExecutor:
         orders: list[dict],
         ref_price: float,
         *,
-        use_market: bool = True,
+        use_market: bool = False,
+        use_loc: bool = False,
         notify_per_order: bool = True,
         wait_fill: bool = True,
     ) -> dict:
@@ -246,21 +354,39 @@ class JobExecutor:
         submitted = filled = 0
         grad_msg = None
         is_dry = self._is_dry()
+        loc_two_phase = use_loc and wait_fill and not is_dry
 
+        pending_loc: list[tuple[dict, str]] = []
         for order in orders:
             work = dict(order)
             if not is_dry and ref_price > 0 and use_market:
                 work["price"] = round(ref_price, 2)
-            sub_ok, fill_ok, st, grad = await self._execute_one_order(
+            sub_ok, fill_ok, st, grad, oid = await self._execute_one_order(
                 symbol, work, ref_price, st,
-                use_market=use_market, notify=notify_per_order, wait_fill=wait_fill,
+                use_market=use_market,
+                use_loc=use_loc,
+                notify=notify_per_order,
+                wait_fill=wait_fill and not loc_two_phase,
             )
             if sub_ok:
                 submitted += 1
-            if fill_ok:
+            if loc_two_phase and sub_ok and oid:
+                pending_loc.append((work, oid))
+            elif fill_ok:
                 filled += 1
             if grad:
                 grad_msg = grad
+
+        if loc_two_phase:
+            for work, oid in pending_loc:
+                fill_ok, st, grad = await self._wait_loc_fill(
+                    symbol, work, oid, ref_price, st,
+                    notify=notify_per_order,
+                )
+                if fill_ok:
+                    filled += 1
+                if grad:
+                    grad_msg = grad
 
         self.app.state.save(symbol, st)
         if grad_msg:
@@ -312,8 +438,11 @@ class JobExecutor:
         filtered = filter_orders_for_phase(plan, phase)
         is_dry = self._is_dry()
         if phase in _LOC_PHASES:
-            gated = gate_orders_by_close_price(filtered, 0.0 if is_dry else price)
-            orders = gated["buy_orders"] + gated["sell_orders"]
+            if is_dry:
+                gated = gate_orders_by_close_price(filtered, price)
+                orders = gated["buy_orders"] + gated["sell_orders"]
+            else:
+                orders = filtered["buy_orders"] + filtered["sell_orders"]
         else:
             orders = []
         if not orders:
@@ -324,7 +453,7 @@ class JobExecutor:
             }
         result = await self.execute_orders(
             symbol, orders, price,
-            use_market=True,
+            use_loc=True,
             notify_per_order=notify_per_order,
             wait_fill=True,
         )

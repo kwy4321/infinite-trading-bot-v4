@@ -1,7 +1,8 @@
-"""LOC 대체 — 미국 장 마감(16:00 ET) 직전 지정가·시장가 주문.
+"""미국 장 마감 LOC — 토스 Open API LIMIT + CLS.
 
-토스 Open API에는 LOC가 없어, 장 마감 직전 종가 근사가로 조건을 판정한 뒤 체결한다.
-매수·쿼터매도·익절매도 모두 같은 시각(한국 새벽, 미국 종가)에만 제출한다.
+LIVE: 계획된 지정가로 CLS 주문 제출, 종가 경매에서 조건 충족 시 체결.
+DRY_RUN: 종가 근사가로 gate_orders_by_close_price 시뮬레이션.
+매수·쿼터매도·익절매도 모두 같은 시각(한국 새벽, 미국 종가)에 제출한다.
 """
 
 from enum import Enum
@@ -37,7 +38,7 @@ def filter_orders_for_phase(plan: dict, phase: JobPhase) -> dict:
 
 
 def gate_orders_by_close_price(filtered: dict, price: float) -> dict:
-    """종가 근사가(price)로 LOC — 조건 맞는 주문만 통과."""
+    """DRY_RUN용 — 종가 근사가(price)로 LOC 조건 시뮬레이션."""
     if price <= 0:
         return {
             "buy_orders": list(filtered.get("buy_orders", [])),

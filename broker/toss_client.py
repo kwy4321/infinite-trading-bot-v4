@@ -245,7 +245,7 @@ class TossClient:
     def place_limit_order(self, symbol: str, side: str, price: float, qty: int) -> dict:
         client_order_id = str(uuid.uuid4())
         if self.dry_run:
-            logger.info("[DRY_RUN] LOC대체 LIMIT %s %s %s @ %s", side, qty, symbol, price)
+            logger.info("[DRY_RUN] LIMIT DAY %s %s %s @ %s", side, qty, symbol, price)
             return {"order_id": f"dry-{client_order_id[:8]}", "client_order_id": client_order_id}
         body = {
             "symbol": symbol.upper(),
@@ -260,8 +260,27 @@ class TossClient:
         self._invalidate_holdings_cache()
         return self._parse_order_response(data)
 
+    def place_loc_order(self, symbol: str, side: str, price: float, qty: int) -> dict:
+        """LOC — 미국 종가 지정가 (orderType=LIMIT, timeInForce=CLS)."""
+        client_order_id = str(uuid.uuid4())
+        if self.dry_run:
+            logger.info("[DRY_RUN] LOC %s %s %s @ %s", side, qty, symbol, price)
+            return {"order_id": f"dry-{client_order_id[:8]}", "client_order_id": client_order_id}
+        body = {
+            "symbol": symbol.upper(),
+            "side": side.upper(),
+            "orderType": "LIMIT",
+            "timeInForce": "CLS",
+            "quantity": qty,
+            "price": str(round(price, 2)),
+            "clientOrderId": client_order_id,
+        }
+        data = self._request("POST", "/api/v1/orders", "ORDER", account=True, json=body)
+        self._invalidate_holdings_cache()
+        return self._parse_order_response(data)
+
     def place_market_order(self, symbol: str, side: str, qty: int) -> dict:
-        """시장가 주문 — 장 마감 LOC 흉내. order_id 반환."""
+        """시장가 주문. order_id 반환."""
         client_order_id = str(uuid.uuid4())
         if self.dry_run:
             logger.info("[DRY_RUN] MARKET %s %s %s", side, qty, symbol)

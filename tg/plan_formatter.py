@@ -95,7 +95,7 @@ def _format_order_lines(orders: list[dict], plan: dict, side: str) -> list[str]:
     total = sum(_order_est_usd(o) for o in orders)
     lines = [
         "",
-        f"{icon} {title} {len(orders)}건  ·  {dim('합계')} {code(f'${total:,.2f}')}",
+        f"{icon} {title} {len(orders)}건  ·  {dim('LOC')}  ·  {dim('합계')} {code(f'${total:,.2f}')}",
     ]
     for idx, o in enumerate(orders, 1):
         label = _short_label(o.get("desc", ""))
@@ -178,7 +178,7 @@ def format_plans(app: App, symbols: list[str], premium: int) -> str:
     blocks = [
         section("오늘 주문계획", "📋"),
         dim(f"{today} KST · 미국 거래일 {us_close_date}"),
-        dim("※ 계획만 표시 · 실제 주문은 미국 종가 직전(한국 새벽)"),
+        dim("※ 종가 LOC 매매 계획 · 실제 주문은 미국 종가(한국 새벽)에 LIMIT+CLS로 제출"),
         "",
     ]
     if not symbols:
@@ -194,8 +194,8 @@ def format_plans(app: App, symbols: list[str], premium: int) -> str:
             )
     cards = [format_plan_block(app, symbol, premium) for symbol in symbols]
     blocks.append("\n\n".join(cards))
+    blocks.append("")
+    blocks.append(dim("🌙 종가 LOC 자동 실행 — 조건 충족 시에만 체결 (미충족 시 미체결)"))
     if skip_notes:
-        blocks.append("")
-        blocks.append(dim("종가 LOC 자동 실행"))
         blocks.extend(skip_notes)
     return "\n".join(blocks)

@@ -677,18 +677,22 @@ class TelegramHandler:
             )
             return
         ref = float(pos["current_price"] or 0)
-        from strategy.order_planner import gate_orders_by_close_price
-        gated = gate_orders_by_close_price(
-            {"buy_orders": plan.get("buy_orders", []), "sell_orders": plan.get("sell_orders", [])},
-            ref,
-        )
-        orders = gated["buy_orders"] + gated["sell_orders"]
-        if not orders:
-            await context.bot.send_message(chat_id, f"[{symbol}] 종가 기준 체결 조건 없음")
-            return
+        is_dry = self.executor._is_dry()
+        if is_dry:
+            from strategy.order_planner import gate_orders_by_close_price
+            gated = gate_orders_by_close_price(
+                {"buy_orders": plan.get("buy_orders", []), "sell_orders": plan.get("sell_orders", [])},
+                ref,
+            )
+            orders = gated["buy_orders"] + gated["sell_orders"]
+            if not orders:
+                await context.bot.send_message(chat_id, f"[{symbol}] 종가 기준 체결 조건 없음")
+                return
+        else:
+            orders = plan.get("buy_orders", []) + plan.get("sell_orders", [])
         try:
             result = await self.executor.execute_orders(
-                symbol, orders, ref, use_market=True, notify_per_order=True, wait_fill=True,
+                symbol, orders, ref, use_loc=True, notify_per_order=True, wait_fill=True,
             )
         except Exception as e:
             logger.exception("Manual order failed")

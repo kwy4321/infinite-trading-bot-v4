@@ -32,7 +32,7 @@ def _lead_time(close_hour: int, close_minute: int) -> datetime.time:
 
 
 def _register_jobs(app_tg, executor: JobExecutor):
-    """Register KST daily jobs — LOC orders at US close only; plan at US open."""
+    """Register KST daily jobs — LOC (LIMIT+CLS) at US close; plan at US open."""
 
     async def job3_summer(ctx):
         if not _is_us_summer():

@@ -1,8 +1,8 @@
 """미국 정규장 거래일(ET) 기준 — 당일 이미 체결됐는지 판별.
 
-저녁(22:30 KST) 주문계획과 새벽(05:00 KST) 종가 LOC 실행을 구분한다.
+저녁(18:00 KST) 프리마켓 LOC 접수와 같은 미국 거래일 중복 방지.
 - 계획: 알림만 — 스킵하지 않음
-- LOC 실행: target US date에 체결 이력이 있으면 주문 생략
+- LOC 접수: target US date에 체결 이력이 있으면 주문 생략
 """
 
 from __future__ import annotations

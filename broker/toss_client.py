@@ -648,6 +648,30 @@ class TossClient:
             logger.exception("US market calendar check failed")
             return False, target_date, False
 
+    def is_us_loc_session_now(self) -> bool:
+        """프리마켓·정규장 — LOC(CLS) 접수 가능 구간."""
+        if self.dry_run:
+            return True
+        cal = self._get_us_market_calendar_cached()
+        day = cal.get("today") or {}
+        if not day.get("regularMarket"):
+            return False
+        now_kst = datetime.datetime.now(KST)
+        for session in (day.get("preMarket"), day.get("regularMarket")):
+            if self._in_session(now_kst, session):
+                return True
+        return False
+
+    def is_us_regular_session_now(self) -> bool:
+        """미국 정규장 시간."""
+        if self.dry_run:
+            return True
+        cal = self._get_us_market_calendar_cached()
+        day = cal.get("today") or {}
+        if not day.get("regularMarket"):
+            return False
+        return self._in_session(datetime.datetime.now(KST), day.get("regularMarket"))
+
     def is_us_market_open_today(self) -> bool:
         """대시보드용 — 지금 시각 기준 다음/당일 미국 정규장 개장 여부."""
         now = datetime.datetime.now(KST)

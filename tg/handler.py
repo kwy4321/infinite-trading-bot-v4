@@ -49,9 +49,9 @@ from tg.ui import DIVIDER, badge_on, code, quote, row, section, usd
 logger = logging.getLogger(__name__)
 
 JOB_LABELS = {
-    "job1": "종가 LOC (job3와 동일)",
+    "job1": "프리장 LOC (job3와 동일)",
     "job2": "(미사용)",
-    "job3": "종가 LOC (매수·매도)",
+    "job3": "프리장 LOC (매수·매도 CLS 접수)",
     "job4": "오늘 마무리",
     "briefing": "아침 브리핑",
     "morning_briefing": "아침 브리핑",
@@ -661,11 +661,12 @@ class TelegramHandler:
         if not orders:
             await context.bot.send_message(chat_id, f"[{symbol}] 주문 없음")
             return
-        if not JobExecutor._in_close_order_window():
+        is_live = self.app.settings.has_toss and not self.app.settings.dry_run
+        if is_live and not self.app.broker.is_us_loc_session_now():
             await context.bot.send_message(
                 chat_id,
-                "⏭️ 지금은 종가 주문 시간이 아니에요. "
-                "자동 주문은 미국 종가 직전(한국 새벽)에만 들어갑니다.",
+                "⏭️ 지금은 미국 프리마켓·정규장 시간이 아니에요. "
+                "LOC(CLS)는 프리장(18:00 KST) 또는 장중에 접수할 수 있어요.",
             )
             return
         target = TossClient.target_us_date_for_ny_job()
@@ -673,21 +674,29 @@ class TelegramHandler:
             await context.bot.send_message(
                 chat_id,
                 f"⏭️ [{symbol}] {target} 미국 거래일 — "
-                f"이미 체결됐어요. 종가 주문은 스킵합니다.",
+                f"이미 체결됐어요. LOC 접수는 스킵합니다.",
             )
             return
         ref = float(pos["current_price"] or 0)
-        from strategy.order_planner import prepare_loc_orders
-        orders = prepare_loc_orders(
-            {"buy_orders": plan.get("buy_orders", []), "sell_orders": plan.get("sell_orders", [])},
-            ref,
-        )
+        from strategy.order_planner import prepare_loc_submit_orders
+        filtered = {
+            "buy_orders": plan.get("buy_orders", []),
+            "sell_orders": plan.get("sell_orders", []),
+        }
+        if is_live:
+            orders = prepare_loc_submit_orders(filtered, plan)
+            wait_fill = False
+        else:
+            from strategy.order_planner import prepare_loc_orders
+            orders = prepare_loc_orders(filtered, ref)
+            wait_fill = True
         if not orders:
-            await context.bot.send_message(chat_id, f"[{symbol}] 종가 기준 체결 조건 없음")
+            await context.bot.send_message(chat_id, f"[{symbol}] 접수할 LOC 주문 없음")
             return
         try:
             result = await self.executor.execute_orders(
-                symbol, orders, ref, use_loc=True, notify_per_order=True, wait_fill=True,
+                symbol, orders, ref, use_loc=True,
+                notify_per_order=True, wait_fill=wait_fill,
             )
         except Exception as e:
             logger.exception("Manual order failed")

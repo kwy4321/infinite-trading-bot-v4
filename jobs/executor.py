@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, time, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from app import App
 from broker.toss_client import TossClient
 from strategy.order_planner import (
-    CLOSE_LEAD_SECONDS,
     JobPhase,
     filter_orders_for_phase,
     prepare_loc_orders,
+    prepare_loc_submit_orders,
 )
 from strategy.fill_reconciler import FillReconciler
 from strategy.session_fill import (
@@ -21,9 +21,9 @@ from strategy.session_fill import (
     has_us_session_fill_in_state,
 )
 from tg.notifications import (
-    format_market_close_report,
-    format_market_close_start,
     format_market_open,
+    format_market_open_report,
+    format_market_open_start,
     format_order_filled,
     format_order_not_filled,
     format_order_submitted,
@@ -33,7 +33,6 @@ from tg.ui import dim
 
 logger = logging.getLogger(__name__)
 KST = ZoneInfo("Asia/Seoul")
-NY = ZoneInfo("America/New_York")
 _LOC_PHASES = (JobPhase.JOB1_LOC_CLOSE, JobPhase.JOB3_LOC_CLOSE)
 
 
@@ -73,17 +72,15 @@ class JobExecutor:
                 logger.exception("broker session fill check failed %s", symbol)
         return False
 
-    @staticmethod
-    def _in_close_order_window(kst_now: datetime | None = None) -> bool:
-        """자동 주문 허용 — 미국 종가 직전 ±3분만 (재시작·수동 오주문 방지)."""
-        now = kst_now or datetime.now(KST)
-        is_summer = now.astimezone(NY).dst() != timedelta(0)
-        close_h, close_m = (5, 0) if is_summer else (6, 0)
-        scheduled = datetime(
-            now.year, now.month, now.day, close_h, close_m, 0, tzinfo=KST,
-        ) - timedelta(seconds=CLOSE_LEAD_SECONDS)
-        margin = timedelta(minutes=3)
-        return scheduled - margin <= now <= scheduled + margin
+    def _can_submit_loc_now(self, *, force: bool = False) -> bool:
+        """LOC(CLS) 접수 — 미국 프리마켓·정규장."""
+        if force or self._is_dry():
+            return True
+        try:
+            return self.app.broker.is_us_loc_session_now()
+        except Exception:
+            logger.exception("US LOC session check failed")
+            return False
 
     async def _execute_one_order(
         self,
@@ -414,6 +411,7 @@ class JobExecutor:
         *,
         notify_per_order: bool = True,
         force: bool = False,
+        submit_at_open: bool = False,
     ) -> dict:
         if premium is None:
             premium = self.app.runtime.premium_default()
@@ -428,7 +426,7 @@ class JobExecutor:
                     "skipped": True,
                     "line": (
                         f"⏭️ [{symbol}] {us_date} 미국 거래일 — "
-                        f"이미 체결됨, 종가 주문 스킵"
+                        f"이미 체결됨, LOC 접수 스킵"
                     ),
                     "grad_msg": None,
                 }
@@ -441,8 +439,13 @@ class JobExecutor:
         )
         filtered = filter_orders_for_phase(plan, phase)
         is_dry = self._is_dry()
+        wait_fill = True
         if phase in _LOC_PHASES:
-            orders = prepare_loc_orders(filtered, price)
+            if submit_at_open and not is_dry:
+                orders = prepare_loc_submit_orders(filtered, plan)
+                wait_fill = False
+            else:
+                orders = prepare_loc_orders(filtered, price)
         else:
             orders = []
         if not orders:
@@ -455,7 +458,7 @@ class JobExecutor:
             symbol, orders, price,
             use_loc=True,
             notify_per_order=notify_per_order,
-            wait_fill=True,
+            wait_fill=wait_fill,
         )
         result["line"] = (
             f"✅ [{symbol}] {phase.value} "
@@ -472,15 +475,17 @@ class JobExecutor:
             return TossClient.target_us_date_for_morning_job(now)
         return TossClient.target_us_date_for_ny_job(now)
 
-    def _phase_label(self, phase: JobPhase) -> str:
+    def _phase_label(self, phase: JobPhase, *, submit_at_open: bool = False) -> str:
+        if phase in _LOC_PHASES:
+            return "프리장 LOC" if submit_at_open else "종가 LOC"
         return {
-            JobPhase.JOB1_LOC_CLOSE: "종가 LOC",
-            JobPhase.JOB3_LOC_CLOSE: "종가 LOC",
             JobPhase.JOB2_SETTLE: "체결정리",
         }.get(phase, phase.value)
 
     async def run_phase(
-        self, phase: JobPhase, premium: int | None = None, *, force: bool = False,
+        self, phase: JobPhase, premium: int | None = None, *,
+        force: bool = False,
+        submit_at_open: bool = False,
     ) -> None:
         if premium is None:
             premium = self.app.runtime.premium_default()
@@ -489,8 +494,14 @@ class JobExecutor:
             await self._notify("⏸️ 자동매매가 정지 상태예요. /resume 로 재개하세요.")
             return
 
-        if phase in _LOC_PHASES and not force and not self._in_close_order_window():
-            logger.info("LOC run_phase skipped — outside US close window (no morning orders)")
+        if phase in _LOC_PHASES and not force and not self._can_submit_loc_now():
+            logger.info("LOC run_phase skipped — outside US premarket/regular session")
+            if submit_at_open:
+                await self._notify(
+                    "⚠️ 미국 프리마켓·정규장 시간이 아니어서 LOC 접수를 건너뛰었어요. "
+                    f"{dim('프리장(18:00 KST) 또는 장중 /job3 로 재시도하세요.')}",
+                    html=True,
+                )
             return
 
         if phase != JobPhase.JOB4_REPORT:
@@ -501,7 +512,7 @@ class JobExecutor:
                 logger.exception("market open check failed")
                 await self._notify(f"🚨 장 개장 확인 실패: {e}")
                 return
-            label = self._phase_label(phase)
+            label = self._phase_label(phase, submit_at_open=submit_at_open)
             if not cal_ok:
                 await self._notify(
                     f"⚠️ 미국 휴장 확인 실패 — {label} 주문 스킵\n"
@@ -511,8 +522,8 @@ class JobExecutor:
                 return
             if not open_:
                 hint = ""
-                if phase in _LOC_PHASES:
-                    hint = "\n(한국 새벽 — 미국 정규장 종가 직전)"
+                if phase in _LOC_PHASES and submit_at_open:
+                    hint = "\n(미국 프리마켓·정규장 개장일에만 CLS 접수)"
                 await self._notify(
                     f"📅 <b>{us_date}</b> 미국 정규장 휴장 — {label} Job 스킵 (주문 없음){hint}",
                     html=True,
@@ -527,9 +538,16 @@ class JobExecutor:
         is_loc = phase in _LOC_PHASES
         if is_loc:
             now = datetime.now(KST).strftime("%H:%M:%S")
-            await self._notify(
-                format_market_close_start(now, len(symbols)), html=True,
-            )
+            if submit_at_open:
+                await self._notify(
+                    format_market_open_start(now, len(symbols)), html=True,
+                )
+            else:
+                await self._notify(
+                    f"🔔 <b>LOC 실행</b>  <i>{now} KST</i>\n"
+                    f"종목 {len(symbols)}개",
+                    html=True,
+                )
 
         lines = []
         total_sub = total_fill = total_orders = 0
@@ -539,6 +557,7 @@ class JobExecutor:
                     sym, phase, premium,
                     notify_per_order=not is_loc,
                     force=force,
+                    submit_at_open=submit_at_open,
                 )
                 lines.append(result["line"])
                 total_sub += result["submitted"]
@@ -552,12 +571,15 @@ class JobExecutor:
             target = self._target_us_date_for_phase(phase)
             self.app.runtime.mark_job3_run(target)
             now = datetime.now(KST).strftime("%H:%M:%S")
-            await self._notify(
-                format_market_close_report(
-                    now, lines, total_sub, total_orders, total_fill,
-                ),
-                html=True,
-            )
+            if submit_at_open:
+                await self._notify(
+                    format_market_open_report(
+                        now, lines, total_sub, total_orders,
+                    ),
+                    html=True,
+                )
+            else:
+                await self._notify("\n".join(lines), html=True)
         elif lines:
             await self._notify("\n".join(lines))
 
@@ -571,7 +593,7 @@ class JobExecutor:
             await self._notify(f"🚨 아침 브리핑 생성 실패: {e}")
 
     async def run_market_open_plan(self) -> None:
-        """미국 장 시작 시각에 오늘의 주문계획을 자동 전송 (개장일·가동 상태에만)."""
+        """18:00 KST 프리마켓 — 오늘 주문계획 전송 + CLS(LOC) 접수."""
         if self.app.runtime.is_paused():
             return
         try:
@@ -595,6 +617,33 @@ class JobExecutor:
         now = datetime.now(KST).strftime("%H:%M")
         await self._notify(format_market_open(now), html=True)
         await self._notify(text, html=True)
+
+        target = TossClient.target_us_date_for_ny_job()
+        if self.app.runtime.last_job3_us_date() == target:
+            logger.info("market open LOC skipped — already submitted for %s", target)
+            return
+
+        symbols_filled = []
+        for sym in symbols:
+            if await self._already_traded_for_us_session(sym, target):
+                symbols_filled.append(sym)
+        if symbols and len(symbols_filled) == len(symbols):
+            logger.info(
+                "market open LOC skipped — all symbols already filled for %s", target,
+            )
+            self.app.runtime.mark_job3_run(target)
+            return
+
+        if not self._can_submit_loc_now():
+            logger.warning("premarket LOC skipped — not in US premarket/regular session")
+            await self._notify(
+                "⚠️ 프리마켓 접수 시간 확인 실패 — 18:00 KST 또는 장중 /job3 로 재시도하세요.",
+            )
+            return
+
+        await self.run_phase(
+            JobPhase.JOB3_LOC_CLOSE, premium, submit_at_open=True,
+        )
 
     def sync_cycle_from_broker(self, symbol: str, premium: int | None = None) -> dict:
         """토스 실계좌·체결 내역으로 T·회차·평단·주수 동기화."""
@@ -735,11 +784,16 @@ class JobExecutor:
         await self.run_job3(premium)
 
     async def run_job2(self, **_):
-        await self._notify("job2는 사용하지 않아요. 종가 LOC 주문은 /job3 입니다.")
+        await self._notify("job2는 사용하지 않아요. LOC 접수는 프리장(18:00) 또는 /job3 입니다.")
 
     async def run_job3(self, premium: int | None = None, *, scheduled: bool = True, **_):
-        if not self._in_close_order_window():
-            logger.info("job3 skipped — outside US close window")
+        if not self._can_submit_loc_now(force=not scheduled):
+            logger.info("job3 skipped — outside US premarket/regular session")
+            if not scheduled:
+                await self._notify(
+                    "⏭️ 지금은 미국 프리마켓·정규장 시간이 아니에요. "
+                    "LOC(CLS)는 프리장(18:00 KST) 또는 장중에 접수할 수 있어요.",
+                )
             return
         target = self._target_us_date_for_phase(JobPhase.JOB3_LOC_CLOSE)
         if scheduled and self.app.runtime.last_job3_us_date() == target:
@@ -757,15 +811,17 @@ class JobExecutor:
                     target,
                 )
                 await self._notify(
-                    f"⏭️ <b>종가 LOC 스킵</b>\n"
+                    f"⏭️ <b>LOC 접수 스킵</b>\n"
                     f"📅 미국 거래일 <b>{target}</b> — 이미 체결됨\n"
-                    f"{dim('(저녁 주문계획과 별개 · 체결된 날은 새벽 주문 없음)')}\n"
+                    f"{dim('(저녁 자동 접수와 별개 · 체결된 날은 재접수 없음)')}\n"
                     + "\n".join(f"· {s}" for s in skipped),
                     html=True,
                 )
                 self.app.runtime.mark_job3_run(target)
                 return
-        await self.run_phase(JobPhase.JOB3_LOC_CLOSE, premium)
+        await self.run_phase(
+            JobPhase.JOB3_LOC_CLOSE, premium, submit_at_open=True, force=not scheduled,
+        )
 
     async def run_job4(self, **_):
         await self.run_cycle_sync(notify=True)

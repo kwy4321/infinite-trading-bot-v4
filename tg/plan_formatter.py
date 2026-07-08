@@ -178,7 +178,7 @@ def format_plans(app: App, symbols: list[str], premium: int) -> str:
     blocks = [
         section("오늘 주문계획", "📋"),
         dim(f"{today} KST · 미국 거래일 {us_close_date}"),
-        dim("※ 종가 LOC 매매 계획 · 실제 주문은 미국 종가(한국 새벽)에 LIMIT+CLS로 제출"),
+        dim("※ 종가 LOC 매매 계획 · 프리마켓 18:00 KST LIMIT+CLS 접수 · 체결은 종가 경매"),
         "",
     ]
     if not symbols:
@@ -190,12 +190,12 @@ def format_plans(app: App, symbols: list[str], premium: int) -> str:
         if has_us_session_fill_in_state(st, symbol, us_close_date, app.cycles):
             skip_notes.append(
                 f"⏭️ {symbol_card(symbol)} — {us_close_date} 미국장 이미 체결 "
-                f"(내일 새벽 자동 주문 스킵)"
+                f"(오늘 LOC 자동 접수 스킵)"
             )
     cards = [format_plan_block(app, symbol, premium) for symbol in symbols]
     blocks.append("\n\n".join(cards))
     blocks.append("")
-    blocks.append(dim("🌙 종가 LOC 자동 실행 — 조건 충족 시에만 체결 (미충족 시 미체결)"))
+    blocks.append(dim("🌙 종가 LOC — 조건 충족 시에만 체결 (미충족 시 미체결 · 새벽 sync 확인)"))
     if skip_notes:
         blocks.extend(skip_notes)
     return "\n".join(blocks)

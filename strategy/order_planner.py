@@ -1,29 +1,23 @@
 """미국 장 마감 LOC — 토스 Open API LIMIT + CLS.
 
-LIVE: 계획된 지정가로 CLS 주문 제출, 종가 경매에서 조건 충족 시 체결.
-DRY_RUN: 종가 근사가로 gate_orders_by_close_price 시뮬레이션.
-매수·쿼터매도·익절매도 모두 같은 시각(한국 새벽, 미국 종가)에 제출한다.
+프리마켓(한국 18:00 KST)에 CLS 주문 접수 → 종가 경매에서 조건 충족 시 체결.
 """
 
 from enum import Enum
-
-# 장 마감 몇 초 전에 주문을 넣을지 (종가 근사 스냅샷 시점).
-CLOSE_LEAD_SECONDS = 30
 
 
 class JobPhase(str, Enum):
     JOB1_LOC_CLOSE = "job1"   # /job1 수동 — job3와 동일
     JOB2_SETTLE = "job2"      # 예약 (미사용)
-    JOB3_LOC_CLOSE = "job3"   # 장 마감 LOC (매수+매도 전체)
+    JOB3_LOC_CLOSE = "job3"   # 장중 CLS 접수 (매수+매도)
     JOB4_REPORT = "job4"
 
 
-# KST = US 동부 16:00 장 마감 직전 (서머 05:00 / 윈터 06:00)
+# KST 일정 — LOC 접수는 프리마켓 18:00, 체결 반영은 새벽 job4
 JOB_SCHEDULE_KST = {
-    JobPhase.JOB3_LOC_CLOSE: {"summer": (5, 0), "winter": (6, 0)},
     JobPhase.JOB4_REPORT: {"summer": (6, 15), "winter": (6, 15)},
     "morning_briefing": {"summer": (7, 0), "winter": (7, 0)},
-    "market_open_plan": {"summer": (22, 30), "winter": (23, 30)},
+    "premarket_loc": {"summer": (18, 0), "winter": (18, 0)},
 }
 
 
@@ -56,7 +50,29 @@ def resolve_loc_side_conflict(gated: dict) -> dict:
 
 
 def prepare_loc_orders(filtered: dict, close_price: float) -> list[dict]:
-    """종가 스냅샷 기준 LOC 제출 목록 (LIVE·DRY_RUN 공통)."""
+    """DRY_RUN·종가 시뮬 — 종가 스냅샷으로 어떤 LOC가 체결됐을지 판정."""
     gated = gate_orders_by_close_price(filtered, close_price)
     picked = resolve_loc_side_conflict(gated)
+    return picked["buy_orders"] + picked["sell_orders"]
+
+
+def pick_loc_submit_side(filtered: dict, plan: dict) -> dict:
+    """CLS 접수 시 매수·매도 동시 불가 — 전략상 한쪽만 제출."""
+    buys = list(filtered.get("buy_orders") or [])
+    sells = list(filtered.get("sell_orders") or [])
+    if not buys or not sells:
+        return {"buy_orders": buys, "sell_orders": sells}
+    mode = str(plan.get("mode") or "")
+    cur = float(plan.get("current_price") or 0)
+    star = float(plan.get("star_price") or 0)
+    if mode == "REVERSE" and sells:
+        return {"buy_orders": [], "sell_orders": sells}
+    if star > 0 and cur >= star and sells:
+        return {"buy_orders": [], "sell_orders": sells}
+    return {"buy_orders": buys, "sell_orders": []}
+
+
+def prepare_loc_submit_orders(filtered: dict, plan: dict) -> list[dict]:
+    """장중 CLS 접수용 — 계획 지정가 그대로, 종가는 거래소가 판정."""
+    picked = pick_loc_submit_side(filtered, plan)
     return picked["buy_orders"] + picked["sell_orders"]

@@ -38,12 +38,25 @@ def filter_orders_for_phase(plan: dict, phase: JobPhase) -> dict:
 
 
 def gate_orders_by_close_price(filtered: dict, price: float) -> dict:
-    """DRY_RUN용 — 종가 근사가(price)로 LOC 조건 시뮬레이션."""
+    """종가 근사가(price)로 LOC 조건 판정 — 매수 limit 이상·매도 limit 이하일 때 통과."""
     if price <= 0:
-        return {
-            "buy_orders": list(filtered.get("buy_orders", [])),
-            "sell_orders": list(filtered.get("sell_orders", [])),
-        }
+        return {"buy_orders": [], "sell_orders": []}
     buys = [o for o in filtered.get("buy_orders", []) if price <= o["price"]]
     sells = [o for o in filtered.get("sell_orders", []) if price >= o["price"]]
     return {"buy_orders": buys, "sell_orders": sells}
+
+
+def resolve_loc_side_conflict(gated: dict) -> dict:
+    """매수·매도 LOC가 동시에 조건 충족 시 매도 우선 — 토스 opposite-pending(422) 방지."""
+    buys = list(gated.get("buy_orders") or [])
+    sells = list(gated.get("sell_orders") or [])
+    if buys and sells:
+        return {"buy_orders": [], "sell_orders": sells}
+    return {"buy_orders": buys, "sell_orders": sells}
+
+
+def prepare_loc_orders(filtered: dict, close_price: float) -> list[dict]:
+    """종가 스냅샷 기준 LOC 제출 목록 (LIVE·DRY_RUN 공통)."""
+    gated = gate_orders_by_close_price(filtered, close_price)
+    picked = resolve_loc_side_conflict(gated)
+    return picked["buy_orders"] + picked["sell_orders"]

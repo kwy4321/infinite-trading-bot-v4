@@ -13,7 +13,7 @@ from strategy.order_planner import (
     CLOSE_LEAD_SECONDS,
     JobPhase,
     filter_orders_for_phase,
-    gate_orders_by_close_price,
+    prepare_loc_orders,
 )
 from strategy.fill_reconciler import FillReconciler
 from strategy.session_fill import (
@@ -236,7 +236,11 @@ class JobExecutor:
             except Exception as e:
                 logger.exception("Order failed %s attempt %s", symbol, attempt + 1)
                 if attempt == self._retry - 1:
-                    await self._notify(f"🚨 [{symbol}] 주문 실패: {e}")
+                    detail = str(e)
+                    resp = getattr(getattr(e, "response", None), "text", None)
+                    if resp:
+                        detail = f"{detail} — {resp[:240]}"
+                    await self._notify(f"🚨 [{symbol}] 주문 실패: {detail}")
             await asyncio.sleep(0.3)
         return False, False, st, None, ""
 
@@ -438,11 +442,7 @@ class JobExecutor:
         filtered = filter_orders_for_phase(plan, phase)
         is_dry = self._is_dry()
         if phase in _LOC_PHASES:
-            if is_dry:
-                gated = gate_orders_by_close_price(filtered, price)
-                orders = gated["buy_orders"] + gated["sell_orders"]
-            else:
-                orders = filtered["buy_orders"] + filtered["sell_orders"]
+            orders = prepare_loc_orders(filtered, price)
         else:
             orders = []
         if not orders:

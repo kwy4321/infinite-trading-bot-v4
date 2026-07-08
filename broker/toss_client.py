@@ -95,6 +95,12 @@ class TossClient:
             import time
             time.sleep(retry)
             return self._request(method, path, group, account, **kwargs)
+        if not res.ok:
+            try:
+                err = res.json()
+            except ValueError:
+                err = res.text
+            logger.error("Toss API %s %s failed (%s): %s", method, path, res.status_code, err)
         res.raise_for_status()
         return res.json()
 

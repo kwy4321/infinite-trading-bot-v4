@@ -16,6 +16,7 @@ from broker.rate_limiter import RateLimiter
 logger = logging.getLogger(__name__)
 KST = ZoneInfo("Asia/Seoul")
 NY = ZoneInfo("America/New_York")
+_FILLS_CACHE_MAX = 32
 
 
 def _money(val, currency: str = "usd") -> float:
@@ -203,7 +204,7 @@ class TossClient:
         return self._parse_order_detail(data)
 
     def wait_for_fill(
-        self, order_id: str, timeout_sec: float = 90.0, poll_sec: float = 0.5,
+        self, order_id: str, timeout_sec: float = 90.0, poll_sec: float = 1.0,
     ) -> dict:
         """주문 체결 대기 — 타임아웃 시 마지막 상태 반환."""
         if self.dry_run or not order_id:
@@ -395,8 +396,18 @@ class TossClient:
             "filled_at": filled_at or ordered_at,
         }
 
+    @staticmethod
+    def _fill_record_complete(fill: dict) -> bool:
+        return bool(
+            fill.get("order_id")
+            and float(fill.get("price") or 0) > 0
+            and (fill.get("ordered_at") or fill.get("filled_at"))
+        )
+
     def _enrich_fill_from_order(self, fill: dict, symbol: str | None = None) -> dict | None:
-        """단건 조회로 averageFilledPrice 확정 — CLOSED 목록의 지정가 오염 방지."""
+        """단건 조회로 averageFilledPrice 확정 — CLOSED에 체결가가 없을 때만."""
+        if self._fill_record_complete(fill):
+            return fill
         oid = str(fill.get("order_id") or "")
         if not oid:
             return fill
@@ -544,8 +555,14 @@ class TossClient:
                 enriched.append(item)
         fills = enriched
         fills.sort(key=lambda f: f["ordered_at"])
-        self._fills_cache[cache_key] = (now, list(fills))
+        self._store_fills_cache(cache_key, now, fills)
         return fills
+
+    def _store_fills_cache(self, key: str, at: float, fills: list[dict]) -> None:
+        if len(self._fills_cache) >= _FILLS_CACHE_MAX:
+            oldest = min(self._fills_cache, key=lambda k: self._fills_cache[k][0])
+            del self._fills_cache[oldest]
+        self._fills_cache[key] = (at, list(fills))
 
     @staticmethod
     def order_placed_timestamp(order: dict) -> str:

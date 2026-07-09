@@ -46,7 +46,7 @@ class FillReconciler:
 
         applied.extend(self._process_tracked_orders(symbol, st, premium))
         order_ids = self.collect_known_order_ids(self.app, symbol, st=st)
-        broker_applied, broker_fills_ok = self._process_broker_fills(
+        broker_applied, broker_fills_ok, broker_fills = self._process_broker_fills(
             symbol, st, premium, broker_qty, order_ids,
         )
         applied.extend(broker_applied)
@@ -78,7 +78,7 @@ class FillReconciler:
             self.app.state.save(symbol, st)
 
         self._refresh_fill_dates_from_closed_orders(
-            symbol, broker_qty, st=st, order_ids=order_ids,
+            symbol, broker_qty, st=st, order_ids=order_ids, fills=broker_fills,
         )
         warnings = self._build_reconcile_warnings(
             applied, st, broker_qty, broker_fills_ok,
@@ -136,7 +136,7 @@ class FillReconciler:
         premium: int,
         broker_qty: int,
         order_ids: list[str],
-    ) -> tuple[list[dict], bool]:
+    ) -> tuple[list[dict], bool, list[dict]]:
         """토스 CLOSED·단건 조회 체결을 먼저 반영 (추정 reconciler 전)."""
         applied: list[dict] = []
         try:
@@ -145,9 +145,9 @@ class FillReconciler:
             )
         except Exception:
             logger.exception("list_broker_fills failed %s", symbol)
-            return applied, False
+            return applied, False, []
         if not fills:
-            return applied, False
+            return applied, False, []
 
         state_qty = int(st.get("qty", 0))
         if state_qty == broker_qty:
@@ -155,7 +155,7 @@ class FillReconciler:
                 "broker fills found for %s but qty already matches (%d) — skip T re-apply",
                 symbol, broker_qty,
             )
-            return applied, True
+            return applied, True, fills
 
         position_fills = self.app.cycles.select_position_fills(fills, broker_qty)
         for raw in position_fills:
@@ -176,7 +176,7 @@ class FillReconciler:
             applied.append(self._apply_fill(symbol, st, fill, premium))
             if int(st.get("qty", 0)) == broker_qty:
                 break
-        return applied, True
+        return applied, True, fills
 
     def _needs_synthetic_reconcile(
         self, symbol: str, st: dict, broker_qty: int, broker_avg: float,
@@ -582,20 +582,21 @@ class FillReconciler:
         *,
         st: dict | None = None,
         order_ids: list[str] | None = None,
+        fills: list[dict] | None = None,
     ) -> int:
         """토스 CLOSED 주문 orderedAt으로 fill_log·trades 재구성."""
         if st is None:
             st = self.app.state.load(symbol)
         if order_ids is None:
             order_ids = self.collect_known_order_ids(self.app, symbol, st=st)
-        self.app.broker._invalidate_holdings_cache()
-        try:
-            fills = self.app.broker.list_broker_fills(
-                symbol, days=90, max_orders=200, extra_order_ids=order_ids,
-            )
-        except Exception:
-            logger.exception("refresh fill dates failed %s", symbol)
-            return 0
+        if fills is None:
+            try:
+                fills = self.app.broker.list_broker_fills(
+                    symbol, days=90, max_orders=200, extra_order_ids=order_ids,
+                )
+            except Exception:
+                logger.exception("refresh fill dates failed %s", symbol)
+                return 0
         if not fills:
             logger.warning(
                 "no broker fills for %s (known_order_ids=%d)",

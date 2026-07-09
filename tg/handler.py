@@ -602,6 +602,19 @@ class TelegramHandler:
             premium = self.app.runtime.premium_default()
             parts = []
             for sym in symbols:
+                st = self.app.state.load(sym)
+                if is_live and already_synced:
+                    try:
+                        pos = self.app.broker.get_holdings_item(sym)
+                        price = float(pos.get("current_price") or st.get("avg_price") or 0)
+                    except Exception:
+                        logger.exception("holdings fetch failed %s", sym)
+                        price = float(st.get("avg_price") or 0)
+                    parts.append(self.app.cycles.format_cycles_report(
+                        sym, st["qty"], st["avg_price"], price,
+                        fill_log=st.get("fill_log", []),
+                    ))
+                    continue
                 if is_live and not already_synced:
                     try:
                         await asyncio.to_thread(
@@ -618,7 +631,6 @@ class TelegramHandler:
                     order_ids = FillReconciler.collect_known_order_ids(
                         self.app, sym, st=st,
                     )
-                    self.app.broker._invalidate_holdings_cache()
                     broker_fills = self.app.broker.list_broker_fills(
                         sym, days=90, max_orders=200, extra_order_ids=order_ids,
                     )

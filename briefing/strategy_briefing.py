@@ -48,20 +48,22 @@ def format_strategy_briefing(app: App, session_date: str, *, session_label: str 
     """무매 현황 + 직전 종가 LOC 체결 요약."""
     symbols = app.runtime.active_symbols()
     label = session_label or session_date
-    lines = [section("무매 현황", "📊"), ""]
+    lines = [section("무매 현황", "♾️"), ""]
 
     if not symbols:
-        lines.append(quote(dim("거래 종목 없음 · ⚙️ 설정 → 📡 거래 종목")))
+        lines.append(quote(dim("거래 종목 없음 · 설정 → 거래 종목")))
         return "\n".join(lines)
 
     for sym in symbols:
         card = build_symbol_status_lines(app, sym)
         trades = _trades_for_session(app, sym, session_date)
         card.append("")
-        card.append(f"🌙 {dim(f'직전 종가 LOC · {label}')}")
+        card.append(dim(f"직전 종가 LOC · {label}"))
         if trades:
             for tr in trades:
-                card.append(f"  {CycleTracker.format_trade_line(sym, tr).strip()}")
+                card.append(
+                    f"  {CycleTracker.format_trade_line(sym, tr).strip()}"
+                )
         else:
             card.append(f"  {dim('체결 없음')}")
         lines.append(quote(*card))

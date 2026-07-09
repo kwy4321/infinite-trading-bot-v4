@@ -1,14 +1,10 @@
 """Telegram notification text — 장시작·장마감·주문 접수·체결."""
 
-from tg.ui import code, dim
+from tg.ui import code, dim, side_icon
 
 
 def _side_ko(side: str) -> str:
     return "매수" if str(side).upper() == "BUY" else "매도"
-
-
-def _side_icon(side: str) -> str:
-    return "🟢" if str(side).upper() == "BUY" else "🔴"
 
 
 def format_market_open(now_kst: str) -> str:
@@ -83,7 +79,7 @@ def format_order_submitted(
     oid = f"\n{dim('주문')} {code(order_id)}" if order_id else ""
     return (
         f"📥 <b>{symbol}</b> {_side_ko(side)} <b>접수</b>{tag}{kind}\n"
-        f"{_side_icon(side)} {label} · {code(f'{qty}주')}{oid}"
+        f"{side_icon(side)} {label} · {code(f'{qty}주')}{oid}"
     )
 
 
@@ -100,7 +96,7 @@ def format_order_filled(
     price_txt = code(f"${price:,.2f}") if price > 0 else code("—")
     return (
         f"✅ <b>{symbol}</b> {_side_ko(side)} <b>체결</b>{tag}\n"
-        f"{_side_icon(side)} {label} · {code(f'{qty:g}주')} @ {price_txt}"
+        f"{side_icon(side)} {label} · {code(f'{qty:g}주')} @ {price_txt}"
     )
 
 

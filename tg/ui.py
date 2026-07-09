@@ -24,6 +24,14 @@ MODE_KO = {
     "FORCE_ONE": "⚡ 강제1회",
 }
 
+MODE_BRIEF = {
+    "ENTRY": "진입",
+    "NORMAL_EARLY": "전반전",
+    "NORMAL_LATE": "후반전",
+    "REVERSE": "리버스",
+    "FORCE_ONE": "강제1회",
+}
+
 MARKET_STATUS_KO = {
     "regular": "🟢 장중",
     "premarket": "🟡 프리마켓",
@@ -43,7 +51,9 @@ def subsection(title: str) -> str:
     return f"<b>▸ {title}</b>"
 
 
-def mode_label(mode: str) -> str:
+def mode_label(mode: str, *, brief: bool = False) -> str:
+    if brief:
+        return MODE_BRIEF.get(mode, mode.replace("_", " "))
     return MODE_KO.get(mode, mode.replace("_", " "))
 
 
@@ -90,16 +100,36 @@ def pnl_dot(positive: bool) -> str:
     return "🟢" if positive else "🔴"
 
 
+def trend_arrow(positive: bool) -> str:
+    """지수·등락 — 브리핑 등 (pnl_dot와 구분)."""
+    return "▲" if positive else "▼"
+
+
+def side_icon(side: str, *, style: str = "arrow") -> str:
+    """매수/매도 표시. dot=🟢🔴, arrow=▲▼, text=한글만."""
+    s = str(side).upper()
+    if style == "arrow":
+        return "▲" if s == "BUY" else "▼"
+    if style == "text":
+        return ""
+    return "🟢" if s == "BUY" else "🔴"
+
+
 def pnl_line(usd: float, pct_val: float) -> str:
     pos = usd >= 0
     sign = "+" if usd >= 0 else ""
-    return f"{pnl_dot(pos)} {code(f'{sign}${usd:,.0f}')}  {pct(pct_val)}"
+    return f"{trend_arrow(pos)} {code(f'{sign}${usd:,.0f}')}  {pct(pct_val)}"
 
 
 def pnl_line_precise(usd: float, pct_val: float) -> str:
     pos = usd >= 0
     sign = "+" if usd >= 0 else ""
-    return f"{pnl_dot(pos)} {code(f'{sign}${usd:,.2f}')}  {pct(pct_val)}"
+    return f"{trend_arrow(pos)} {code(f'{sign}${usd:,.2f}')}  {pct(pct_val)}"
+
+
+def pnl_line_brief(usd: float, pct_val: float) -> str:
+    """pnl_line 별칭 (브리핑·호환)."""
+    return pnl_line(usd, pct_val)
 
 
 def row(emoji: str, label: str, value: str) -> str:
@@ -132,30 +162,30 @@ def badge_auto(paused: bool) -> str:
 
 def order_side(side: str) -> tuple[str, str]:
     if side.upper() == "BUY":
-        return "🟢", "매수"
-    return "🔴", "매도"
+        return "▲", "매수"
+    return "▼", "매도"
 
 
 def month_bar(positive: bool) -> str:
-    return "🟩" if positive else "🟥"
+    return trend_arrow(positive)
 
 
 def help_block() -> str:
     groups = [
-        ("📊 현황", [
-            (f"{code('/status')}", "📈 진행상황"),
+        ("♾️ 현황", [
+            (f"{code('/status')}", "무매 진행상황"),
             (f"{code('/balance')}", "💼 계좌현황"),
             (f"{code('/plan')}", "📋 오늘 주문계획"),
         ]),
         ("⚙️ 설정", [
             (f"{code('/setting')}", "💰 원금·분할·큰수매수"),
             (f"{code('/split')}", "📐 액면분할"),
-            (f"{code('/set_t')}", "🎯 T 값 조정"),
+            (f"{code('/set_t')}", "T 값 조정"),
             (f"{code('/token')}", "🔑 API 토큰 상태·갱신"),
         ]),
         ("📒 기록", [
             (f"{code('/dashboard')}", "📒 자산·손익 대시보드"),
-            (f"{code('/cycles')}", "📈 진행 회차 기록"),
+            (f"{code('/cycles')}", "♾️ 진행 회차 기록"),
             (f"{code('/sync')}", "🔄 실계좌 회차 동기화"),
             (f"{code('/history')}", "🎓 종료 기록"),
             (f"{code('/monthly')}", "📅 수익현황"),

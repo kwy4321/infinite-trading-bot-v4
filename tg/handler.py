@@ -44,7 +44,7 @@ from tg.keyboards import (
     MAIN_CYCLES,
 )
 from tg.sender import TelegramSender
-from tg.ui import DIVIDER, badge_on, code, quote, row, section, usd
+from tg.ui import DIVIDER, badge_on, code, quote, section, usd
 
 logger = logging.getLogger(__name__)
 
@@ -81,12 +81,12 @@ class TelegramHandler:
         return (
             f"{section('설정', '⚙️')}\n"
             + quote(
-                row("📡", "거래 종목", code(active_str + edit_hint)),
-                row("💰", "원금", usd(st["principal"], decimals=0)),
-                row("🍰", "분할", code(str(st["split_count"]))),
-                row("📈", "큰수매수", code(f"T=0 +{self.app.runtime.premium_default()}%")),
-                row("🎯", "목표수익률", code(f"+{tp:g}%")),
-                row("⚡", "강제1회", badge_on(st.get("force_one", False))),
+                f"{dim('거래 종목')}  {code(active_str + edit_hint)}",
+                f"{dim('원금')}  {usd(st['principal'], decimals=0)}",
+                f"{dim('분할')}  {code(str(st['split_count']))}",
+                f"{dim('큰수매수')}  {code(f'T=0 +{self.app.runtime.premium_default()}%')}",
+                f"{dim('목표수익률')}  {code(f'+{tp:g}%')}",
+                f"{dim('강제1회')}  {badge_on(st.get('force_one', False))}",
             )
         )
 
@@ -243,7 +243,7 @@ class TelegramHandler:
     async def cmd_split(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
             return await self._deny(update)
-        text = "📐 액면분할  │  종목 선택"
+        text = "액면분할  │  종목 선택"
         markup = symbol_picker("SPLIT_PICK")
         target = update.callback_query.message if update.callback_query else update.message
         await target.reply_text(text, reply_markup=markup)
@@ -402,7 +402,7 @@ class TelegramHandler:
 
         if data == "set_premium":
             await query.edit_message_text(
-                "📈 큰수매수 할증 (T=0 첫 매수만, 현재가 대비):",
+                "큰수매수 할증 (T=0 첫 매수만, 현재가 대비):",
                 reply_markup=premium_keyboard(),
             )
             return
@@ -420,7 +420,7 @@ class TelegramHandler:
 
         if data == "set_takeprofit":
             await query.edit_message_text(
-                "🎯 목표 수익률 (평단가 대비 익절 LOC 기준):",
+                "목표 수익률 (평단가 대비 익절 LOC 기준):",
                 reply_markup=take_profit_keyboard(),
             )
             return
@@ -483,7 +483,7 @@ class TelegramHandler:
         if data == "set_seed":
             context.user_data["awaiting"] = data
             context.user_data["awaiting_symbol"] = self._symbol(context)
-            await query.edit_message_text("💰 원금(무한매수 기준금)을 달러로 입력하세요.")
+            await query.edit_message_text("원금(무한매수 기준금)을 달러로 입력하세요.")
             return
 
         if data == "set_split":
@@ -506,7 +506,7 @@ class TelegramHandler:
             ticker = data.split(":")[1]
             st = self.app.state.load(ticker)
             await query.edit_message_text(
-                f"📐 [{ticker}] {st['qty']}주 @ ${st['avg_price']:.4f}\n비율 선택:",
+                f"[{ticker}] {st['qty']}주 @ ${st['avg_price']:.4f}\n비율 선택:",
                 reply_markup=split_ratio_keyboard(ticker),
             )
             return

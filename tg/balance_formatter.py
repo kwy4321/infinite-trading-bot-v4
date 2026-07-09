@@ -92,13 +92,9 @@ def _holding_rows(item: dict) -> list[str]:
     if mkt_usd == 0 and qty and last:
         mkt_usd = qty * last
 
-    eval_row = row("💰", "평가", usd(mkt_usd))
-    if mkt_krw > 0:
-        eval_row = row("💰", "평가", f"{usd(mkt_usd)}  ·  {krw(mkt_krw)}")
-
     return [
         symbol_card(sym),
-        row("📊", "수량", code(f"{qty:g}주")),
-        row("📐", "평단", usd(avg)),
-        eval_row,
+        f"{dim('수량')} {code(f'{qty:g}주')}",
+        f"{dim('평단')} {usd(avg)}",
+        f"{dim('평가')} {usd(mkt_usd)}" + (f"  ·  {krw(mkt_krw)}" if mkt_krw > 0 else ""),
     ]

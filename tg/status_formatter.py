@@ -23,49 +23,46 @@ def build_symbol_status_lines(app: App, sym: str) -> list[str]:
     strat = mode_label(
         app.strategy.resolve_mode(
             st["qty"], st["T"], st["split_count"], st.get("force_one", False),
-        ).value
+        ).value,
+        brief=True,
     )
 
     t_str = f"{st['T']:.2f}"
     card = [
         symbol_card(sym),
-        f"🎯 {dim('T')} {code(t_str)}　│　"
-        f"{dim('분할')} {code(str(st['split_count']))}　│　{strat}",
+        f"{dim('T')} {code(t_str)} · {dim('분할')} {code(str(st['split_count']))} · {strat}",
     ]
-
     if progress > 0 and live:
         card.append(
-            f"🔢 {dim('회차')} {code(f'{progress}회차')}　│　"
+            f"{dim('회차')} {code(f'{progress}회차')} · "
             f"{pnl_line(live['cycle_pnl_usd'], live['cycle_pnl_pct'])}"
         )
     elif progress > 0:
-        card.append(f"🔢 {dim('회차')} {code(f'{progress}회차')}")
+        card.append(f"{dim('회차')} {code(f'{progress}회차')}")
     else:
-        card.append(f"🔢 {dim('회차')} {code('0회차')}　│　💤 {dim('시작 전')}")
-
+        card.append(f"{dim('회차')} {code('0회차')} · {dim('시작 전')}")
     if st["qty"] > 0:
         pct_txt = ""
         if st["avg_price"] > 0 and price > 0:
             p = (price - st["avg_price"]) / st["avg_price"] * 100
-            pct_txt = f"　{dim(f'({p:+.1f}%)')}"
+            pct_txt = f" {dim(f'({p:+.1f}%)')}"
         price_txt = usd(price) if price > 0 else "—"
         card.append(
-            f"📊 {code(str(st['qty']) + '주')} @ {usd(st['avg_price'])}　"
-            f"→　{price_txt}{pct_txt}"
+            f"{dim('보유')} {code(str(st['qty']) + '주')} @ {usd(st['avg_price'])}"
+            f" → {price_txt}{pct_txt}"
         )
     else:
-        card.append(f"📊 {dim('보유 없음')}")
-
-    card.append(f"💰 {dim('원금')}　{usd(st['principal'])}")
+        card.append(f"{dim('보유')} {dim('없음')}")
+    card.append(f"{dim('원금')} {usd(st['principal'])}")
     return card
 
 
-def format_status(app: App, *, title: str = "전략 현황", icon: str = "📈") -> str:
+def format_status(app: App, *, title: str = "무매 현황", icon: str = "♾️") -> str:
     symbols = app.runtime.active_symbols()
     lines = [section(title, icon), ""]
 
     if not symbols:
-        lines.append(quote(dim("거래 종목 없음 · ⚙️ 설정 → 📡 거래 종목")))
+        lines.append(quote(dim("거래 종목 없음 · 설정 → 거래 종목")))
         return "\n".join(lines)
 
     for sym in symbols:

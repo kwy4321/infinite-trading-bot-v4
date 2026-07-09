@@ -13,6 +13,7 @@ from tg.ui import (
     mode_label,
     quote,
     section,
+    side_icon,
     symbol_card,
     THIN,
 )
@@ -90,12 +91,12 @@ def _order_est_usd(order: dict) -> float:
 def _format_order_lines(orders: list[dict], plan: dict, side: str) -> list[str]:
     if not orders:
         return []
-    icon = "🟢" if side == "BUY" else "🔴"
+    icon = side_icon(side)
     title = "매수" if side == "BUY" else "매도"
     total = sum(_order_est_usd(o) for o in orders)
     lines = [
         "",
-        f"{icon} {title} {len(orders)}건  ·  {dim('LOC')}  ·  {dim('합계')} {code(f'${total:,.2f}')}",
+        f"{icon}{title} {len(orders)}건  ·  {dim('LOC')}  ·  {dim('합계')} {code(f'${total:,.2f}')}",
     ]
     for idx, o in enumerate(orders, 1):
         label = _short_label(o.get("desc", ""))
@@ -106,7 +107,7 @@ def _format_order_lines(orders: list[dict], plan: dict, side: str) -> list[str]:
             lines.append(THIN)
         lines.append(f"{idx}. {label}")
         lines.append(
-            f"   💵 {code(f'${est:,.2f}')}  ·  "
+            f"   {code(f'${est:,.2f}')}  ·  "
             f"{dim(f'${price:.2f} × {qty}주')}"
         )
         formula = _order_formula(o, plan)
@@ -123,7 +124,7 @@ def format_plan_block(app: App, symbol: str, premium: int) -> str:
         premium, st["principal"], st["split_count"], st.get("force_one", False),
         take_profit_pct=st.get("take_profit_pct"),
     )
-    strat = mode_label(plan["mode"])
+    strat = mode_label(plan["mode"], brief=True)
     star_pct = float(plan.get("star_pct", 0))
     star_price = float(plan.get("star_price", 0))
     tp_pct = float(plan.get("take_profit_pct", 0))
@@ -133,7 +134,7 @@ def format_plan_block(app: App, symbol: str, premium: int) -> str:
     card = [
         symbol_card(symbol),
         "",
-        "📌 진행",
+        dim("진행"),
         f"T {st['T']:.2f}  ·  {st['split_count']}분할  ·  {strat}",
     ]
 
@@ -145,7 +146,7 @@ def format_plan_block(app: App, symbol: str, premium: int) -> str:
     elif is_dry(app):
         card.append("현재가 —  (LIVE 전환 후 표시)")
 
-    card.extend(["", "📐 기준가"])
+    card.extend(["", dim("기준가")])
     if avg > 0 and star_price > 0:
         card.append(f"별% +{star_pct:g}%  →  ${star_price:.2f}")
         tp_price = round(avg * (1 + tp_pct / 100), 2)
@@ -182,7 +183,7 @@ def format_plans(app: App, symbols: list[str], premium: int) -> str:
         "",
     ]
     if not symbols:
-        blocks.append(quote(empty("거래 종목 없음 · /setting → 📡 거래 종목")))
+        blocks.append(quote(empty("거래 종목 없음 · /setting → 거래 종목")))
         return "\n".join(blocks)
     skip_notes = []
     for symbol in symbols:
@@ -195,7 +196,7 @@ def format_plans(app: App, symbols: list[str], premium: int) -> str:
     cards = [format_plan_block(app, symbol, premium) for symbol in symbols]
     blocks.append("\n\n".join(cards))
     blocks.append("")
-    blocks.append(dim("🌙 종가 LOC — 조건 충족 시에만 체결 (미충족 시 미체결 · 새벽 sync 확인)"))
+    blocks.append(dim("종가 LOC — 조건 충족 시에만 체결 (미충족 시 미체결 · 새벽 sync 확인)"))
     if skip_notes:
         blocks.extend(skip_notes)
     return "\n".join(blocks)

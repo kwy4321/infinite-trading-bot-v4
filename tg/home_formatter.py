@@ -33,7 +33,7 @@ def format_home(app: App, token_line: str) -> str:
         subsection("하단 메뉴"),
         quote(
             row("📋", "주문계획", dim("오늘 LOC 매수·매도 계획")),
-            row("📈", "현황", dim("T · 회차 · 보유 · 전략 모드")),
+            row("♾️", "현황", dim("T · 회차 · 보유 · 전략 모드")),
             row("💼", "잔고", dim("토스 예수금 · 종목 평가")),
             row("⚙️", "설정", dim("원금 · 분할 · 거래 종목")),
             row("🔑", "토큰", dim("만료 시각 · 갱신")),

@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 from briefing.market_context import get_briefing_market_context
-from tg.ui import code, dim, pct, pnl_dot, quote, section
+from tg.ui import code, dim, pct, quote, section, trend_arrow
 
 if TYPE_CHECKING:
     from broker.toss_client import TossClient
@@ -98,21 +98,21 @@ def _build_sync(broker: "TossClient | None") -> str:
     session_label = ctx["session_label"]
 
     if ctx["us_holiday"]:
-        header = section("미국 증시", "📈")
+        header = section("미국 증시", "🇺🇸")
         holiday = ctx["holiday_label"] or "—"
         note = (
-            f"📅 <b>{holiday}</b> 미국 정규장 <b>휴장</b>\n"
-            f"아래는 직전 마감일 <b>{session_label}</b> 종가 기준입니다."
+            f"<b>{holiday}</b> 미국 정규장 <b>휴장</b>\n"
+            f"{dim(f'아래는 직전 마감일 {session_label} 종가 기준입니다.')}"
         )
     else:
-        header = section(f"미국 증시 마감 · {session_label}", "📈")
+        header = section(f"미국 증시 마감 · {session_label}", "🇺🇸")
         note = dim(f"직전 마감일 {session_label} · 전 거래일 대비")
 
     rows = [note, ""]
     for symbol, name in _INDICES:
         data = _fetch_one(symbol, session_date)
         if data is None:
-            rows.append(f"⚪ {dim(name)}  데이터 없음")
+            rows.append(f"{dim(name)}  {dim('데이터 없음')}")
             continue
         up = data["change"] >= 0
         sign = "+" if up else ""
@@ -120,7 +120,7 @@ def _build_sync(broker: "TossClient | None") -> str:
         change_str = f"{sign}{data['change']:,.2f}"
         sub = dim(f" ({data['prev_label']}→{data['session_label']})")
         rows.append(
-            f"{pnl_dot(up)} {dim(name)}{sub}  {code(price_str)}  "
+            f"{trend_arrow(up)} {dim(name)}{sub}  {code(price_str)}  "
             f"{code(change_str)} {pct(data['pct'])}"
         )
     return f"{header}\n{quote(*rows)}"

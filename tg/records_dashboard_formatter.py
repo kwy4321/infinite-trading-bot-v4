@@ -9,7 +9,6 @@ from tg.ui import (
     code,
     dim,
     krw,
-    pnl_dot,
     pnl_line,
     pnl_line_precise,
     quote,
@@ -17,6 +16,7 @@ from tg.ui import (
     section,
     subsection,
     symbol_card,
+    trend_arrow,
     usd,
 )
 
@@ -133,7 +133,7 @@ def _cycle_progress_rows(stats: dict) -> list[str]:
     rows = []
     for sym in SYMBOLS:
         progress = stats["per_symbol"].get(sym, {}).get("cycle_progress", 0)
-        rows.append(row("🔢", sym, code(f"{progress}회차")))
+        rows.append(f"{dim(sym)}  {code(f'{progress}회차')}")
     return rows
 
 
@@ -143,7 +143,7 @@ def _realized_block(app: App, stats: dict, cash_usd: float) -> list[str]:
     pct_val = round(realized / cash_usd * 100, 2) if cash_usd > 0 else None
 
     rows = [
-        row("📊", "완료", code(f"{completed}회")),
+        f"{dim('완료')}  {code(f'{completed}회')}",
         *_cycle_progress_rows(stats),
     ]
     if pct_val is not None:
@@ -152,10 +152,10 @@ def _realized_block(app: App, stats: dict, cash_usd: float) -> list[str]:
         rows.append(f"{dim('예수금 대비')}　{code(f'{sign}{pct_val:.2f}%')}")
     else:
         sign = "+" if realized >= 0 else ""
-        rows.append(f"{pnl_dot(realized >= 0)} {code(f'{sign}${realized:,.2f}')}")
+        rows.append(f"{trend_arrow(realized >= 0)} {code(f'{sign}${realized:,.2f}')}")
         if cash_usd <= 0:
             rows.append(f"{dim('예수금 대비')}　—")
-    return [subsection("🏦 무한매수 실현 수익"), quote(*rows)]
+    return [subsection("♾️ 실현 수익"), quote(*rows)]
 
 
 def format_records_dashboard(app: App) -> str:
@@ -183,7 +183,7 @@ def format_records_dashboard(app: App) -> str:
     if total_krw > 0:
         asset_rows.append(row("🇰🇷", "KRW", krw(total_krw)))
     asset_rows.append(row("💵", "예수금", usd(acct["cash_usd"])))
-    lines.extend([subsection("💰 총 자산"), quote(*asset_rows), ""])
+    lines.extend([subsection("총 자산"), quote(*asset_rows), ""])
 
     unreal_rows = []
     if acct["unreal_pct"] is not None:
@@ -191,11 +191,11 @@ def format_records_dashboard(app: App) -> str:
     else:
         u = acct["unreal_usd"]
         sign = "+" if u >= 0 else ""
-        unreal_rows.append(f"{pnl_dot(u >= 0)} {code(f'{sign}${u:,.2f}')}")
+        unreal_rows.append(f"{trend_arrow(u >= 0)} {code(f'{sign}${u:,.2f}')}")
     if fx_rate > 0:
         sign = "+" if unreal_krw >= 0 else ""
         unreal_rows.append(row("🇰🇷", "KRW", code(f"{sign}₩{unreal_krw:,.0f}")))
-    lines.extend([subsection("📈 미실현 손익"), quote(*unreal_rows)])
+    lines.extend([subsection("미실현 손익"), quote(*unreal_rows)])
 
     if fx_rate > 0:
         lines.append(row("💱", "환율", code(f"$1 = ₩{fx_rate:,.2f}")))
@@ -226,6 +226,6 @@ def format_records_dashboard(app: App) -> str:
                 f"{symbol_card(sym)}　{code(f'{sign}${r:,.0f}')}"
                 f"　{dim(cycles_txt)}{tag}"
             )
-        lines.extend(["", subsection("📦 종목별 실현"), quote(*sym_rows)])
+        lines.extend(["", subsection("종목별 실현"), quote(*sym_rows)])
 
     return "\n".join(lines)

@@ -3,7 +3,6 @@
 from app import App
 from tg.ui import (
     THIN,
-    bold,
     code,
     dim,
     empty,
@@ -34,9 +33,9 @@ def format_graduation_history(app: App, symbol: str) -> str:
     entries = []
     for c in reversed(completed[-20:]):
         trades = c.get("buy_count", 0) + c.get("sell_count", 0)
-        entries.append(f"📅 {bold(c['ended_at'])}")
+        entries.append(f"{dim(c['ended_at'])}")
         entries.append(
-            f"🔢 {code(str(c['cycle_no']) + '회차')}　│　"
+            f"{dim('회차')} {code(str(c['cycle_no']) + '회차')}　·　"
             f"{dim('매매')} {code(str(trades) + '회')}"
         )
         entries.append(pnl_line(c["profit_usd"], c["profit_pct"]))
@@ -54,7 +53,7 @@ def format_profit_summary(app: App, year: int, symbol: str | None = None) -> str
 
     lines = [
         section("수익현황", "📅"),
-        row("🗓", f"{year}년", f"📦 {code(label)}"),
+        row("🗓", f"{year}년", code(label)),
         "",
     ]
 

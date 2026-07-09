@@ -17,7 +17,7 @@ async def build_briefing(app: App) -> str:
     lines = [f"🌅 <b>아침 브리핑</b> ({now} KST)\n"]
     if ctx["us_holiday"]:
         lines.append(
-            f"🇺🇸 <b>{ctx['holiday_label']}</b> 미국 증시 <b>휴장</b> — "
+            f"<b>{ctx['holiday_label']}</b> 미국 증시 <b>휴장</b> — "
             f"지수는 직전 마감일 기준입니다.\n"
         )
     lines.append(await fetch_index_summary(broker))

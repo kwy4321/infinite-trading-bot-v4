@@ -8,7 +8,7 @@ from config.settings import PREMIUM_OPTIONS, SPLIT_OPTIONS, SYMBOLS, TAKE_PROFIT
 MAIN_HOME = "🏠 메인"
 MAIN_PLAN = "📋 주문계획"
 MAIN_SETTING = "⚙️ 설정"
-MAIN_STATUS = "📈 현황"
+MAIN_STATUS = "♾️ 현황"
 MAIN_BALANCE = "💼 잔고"
 MAIN_CYCLES = "📒 회차내역"
 
@@ -69,8 +69,8 @@ def setting_keyboard(force_one: bool = False) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("📡 거래 종목", callback_data="set_symbols")],
         [InlineKeyboardButton("💰 원금", callback_data="set_seed")],
         [InlineKeyboardButton("🍰 분할", callback_data="set_split")],
-        [InlineKeyboardButton("📈 큰수매수", callback_data="set_premium")],
-        [InlineKeyboardButton("🎯 목표수익률", callback_data="set_takeprofit")],
+        [InlineKeyboardButton("큰수매수", callback_data="set_premium")],
+        [InlineKeyboardButton("목표수익률", callback_data="set_takeprofit")],
         [InlineKeyboardButton("🔑 API 토큰", callback_data="set_token")],
         [InlineKeyboardButton(force_label, callback_data="toggle_force_one")],
     ])
@@ -107,10 +107,10 @@ def token_keyboard(from_settings: bool = False) -> InlineKeyboardMarkup:
 
 def run_job_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📈 익절", callback_data="RUN:job1"),
-         InlineKeyboardButton("🔄 체결정리", callback_data="RUN:job2")],
-        [InlineKeyboardButton("🌙 프리장 LOC", callback_data="RUN:job3"),
-         InlineKeyboardButton("📊 일일리포트", callback_data="RUN:job4")],
+        [InlineKeyboardButton("익절", callback_data="RUN:job1"),
+         InlineKeyboardButton("체결정리", callback_data="RUN:job2")],
+        [InlineKeyboardButton("프리장 LOC", callback_data="RUN:job3"),
+         InlineKeyboardButton("일일리포트", callback_data="RUN:job4")],
         [InlineKeyboardButton("🌅 아침브리핑", callback_data="RUN:briefing")],
     ])
 

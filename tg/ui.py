@@ -167,25 +167,25 @@ def order_side(side: str) -> tuple[str, str]:
 
 
 def month_bar(positive: bool) -> str:
-    return trend_arrow(positive)
+    return "🟩" if positive else "🟥"
 
 
 def help_block() -> str:
     groups = [
         ("♾️ 현황", [
-            (f"{code('/status')}", "무매 진행상황"),
+            (f"{code('/status')}", "♾️ 무매 진행상황"),
             (f"{code('/balance')}", "💼 계좌현황"),
             (f"{code('/plan')}", "📋 오늘 주문계획"),
         ]),
         ("⚙️ 설정", [
             (f"{code('/setting')}", "💰 원금·분할·큰수매수"),
             (f"{code('/split')}", "📐 액면분할"),
-            (f"{code('/set_t')}", "T 값 조정"),
+            (f"{code('/set_t')}", "🎯 T 값 조정"),
             (f"{code('/token')}", "🔑 API 토큰 상태·갱신"),
         ]),
         ("📒 기록", [
             (f"{code('/dashboard')}", "📒 자산·손익 대시보드"),
-            (f"{code('/cycles')}", "♾️ 진행 회차 기록"),
+            (f"{code('/cycles')}", "📒 진행 회차 기록"),
             (f"{code('/sync')}", "🔄 실계좌 회차 동기화"),
             (f"{code('/history')}", "🎓 종료 기록"),
             (f"{code('/monthly')}", "📅 수익현황"),

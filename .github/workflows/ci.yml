@@ -33,3 +33,6 @@ jobs:
 
       - name: Import check
         run: python -c "import main; print('import main OK')"
+
+      - name: Formatter smoke test
+        run: python scripts/smoke_formatters.py

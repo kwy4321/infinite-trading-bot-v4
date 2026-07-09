@@ -758,15 +758,15 @@ class JobExecutor:
                 for w in r.get("warnings") or []:
                     lines.append(f"⚠️ <b>{sym}</b> {w}")
                 continue
-            t_line = f"T <b>{r['T']:g}</b>"
+            t_line = f"🎯 T <b>{r['T']:g}</b>"
             if r.get("reconciled"):
                 tb, ta = r.get("t_before", r["T"]), r.get("t_after", r["T"])
                 if ta != tb:
-                    t_line = f"T <b>{tb:g}</b> → <b>{ta:g}</b>"
+                    t_line = f"🎯 T <b>{tb:g}</b> → <b>{ta:g}</b>"
             lines.append(
                 f"◆ <b>{sym}</b>\n"
                 f"{t_line} · 평단 <b>${r['avg']:,.2f}</b> · <b>{r['qty']}</b>주\n"
-                f"평가 <b>${r['eval']:,.2f}</b> <i>(투입 ${r['invested']:,.2f})</i>"
+                f"💵 평가 <b>${r['eval']:,.2f}</b> <i>(투입 ${r['invested']:,.2f})</i>"
             )
             for fill in r.get("reconciled", []):
                 sym = r["symbol"]
@@ -836,7 +836,7 @@ class JobExecutor:
         await self.run_cycle_sync(notify=True)
         await self.run_backup()
         now = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
-        await self._notify(f"오늘 마무리 완료 ({now})")
+        await self._notify(f"📊 오늘 마무리 완료 ({now})")
 
     async def force_job(self, name: str, premium: int | None = None) -> None:
         if premium is None:

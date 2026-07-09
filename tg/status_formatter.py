@@ -14,8 +14,8 @@ from tg.ui import (
 )
 
 
-def build_symbol_status_lines(app: App, sym: str) -> list[str]:
-    """종목 1개 전략 카드 본문 (quote 래퍼 없음)."""
+def build_symbol_status_lines(app: App, sym: str, *, brief: bool = False) -> list[str]:
+    """종목 1개 전략 카드 본문. brief=True — 아침 브리핑(간결·섹션 ♾️와 중복 방지)."""
     st = app.state.load(sym)
     price = resolve_price(app, sym)
     progress = app.cycles.cycle_progress(sym, trading=True, qty=st["qty"])
@@ -24,36 +24,68 @@ def build_symbol_status_lines(app: App, sym: str) -> list[str]:
         app.strategy.resolve_mode(
             st["qty"], st["T"], st["split_count"], st.get("force_one", False),
         ).value,
-        brief=True,
+        brief=brief,
     )
 
     t_str = f"{st['T']:.2f}"
+    if brief:
+        card = [
+            symbol_card(sym),
+            f"{dim('T')} {code(t_str)} · {dim('분할')} {code(str(st['split_count']))} · {strat}",
+        ]
+        if progress > 0 and live:
+            card.append(
+                f"{dim('회차')} {code(f'{progress}회차')} · "
+                f"{pnl_line(live['cycle_pnl_usd'], live['cycle_pnl_pct'])}"
+            )
+        elif progress > 0:
+            card.append(f"{dim('회차')} {code(f'{progress}회차')}")
+        else:
+            card.append(f"{dim('회차')} {code('0회차')} · {dim('시작 전')}")
+        if st["qty"] > 0:
+            pct_txt = ""
+            if st["avg_price"] > 0 and price > 0:
+                p = (price - st["avg_price"]) / st["avg_price"] * 100
+                pct_txt = f" {dim(f'({p:+.1f}%)')}"
+            price_txt = usd(price) if price > 0 else "—"
+            card.append(
+                f"{dim('보유')} {code(str(st['qty']) + '주')} @ {usd(st['avg_price'])}"
+                f" → {price_txt}{pct_txt}"
+            )
+        else:
+            card.append(f"{dim('보유')} {dim('없음')}")
+        card.append(f"{dim('원금')} {usd(st['principal'])}")
+        return card
+
     card = [
         symbol_card(sym),
-        f"{dim('T')} {code(t_str)} · {dim('분할')} {code(str(st['split_count']))} · {strat}",
+        f"🎯 {dim('T')} {code(t_str)}　│　"
+        f"🍰 {dim('분할')} {code(str(st['split_count']))}　│　{strat}",
     ]
     if progress > 0 and live:
         card.append(
-            f"{dim('회차')} {code(f'{progress}회차')} · "
+            f"🔢 {dim('회차')} {code(f'{progress}회차')}　│　"
             f"{pnl_line(live['cycle_pnl_usd'], live['cycle_pnl_pct'])}"
         )
     elif progress > 0:
-        card.append(f"{dim('회차')} {code(f'{progress}회차')}")
+        card.append(f"🔢 {dim('회차')} {code(f'{progress}회차')}")
     else:
-        card.append(f"{dim('회차')} {code('0회차')} · {dim('시작 전')}")
+        card.append(f"🔢 {dim('회차')} {code('0회차')}　│　💤 {dim('시작 전')}")
+
     if st["qty"] > 0:
         pct_txt = ""
         if st["avg_price"] > 0 and price > 0:
             p = (price - st["avg_price"]) / st["avg_price"] * 100
-            pct_txt = f" {dim(f'({p:+.1f}%)')}"
+            pct_txt = f"　{dim(f'({p:+.1f}%)')}"
         price_txt = usd(price) if price > 0 else "—"
         card.append(
-            f"{dim('보유')} {code(str(st['qty']) + '주')} @ {usd(st['avg_price'])}"
-            f" → {price_txt}{pct_txt}"
+            f"📊 {code(str(st['qty']) + '주')} @ {usd(st['avg_price'])}　"
+            f"→　{price_txt}{pct_txt}"
         )
     else:
-        card.append(f"{dim('보유')} {dim('없음')}")
-    card.append(f"{dim('원금')} {usd(st['principal'])}")
+        card.append(f"📊 {dim('보유 없음')}")
+
+    card.append(f"💰 {dim('원금')}　{usd(st['principal'])}")
     return card
 
 
@@ -62,7 +94,7 @@ def format_status(app: App, *, title: str = "무매 현황", icon: str = "♾️
     lines = [section(title, icon), ""]
 
     if not symbols:
-        lines.append(quote(dim("거래 종목 없음 · 설정 → 거래 종목")))
+        lines.append(quote(dim("거래 종목 없음 · ⚙️ 설정 → 📡 거래 종목")))
         return "\n".join(lines)
 
     for sym in symbols:

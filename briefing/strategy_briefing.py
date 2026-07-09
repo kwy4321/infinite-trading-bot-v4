@@ -55,7 +55,7 @@ def format_strategy_briefing(app: App, session_date: str, *, session_label: str 
         return "\n".join(lines)
 
     for sym in symbols:
-        card = build_symbol_status_lines(app, sym)
+        card = build_symbol_status_lines(app, sym, brief=True)
         trades = _trades_for_session(app, sym, session_date)
         card.append("")
         card.append(dim(f"직전 종가 LOC · {label}"))

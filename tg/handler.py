@@ -678,7 +678,7 @@ class TelegramHandler:
             await context.bot.send_message(
                 chat_id,
                 "⏭️ 지금은 미국 프리마켓·정규장 시간이 아니에요. "
-                "LOC(CLS)는 프리장(18:00 KST) 또는 장중에 접수할 수 있어요.",
+                "LOC(CLS)는 프리장(18:05 KST) 또는 장중에 접수할 수 있어요.",
             )
             return
         target = TossClient.target_us_date_for_ny_job()

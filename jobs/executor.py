@@ -499,7 +499,7 @@ class JobExecutor:
             if submit_at_open:
                 await self._notify(
                     "⚠️ 미국 프리마켓·정규장 시간이 아니어서 LOC 접수를 건너뛰었어요. "
-                    f"{dim('프리장(18:00 KST) 또는 장중 /job3 로 재시도하세요.')}",
+                    f"{dim('프리장(18:05 KST) 또는 장중 /job3 로 재시도하세요.')}",
                     html=True,
                 )
             return
@@ -593,7 +593,7 @@ class JobExecutor:
             await self._notify(f"🚨 아침 브리핑 생성 실패: {e}")
 
     async def run_market_open_plan(self) -> None:
-        """18:00 KST 프리마켓 — 오늘 주문계획 전송 + CLS(LOC) 접수."""
+        """18:05 KST 프리마켓 — 오늘 주문계획 전송 + CLS(LOC) 접수."""
         if self.app.runtime.is_paused():
             return
         try:
@@ -793,7 +793,7 @@ class JobExecutor:
         await self.run_job3(premium)
 
     async def run_job2(self, **_):
-        await self._notify("job2는 사용하지 않아요. LOC 접수는 프리장(18:00) 또는 /job3 입니다.")
+        await self._notify("job2는 사용하지 않아요. LOC 접수는 프리장(18:05) 또는 /job3 입니다.")
 
     async def run_job3(self, premium: int | None = None, *, scheduled: bool = True, **_):
         if not self._can_submit_loc_now(force=not scheduled):
@@ -801,7 +801,7 @@ class JobExecutor:
             if not scheduled:
                 await self._notify(
                     "⏭️ 지금은 미국 프리마켓·정규장 시간이 아니에요. "
-                    "LOC(CLS)는 프리장(18:00 KST) 또는 장중에 접수할 수 있어요.",
+                    "LOC(CLS)는 프리장(18:05 KST) 또는 장중에 접수할 수 있어요.",
                 )
             return
         target = self._target_us_date_for_phase(JobPhase.JOB3_LOC_CLOSE)

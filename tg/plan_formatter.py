@@ -178,7 +178,7 @@ def format_plans(app: App, symbols: list[str], premium: int) -> str:
     blocks = [
         section("오늘 주문계획", "📋"),
         dim(f"{today} KST · 미국 거래일 {us_close_date}"),
-        dim("※ 종가 LOC 매매 계획 · 프리마켓 18:00 KST LIMIT+CLS 접수 · 체결은 종가 경매"),
+        dim("※ 종가 LOC 매매 계획 · 프리마켓 18:05 KST LIMIT+CLS 접수 · 체결은 종가 경매"),
         "",
     ]
     if not symbols:

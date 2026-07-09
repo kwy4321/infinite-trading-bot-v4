@@ -16,12 +16,12 @@ from tg.sender import TelegramSender
 logger = logging.getLogger(__name__)
 KST = ZoneInfo("Asia/Seoul")
 
-# LOC(CLS) 자동 접수 — 미국 프리마켓 시작(한국 18:00 KST 전후)
-LOC_PREMARKET_KST = datetime.time(18, 0, tzinfo=KST)
+# LOC(CLS) 자동 접수 — 미국 프리마켓 시작 후 5분(한국 18:05 KST)
+LOC_PREMARKET_KST = datetime.time(18, 5, tzinfo=KST)
 
 
 def _register_jobs(app_tg, executor: JobExecutor):
-    """Register KST daily jobs — LOC(CLS) at US premarket (18:00 KST); sync after close."""
+    """Register KST daily jobs — LOC(CLS) at US premarket (18:05 KST); sync after close."""
 
     async def job4(ctx):
         await executor.run_job4()
@@ -39,7 +39,7 @@ def _register_jobs(app_tg, executor: JobExecutor):
     if executor.app.settings.briefing_enabled:
         jq.run_daily(briefing, time=datetime.time(7, 0, tzinfo=KST), chat_id=chat_id, name="briefing")
     jq.run_daily(job4, time=datetime.time(6, 15, tzinfo=KST), chat_id=chat_id, name="job4")
-    # 18:00 KST 프리마켓: 주문계획 + CLS(LOC) 접수 (체결은 종가, 새벽 job4/sync)
+    # 18:05 KST 프리마켓: 주문계획 + CLS(LOC) 접수 (체결은 종가, 새벽 job4/sync)
     jq.run_daily(premarket_loc, time=LOC_PREMARKET_KST, chat_id=chat_id, name="premarket_loc")
 
 

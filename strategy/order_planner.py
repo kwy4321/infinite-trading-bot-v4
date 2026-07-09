@@ -1,6 +1,6 @@
 """미국 장 마감 LOC — 토스 Open API LIMIT + CLS.
 
-프리마켓(한국 18:00 KST)에 CLS 주문 접수 → 종가 경매에서 조건 충족 시 체결.
+프리마켓(한국 18:05 KST)에 CLS 주문 접수 → 종가 경매에서 조건 충족 시 체결.
 """
 
 from enum import Enum
@@ -13,11 +13,11 @@ class JobPhase(str, Enum):
     JOB4_REPORT = "job4"
 
 
-# KST 일정 — LOC 접수는 프리마켓 18:00, 체결 반영은 새벽 job4
+# KST 일정 — LOC 접수는 프리마켓 18:05, 체결 반영은 새벽 job4
 JOB_SCHEDULE_KST = {
     JobPhase.JOB4_REPORT: {"summer": (6, 15), "winter": (6, 15)},
     "morning_briefing": {"summer": (7, 0), "winter": (7, 0)},
-    "premarket_loc": {"summer": (18, 0), "winter": (18, 0)},
+    "premarket_loc": {"summer": (18, 5), "winter": (18, 5)},
 }
 
 

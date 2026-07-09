@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from app import App
 from briefing.index_fetcher import fetch_index_summary
 from briefing.market_context import get_briefing_market_context
-from briefing.news_summarizer import summarize_news
+from briefing.strategy_briefing import format_strategy_briefing
 
 
 async def build_briefing(app: App) -> str:
@@ -22,5 +22,11 @@ async def build_briefing(app: App) -> str:
         )
     lines.append(await fetch_index_summary(broker))
     lines.append("")
-    lines.append(await summarize_news(app.settings, market_ctx=ctx))
+    lines.append(
+        format_strategy_briefing(
+            app,
+            ctx["session_date"],
+            session_label=ctx["session_label"],
+        )
+    )
     return "\n".join(lines)

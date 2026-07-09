@@ -636,8 +636,17 @@ class JobExecutor:
 
         if not self._can_submit_loc_now():
             logger.warning("premarket LOC skipped — not in US premarket/regular session")
+            status = ""
+            try:
+                status = self.app.broker.get_us_market_status()
+            except Exception:
+                pass
             await self._notify(
-                "⚠️ 프리마켓 접수 시간 확인 실패 — 18:00 KST 또는 장중 /job3 로 재시도하세요.",
+                "⚠️ 프리마켓 LOC 접수 시간이 아니에요"
+                + (f" (현재: {status})" if status else "")
+                + ".\n"
+                f"{dim('프리마켓·정규장 중 /run job3 로 재시도하세요.')}",
+                html=True,
             )
             return
 

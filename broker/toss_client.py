@@ -598,14 +598,52 @@ class TossClient:
         return out
 
     def _parse_session_time(self, raw: str) -> datetime.time:
-        parts = raw.split(":")
-        return datetime.time(int(parts[0]), int(parts[1]), int(parts[2]) if len(parts) > 2 else 0)
+        """HH:MM 또는 HH:MM:SS (레거시)."""
+        text = str(raw).strip()
+        if "T" in text:
+            dt = datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=KST)
+            return dt.astimezone(KST).time()
+        parts = text.split(":")
+        sec = parts[2] if len(parts) > 2 else "0"
+        sec = sec.split("+")[0].split("-")[0]
+        return datetime.time(int(parts[0]), int(parts[1]), int(sec))
+
+    def _parse_session_instant(self, raw: str | None) -> datetime.datetime | None:
+        """토스 캘린더 startTime/endTime — ISO(+09:00) 또는 HH:MM:SS."""
+        if not raw:
+            return None
+        text = str(raw).strip()
+        try:
+            if "T" in text:
+                dt = datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=KST)
+                return dt.astimezone(KST)
+            t = self._parse_session_time(text)
+            today = datetime.datetime.now(KST).date()
+            return datetime.datetime.combine(today, t, tzinfo=KST)
+        except (ValueError, TypeError):
+            logger.warning("invalid session time %r", raw)
+            return None
 
     def _in_session(self, now_kst: datetime.datetime, session: dict | None) -> bool:
         if not session:
             return False
-        start = self._parse_session_time(session["startTime"])
-        end = self._parse_session_time(session["endTime"])
+        start_raw = session.get("startTime") or session.get("start_time") or ""
+        end_raw = session.get("endTime") or session.get("end_time") or ""
+        if "T" in str(start_raw) or "T" in str(end_raw):
+            start = self._parse_session_instant(start_raw)
+            end = self._parse_session_instant(end_raw)
+            if start and end:
+                return start <= now_kst <= end
+            return False
+        try:
+            start = self._parse_session_time(str(start_raw))
+            end = self._parse_session_time(str(end_raw))
+        except (ValueError, TypeError):
+            return False
         now_t = now_kst.time()
         if start <= end:
             return start <= now_t <= end
@@ -669,15 +707,18 @@ class TossClient:
         """프리마켓·정규장 — LOC(CLS) 접수 가능 구간."""
         if self.dry_run:
             return True
-        cal = self._get_us_market_calendar_cached()
-        day = cal.get("today") or {}
-        if not day.get("regularMarket"):
-            return False
-        now_kst = datetime.datetime.now(KST)
-        for session in (day.get("preMarket"), day.get("regularMarket")):
-            if self._in_session(now_kst, session):
-                return True
-        return False
+        try:
+            cal = self._get_us_market_calendar_cached()
+            day = cal.get("today") or {}
+            if not day.get("regularMarket"):
+                return False
+            now_kst = datetime.datetime.now(KST)
+            for session in (day.get("preMarket"), day.get("regularMarket")):
+                if session and self._in_session(now_kst, session):
+                    return True
+        except Exception:
+            logger.exception("is_us_loc_session_now calendar check failed")
+        return self._market_status_fallback() in ("premarket", "regular")
 
     def is_us_regular_session_now(self) -> bool:
         """미국 정규장 시간."""

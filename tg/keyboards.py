@@ -109,7 +109,7 @@ def run_job_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📈 익절", callback_data="RUN:job1"),
          InlineKeyboardButton("🔄 체결정리", callback_data="RUN:job2")],
-        [InlineKeyboardButton("🌙 프리장 LOC", callback_data="RUN:job3"),
+        [InlineKeyboardButton("🌙 본장 LOC", callback_data="RUN:job3"),
          InlineKeyboardButton("📊 일일리포트", callback_data="RUN:job4")],
         [InlineKeyboardButton("🌅 아침브리핑", callback_data="RUN:briefing")],
     ])

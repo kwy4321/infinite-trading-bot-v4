@@ -17,6 +17,7 @@ from tg.ui import (
     symbol_card,
     THIN,
 )
+from strategy.market_schedule import regular_open_kst
 from strategy.session_fill import has_us_session_fill_in_state
 
 
@@ -176,10 +177,12 @@ def format_plans(app: App, symbols: list[str], premium: int) -> str:
     kst = ZoneInfo("Asia/Seoul")
     today = datetime.datetime.now(kst).strftime("%Y-%m-%d")
     us_close_date = TossClient.target_us_date_for_evening_loc()
+    open_kst = regular_open_kst(us_close_date)
+    open_label = open_kst.strftime("%H:%M")
     blocks = [
         section("오늘 주문계획", "📋"),
         dim(f"{today} KST · 미국 거래일 {us_close_date}"),
-        dim("※ 종가 LOC 매매 계획 · 프리마켓 18:05 KST LIMIT+CLS 접수 · 체결은 종가 경매"),
+        dim(f"※ 종가 LOC 매매 계획 · 본장 개장 {open_label} KST LIMIT+CLS 접수 · 체결은 종가 경매"),
         "",
     ]
     if not symbols:
@@ -188,10 +191,12 @@ def format_plans(app: App, symbols: list[str], premium: int) -> str:
     skip_notes = []
     for symbol in symbols:
         st = app.state.load(symbol)
-        if has_us_session_fill_in_state(st, symbol, us_close_date, app.cycles):
+        if has_us_session_fill_in_state(
+            st, symbol, us_close_date, app.cycles, open_kst,
+        ):
             skip_notes.append(
-                f"⏭️ {symbol_card(symbol)} — {us_close_date} 당일 18시 이후 접수·체결 있음 "
-                f"(저녁 LOC 자동접수 스킵)"
+                f"⏭️ {symbol_card(symbol)} — {us_close_date} 본장 시작 전 LOC 이미 접수됨 "
+                f"(자동접수 스킵 · /run 으로 재시도 시에도 동일)"
             )
     cards = [format_plan_block(app, symbol, premium) for symbol in symbols]
     blocks.append("\n\n".join(cards))

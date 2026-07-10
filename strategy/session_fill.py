@@ -1,10 +1,10 @@
-"""저녁(18:05 KST) 프리마켓 LOC — 당일 중복 접수 방지.
+"""미국 본장(정규장) 개장 시각 LOC — 당일 중복 접수 방지.
 
 타깃 미국 거래일 = KST 당일 (``target_us_date_for_evening_loc``).
-스킵 조건 = 해당 KST일 **18시 이후** 접수·체결만 (새벽 sync 체결은 제외).
+자동 LOC 접수 = KST 고정 본장 개장 (서머 22:30 / 윈터 23:30).
 
-예) 7/10 아침 plan: 타깃 7/10. 7/9 18:05 접수→7/10 새벽 체결은 7/9 접수라 스킵 안 함.
-   7/10 18:05 이후 접수·체결 있으면 7/10 저녁 LOC 스킵.
+스킵 = 해당일 본장 개장 **이전**에 이미 LOC(주문) 접수한 경우.
+(새벽 sync 체결·전일 접수분은 개장 전 접수로 간주하지 않거나 날짜가 다름)
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ if TYPE_CHECKING:
 
 KST = ZoneInfo("Asia/Seoul")
 NY = ZoneInfo("America/New_York")
-EVENING_LOC_KST_HOUR = 18
 
 
 def parse_when(raw: str) -> datetime.datetime | None:
@@ -42,57 +41,84 @@ def us_session_date_from_when(raw: str) -> str | None:
     return dt.astimezone(NY).date().isoformat()
 
 
-def _kst_on_target_evening(us_date: str, dt: datetime.datetime) -> bool:
-    """KST 달력이 us_date(저녁 LOC 타깃일)이고 18시 이후인지."""
-    kst = dt.astimezone(KST)
-    return kst.date().isoformat() == us_date and kst.hour >= EVENING_LOC_KST_HOUR
+def regular_open_kst_fallback(us_date: str) -> datetime.datetime:
+    """하위 호환 — KST 고정 본장 개장 시각."""
+    from strategy.market_schedule import regular_open_kst as _kst_open
+    return _kst_open(us_date)
 
 
-def fill_blocks_evening_loc(entry: dict, us_date: str) -> bool:
-    """저녁 LOC 자동접수 스킵 대상 체결인지 (당일 18시 이후 접수·체결만)."""
-    if int(entry.get("qty") or 0) <= 0:
-        return False
-
-    ordered_raw = str(entry.get("ordered_at") or "")
-    filled_raw = str(entry.get("filled_at") or entry.get("at") or "")
-
+def order_submitted_before_regular_open(
+    entry: dict, us_date: str, open_kst: datetime.datetime,
+) -> bool:
+    """KST us_date 당일, 본장 개장 시각 이전 주문 접수 여부."""
+    ordered_raw = str(
+        entry.get("ordered_at") or entry.get("submitted_at") or entry.get("at") or ""
+    )
     ordered_dt = parse_when(ordered_raw)
-    if ordered_dt and _kst_on_target_evening(us_date, ordered_dt):
-        return True
-
-    if ordered_raw:
+    if not ordered_dt:
         return False
-
-    if not filled_raw or us_session_date_from_when(filled_raw) != us_date:
+    kst = ordered_dt.astimezone(KST)
+    if kst.date().isoformat() != us_date:
         return False
-    filled_dt = parse_when(filled_raw)
-    return bool(filled_dt and _kst_on_target_evening(us_date, filled_dt))
+    return kst < open_kst
 
 
-def has_us_session_fill_in_state(st: dict, symbol: str, us_date: str, cycles: "CycleTracker") -> bool:
-    """fill_log·회차 trades — 저녁 LOC 스킵 대상 체결 여부."""
+def has_loc_order_before_regular_open(
+    st: dict,
+    symbol: str,
+    us_date: str,
+    cycles: "CycleTracker",
+    open_kst: datetime.datetime,
+) -> bool:
+    """fill_log·회차 trades·tracked_orders — 본장 전 LOC 접수 여부."""
     sym = symbol.upper()
-    for entry in st.get("fill_log") or []:
+    pools = list(st.get("fill_log") or []) + list(st.get("tracked_orders") or [])
+    for entry in pools:
         if str(entry.get("symbol") or sym).upper() != sym:
             continue
-        if fill_blocks_evening_loc(entry, us_date):
+        if order_submitted_before_regular_open(entry, us_date, open_kst):
             return True
     cur = cycles.get_symbol_data(sym).get("current") or {}
     for tr in cur.get("trades") or []:
-        if fill_blocks_evening_loc(tr, us_date):
+        if order_submitted_before_regular_open(tr, us_date, open_kst):
             return True
     return False
 
 
-def has_us_session_fill_from_broker(
-    broker: "TossClient", symbol: str, us_date: str, *, days: int = 5,
+def has_loc_order_before_regular_open_from_broker(
+    broker: "TossClient",
+    symbol: str,
+    us_date: str,
+    open_kst: datetime.datetime,
+    *,
+    days: int = 5,
 ) -> bool:
-    """토스 CLOSED 체결 — state 미반영(앱 외 매매) 대비."""
+    """토스 체결 — state 미반영(앱 외 매매) 대비."""
     try:
         fills = broker.list_broker_fills(symbol, days=days, max_orders=40)
     except Exception:
         return False
     for fill in fills:
-        if fill_blocks_evening_loc(fill, us_date):
+        if order_submitted_before_regular_open(fill, us_date, open_kst):
             return True
     return False
+
+
+# 하위 호환 별칭 (executor/plan_formatter)
+def has_us_session_fill_in_state(
+    st: dict, symbol: str, us_date: str, cycles: "CycleTracker", open_kst: datetime.datetime,
+) -> bool:
+    return has_loc_order_before_regular_open(st, symbol, us_date, cycles, open_kst)
+
+
+def has_us_session_fill_from_broker(
+    broker: "TossClient",
+    symbol: str,
+    us_date: str,
+    open_kst: datetime.datetime,
+    *,
+    days: int = 5,
+) -> bool:
+    return has_loc_order_before_regular_open_from_broker(
+        broker, symbol, us_date, open_kst, days=days,
+    )

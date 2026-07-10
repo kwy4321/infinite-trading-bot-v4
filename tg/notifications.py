@@ -9,15 +9,15 @@ def _side_ko(side: str) -> str:
 
 def format_market_open(now_kst: str) -> str:
     return (
-        f"🔔 <b>미국 프리마켓</b>  <i>{now_kst} KST</i>\n"
-        f"{dim('오늘 LOC 계획을 보내고, 프리마켓·정규장 중 LIMIT+CLS로 접수합니다. 체결은 종가 경매·새벽 sync 반영.')}"
+        f"🔔 <b>미국 본장 개장</b>  <i>{now_kst} KST</i>\n"
+        f"{dim('오늘 LOC 계획을 보내고, 본장에서 LIMIT+CLS로 접수합니다. 체결은 종가 경매·새벽 sync 반영.')}"
     )
 
 
 def format_market_open_start(now_kst: str, symbol_count: int) -> str:
     sym = f"{symbol_count}종목" if symbol_count else "—"
     return (
-        f"🔔 <b>프리마켓 LOC 접수</b>  <i>{now_kst} KST</i>\n"
+        f"🔔 <b>본장 LOC 접수</b>  <i>{now_kst} KST</i>\n"
         f"CLS 주문 접수 · {code(sym)}"
     )
 
@@ -28,8 +28,8 @@ def format_market_open_report(
     ok: int,
     total: int,
 ) -> str:
-    """프리마켓 LOC — 종목별 접수 결과."""
-    header = f"🔔 <b>프리마켓 LOC 접수 완료</b>  <i>{now_kst}</i>"
+    """본장 LOC — 종목별 접수 결과."""
+    header = f"🔔 <b>본장 LOC 접수 완료</b>  <i>{now_kst}</i>"
     if total <= 0:
         return f"{header}\n{dim('오늘 예약할 주문 없음')}"
     body = "\n".join(symbol_lines)

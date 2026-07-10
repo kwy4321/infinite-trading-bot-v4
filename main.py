@@ -10,27 +10,22 @@ from telegram.ext import ApplicationBuilder, CallbackQueryHandler, CommandHandle
 
 from app import App
 from jobs.executor import JobExecutor
+from jobs.regular_open_scheduler import register_regular_open_jobs
 from tg.handler import TelegramHandler
 from tg.sender import TelegramSender
 
 logger = logging.getLogger(__name__)
 KST = ZoneInfo("Asia/Seoul")
 
-# LOC(CLS) 자동 접수 — 미국 프리마켓 시작 후 5분(한국 18:05 KST)
-LOC_PREMARKET_KST = datetime.time(18, 5, tzinfo=KST)
-
 
 def _register_jobs(app_tg, executor: JobExecutor):
-    """Register KST daily jobs — LOC(CLS) at US premarket (18:05 KST); sync after close."""
+    """Register KST daily jobs — LOC(CLS) at US regular open; sync after close."""
 
     async def job4(ctx):
         await executor.run_job4()
 
     async def briefing(ctx):
         await executor.run_morning_briefing()
-
-    async def premarket_loc(ctx):
-        await executor.run_market_open_plan()
 
     chat_ids = list(app_tg.bot_data.get("chat_ids") or [])
     chat_id = chat_ids[0] if chat_ids else None
@@ -39,8 +34,7 @@ def _register_jobs(app_tg, executor: JobExecutor):
     if executor.app.settings.briefing_enabled:
         jq.run_daily(briefing, time=datetime.time(7, 0, tzinfo=KST), chat_id=chat_id, name="briefing")
     jq.run_daily(job4, time=datetime.time(6, 15, tzinfo=KST), chat_id=chat_id, name="job4")
-    # 18:05 KST 프리마켓: 주문계획 + CLS(LOC) 접수 (체결은 종가, 새벽 job4/sync)
-    jq.run_daily(premarket_loc, time=LOC_PREMARKET_KST, chat_id=chat_id, name="premarket_loc")
+    register_regular_open_jobs(jq, executor, chat_id=chat_id)
 
 
 def main():

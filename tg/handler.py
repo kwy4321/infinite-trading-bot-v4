@@ -49,9 +49,9 @@ from tg.ui import DIVIDER, badge_on, code, quote, row, section, usd
 logger = logging.getLogger(__name__)
 
 JOB_LABELS = {
-    "job1": "프리장 LOC (job3와 동일)",
+    "job1": "본장 LOC (job3와 동일)",
     "job2": "(미사용)",
-    "job3": "프리장 LOC (매수·매도 CLS 접수)",
+    "job3": "본장 LOC (매수·매도 CLS 접수)",
     "job4": "오늘 마무리",
     "briefing": "아침 브리핑",
     "morning_briefing": "아침 브리핑",
@@ -678,14 +678,14 @@ class TelegramHandler:
             await context.bot.send_message(
                 chat_id,
                 "⏭️ 지금은 미국 프리마켓·정규장 시간이 아니에요. "
-                "LOC(CLS)는 프리장(18:05 KST) 또는 장중에 접수할 수 있어요.",
+                "LOC(CLS)는 본장 개장 후 또는 프리마켓·장중에 접수할 수 있어요.",
             )
             return
         target = TossClient.target_us_date_for_evening_loc()
         if await self.executor._already_traded_for_us_session(symbol, target, st=st):
             await context.bot.send_message(
                 chat_id,
-                f"⏭️ [{symbol}] {target} — 당일 18시 이후 접수·체결 있음. LOC 접수는 스킵합니다.",
+                f"⏭️ [{symbol}] {target} — 본장 시작 전 LOC 이미 접수됨. 스킵합니다.",
             )
             return
         ref = float(pos["current_price"] or 0)

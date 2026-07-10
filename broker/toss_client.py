@@ -747,6 +747,11 @@ class TossClient:
         return now.date().isoformat()
 
     @staticmethod
+    def target_us_date_for_evening_loc(kst_now: datetime.datetime | None = None) -> str:
+        """저녁(18:05 KST) 프리마켓 LOC 타깃 미국 거래일 = KST 당일."""
+        return TossClient.target_us_date_for_morning_job(kst_now)
+
+    @staticmethod
     def target_us_date_for_ny_job(kst_now: datetime.datetime | None = None) -> str:
         """미국 동부 시각 기준 당일 거래일."""
         now = kst_now or datetime.datetime.now(KST)

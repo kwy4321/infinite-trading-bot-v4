@@ -681,12 +681,11 @@ class TelegramHandler:
                 "LOC(CLS)는 프리장(18:05 KST) 또는 장중에 접수할 수 있어요.",
             )
             return
-        target = TossClient.target_us_date_for_ny_job()
+        target = TossClient.target_us_date_for_evening_loc()
         if await self.executor._already_traded_for_us_session(symbol, target, st=st):
             await context.bot.send_message(
                 chat_id,
-                f"⏭️ [{symbol}] {target} 미국 거래일 — "
-                f"이미 체결됐어요. LOC 접수는 스킵합니다.",
+                f"⏭️ [{symbol}] {target} — 당일 18시 이후 접수·체결 있음. LOC 접수는 스킵합니다.",
             )
             return
         ref = float(pos["current_price"] or 0)

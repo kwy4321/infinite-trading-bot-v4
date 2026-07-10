@@ -175,7 +175,7 @@ def format_plan_block(app: App, symbol: str, premium: int) -> str:
 def format_plans(app: App, symbols: list[str], premium: int) -> str:
     kst = ZoneInfo("Asia/Seoul")
     today = datetime.datetime.now(kst).strftime("%Y-%m-%d")
-    us_close_date = TossClient.target_us_date_for_ny_job()
+    us_close_date = TossClient.target_us_date_for_evening_loc()
     blocks = [
         section("오늘 주문계획", "📋"),
         dim(f"{today} KST · 미국 거래일 {us_close_date}"),
@@ -190,8 +190,8 @@ def format_plans(app: App, symbols: list[str], premium: int) -> str:
         st = app.state.load(symbol)
         if has_us_session_fill_in_state(st, symbol, us_close_date, app.cycles):
             skip_notes.append(
-                f"⏭️ {symbol_card(symbol)} — {us_close_date} 미국장 이미 체결 "
-                f"(오늘 LOC 자동 접수 스킵)"
+                f"⏭️ {symbol_card(symbol)} — {us_close_date} 당일 18시 이후 접수·체결 있음 "
+                f"(저녁 LOC 자동접수 스킵)"
             )
     cards = [format_plan_block(app, symbol, premium) for symbol in symbols]
     blocks.append("\n\n".join(cards))

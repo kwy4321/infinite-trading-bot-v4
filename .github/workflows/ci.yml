@@ -36,3 +36,6 @@ jobs:
 
       - name: Formatter smoke test
         run: python scripts/smoke_formatters.py
+
+      - name: Session fill logic test
+        run: python scripts/test_session_fill.py

@@ -57,7 +57,7 @@ class JobExecutor:
     async def _already_traded_for_us_session(
         self, symbol: str, us_date: str, *, st: dict | None = None,
     ) -> bool:
-        """해당 미국 거래일(ET)에 이미 체결됐으면 True — 종가 LOC 중복 방지."""
+        """해당 KST일(저녁 LOC 타깃) 18시 이후 접수·체결이 있으면 True."""
         if st is None:
             st = self.app.state.load(symbol)
         if has_us_session_fill_in_state(st, symbol, us_date, self.app.cycles):
@@ -425,8 +425,8 @@ class JobExecutor:
                     "total": 0,
                     "skipped": True,
                     "line": (
-                        f"⏭️ [{symbol}] {us_date} 미국 거래일 — "
-                        f"이미 체결됨, LOC 접수 스킵"
+                        f"⏭️ [{symbol}] {us_date} — "
+                        f"당일 18시 이후 접수·체결 있음, LOC 접수 스킵"
                     ),
                     "grad_msg": None,
                 }
@@ -470,7 +470,7 @@ class JobExecutor:
     def _target_us_date_for_phase(self, phase: JobPhase) -> str:
         now = datetime.now(KST)
         if phase in _LOC_PHASES:
-            return TossClient.target_us_date_for_ny_job(now)
+            return TossClient.target_us_date_for_evening_loc(now)
         if phase == JobPhase.JOB4_REPORT:
             return TossClient.target_us_date_for_morning_job(now)
         return TossClient.target_us_date_for_ny_job(now)
@@ -618,7 +618,7 @@ class JobExecutor:
         await self._notify(format_market_open(now), html=True)
         await self._notify(text, html=True)
 
-        target = TossClient.target_us_date_for_ny_job()
+        target = TossClient.target_us_date_for_evening_loc()
         if self.app.runtime.last_job3_us_date() == target:
             logger.info("market open LOC skipped — already submitted for %s", target)
             return
@@ -821,8 +821,7 @@ class JobExecutor:
                 )
                 await self._notify(
                     f"⏭️ <b>LOC 접수 스킵</b>\n"
-                    f"📅 미국 거래일 <b>{target}</b> — 이미 체결됨\n"
-                    f"{dim('(저녁 자동 접수와 별개 · 체결된 날은 재접수 없음)')}\n"
+                    f"📅 <b>{target}</b> — 당일 18시 이후 접수·체결 있음\n"
                     + "\n".join(f"· {s}" for s in skipped),
                     html=True,
                 )

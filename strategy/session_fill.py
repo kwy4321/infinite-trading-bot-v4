@@ -1,8 +1,10 @@
-"""미국 정규장 거래일(ET) 기준 — 당일 이미 체결됐는지 판별.
+"""저녁(18:05 KST) 프리마켓 LOC — 당일 중복 접수 방지.
 
-저녁(18:05 KST) 프리마켓 LOC 접수와 같은 미국 거래일 중복 방지.
-- 계획: 알림만 — 스킵하지 않음
-- LOC 접수: target US date에 체결 이력이 있으면 주문 생략
+타깃 미국 거래일 = KST 당일 (``target_us_date_for_evening_loc``).
+스킵 조건 = 해당 KST일 **18시 이후** 접수·체결만 (새벽 sync 체결은 제외).
+
+예) 7/10 아침 plan: 타깃 7/10. 7/9 18:05 접수→7/10 새벽 체결은 7/9 접수라 스킵 안 함.
+   7/10 18:05 이후 접수·체결 있으면 7/10 저녁 LOC 스킵.
 """
 
 from __future__ import annotations
@@ -15,7 +17,9 @@ if TYPE_CHECKING:
     from broker.toss_client import TossClient
     from cycles.cycle_tracker import CycleTracker
 
+KST = ZoneInfo("Asia/Seoul")
 NY = ZoneInfo("America/New_York")
+EVENING_LOC_KST_HOUR = 18
 
 
 def parse_when(raw: str) -> datetime.datetime | None:
@@ -38,24 +42,44 @@ def us_session_date_from_when(raw: str) -> str | None:
     return dt.astimezone(NY).date().isoformat()
 
 
-def _fill_matches_us_date(entry: dict, us_date: str) -> bool:
+def _kst_on_target_evening(us_date: str, dt: datetime.datetime) -> bool:
+    """KST 달력이 us_date(저녁 LOC 타깃일)이고 18시 이후인지."""
+    kst = dt.astimezone(KST)
+    return kst.date().isoformat() == us_date and kst.hour >= EVENING_LOC_KST_HOUR
+
+
+def fill_blocks_evening_loc(entry: dict, us_date: str) -> bool:
+    """저녁 LOC 자동접수 스킵 대상 체결인지 (당일 18시 이후 접수·체결만)."""
     if int(entry.get("qty") or 0) <= 0:
         return False
-    when = entry.get("ordered_at") or entry.get("filled_at") or entry.get("at") or ""
-    return us_session_date_from_when(when) == us_date
+
+    ordered_raw = str(entry.get("ordered_at") or "")
+    filled_raw = str(entry.get("filled_at") or entry.get("at") or "")
+
+    ordered_dt = parse_when(ordered_raw)
+    if ordered_dt and _kst_on_target_evening(us_date, ordered_dt):
+        return True
+
+    if ordered_raw:
+        return False
+
+    if not filled_raw or us_session_date_from_when(filled_raw) != us_date:
+        return False
+    filled_dt = parse_when(filled_raw)
+    return bool(filled_dt and _kst_on_target_evening(us_date, filled_dt))
 
 
 def has_us_session_fill_in_state(st: dict, symbol: str, us_date: str, cycles: "CycleTracker") -> bool:
-    """fill_log·회차 trades에 해당 미국 거래일 체결이 있는지."""
+    """fill_log·회차 trades — 저녁 LOC 스킵 대상 체결 여부."""
     sym = symbol.upper()
     for entry in st.get("fill_log") or []:
         if str(entry.get("symbol") or sym).upper() != sym:
             continue
-        if _fill_matches_us_date(entry, us_date):
+        if fill_blocks_evening_loc(entry, us_date):
             return True
     cur = cycles.get_symbol_data(sym).get("current") or {}
     for tr in cur.get("trades") or []:
-        if _fill_matches_us_date(tr, us_date):
+        if fill_blocks_evening_loc(tr, us_date):
             return True
     return False
 
@@ -63,12 +87,12 @@ def has_us_session_fill_in_state(st: dict, symbol: str, us_date: str, cycles: "C
 def has_us_session_fill_from_broker(
     broker: "TossClient", symbol: str, us_date: str, *, days: int = 5,
 ) -> bool:
-    """토스 CLOSED 체결 — state 미반영(앱 직접 매매) 대비."""
+    """토스 CLOSED 체결 — state 미반영(앱 외 매매) 대비."""
     try:
         fills = broker.list_broker_fills(symbol, days=days, max_orders=40)
     except Exception:
         return False
     for fill in fills:
-        if _fill_matches_us_date(fill, us_date):
+        if fill_blocks_evening_loc(fill, us_date):
             return True
     return False

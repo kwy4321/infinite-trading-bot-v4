@@ -1,6 +1,6 @@
 """미국 장 마감 LOC — 토스 Open API LIMIT + CLS.
 
-미국 본장(정규장) 개장 시각에 CLS 주문 접수 → 종가 경매에서 조건 충족 시 체결.
+프리마켓(한국 18:05 KST)에 CLS 주문 접수 → 종가 경매에서 조건 충족 시 체결.
 """
 
 from enum import Enum
@@ -13,12 +13,12 @@ class JobPhase(str, Enum):
     JOB4_REPORT = "job4"
 
 
-# KST 일정 — LOC 자동 접수는 본장 개장(KST), 체결 반영은 새벽 job4
+# KST 일정 — 계획 18:00 · LOC 접수 18:05 · 체결 반영 새벽 job4
 JOB_SCHEDULE_KST = {
     JobPhase.JOB4_REPORT: {"summer": (6, 15), "winter": (6, 15)},
     "morning_briefing": {"summer": (7, 0), "winter": (7, 0)},
-    # 9:30 ET → 서머 22:30 KST / 윈터 23:30 KST
-    "regular_open_loc": {"summer": (22, 30), "winter": (23, 30)},
+    "premarket_plan": {"summer": (18, 0), "winter": (18, 0)},
+    "premarket_loc": {"summer": (18, 5), "winter": (18, 5)},
 }
 
 
@@ -42,7 +42,7 @@ def gate_orders_by_close_price(filtered: dict, price: float) -> dict:
 
 
 def resolve_loc_side_conflict(gated: dict) -> dict:
-    """매수·매도 LOC가 동시에 조건 충족 시 매도 우선 — 토스 opposite-pending(422) 방지."""
+    """DRY_RUN 종가 시뮬 — 매수·매도 동시 조건 충족 시 매도 우선 (당일 1체결)."""
     buys = list(gated.get("buy_orders") or [])
     sells = list(gated.get("sell_orders") or [])
     if buys and sells:
@@ -57,23 +57,27 @@ def prepare_loc_orders(filtered: dict, close_price: float) -> list[dict]:
     return picked["buy_orders"] + picked["sell_orders"]
 
 
-def pick_loc_submit_side(filtered: dict, plan: dict) -> dict:
-    """CLS 접수 시 매수·매도 동시 불가 — 전략상 한쪽만 제출."""
-    buys = list(filtered.get("buy_orders") or [])
-    sells = list(filtered.get("sell_orders") or [])
-    if not buys or not sells:
-        return {"buy_orders": buys, "sell_orders": sells}
-    mode = str(plan.get("mode") or "")
-    cur = float(plan.get("current_price") or 0)
-    star = float(plan.get("star_price") or 0)
-    if mode == "REVERSE" and sells:
-        return {"buy_orders": [], "sell_orders": sells}
-    if star > 0 and cur >= star and sells:
-        return {"buy_orders": [], "sell_orders": sells}
-    return {"buy_orders": buys, "sell_orders": []}
+def _cap_sell_orders(sells: list[dict], plan: dict) -> list[dict]:
+    """매도 LOC 합계가 보유 주수를 넘지 않도록."""
+    cap = int(plan.get("holdings_qty") or 0)
+    if cap <= 0:
+        return sells
+    total = sum(int(o.get("qty") or 0) for o in sells)
+    if total <= cap:
+        return sells
+    out: list[dict] = []
+    remaining = cap
+    for o in sells:
+        q = min(int(o.get("qty") or 0), remaining)
+        if q <= 0:
+            continue
+        out.append({**o, "qty": q})
+        remaining -= q
+    return out
 
 
 def prepare_loc_submit_orders(filtered: dict, plan: dict) -> list[dict]:
-    """장중 CLS 접수용 — 계획 지정가 그대로, 종가는 거래소가 판정."""
-    picked = pick_loc_submit_side(filtered, plan)
-    return picked["buy_orders"] + picked["sell_orders"]
+    """장중 CLS 접수 — 매수·매도 LOC 전부 (종가에서 조건 맞는 것만 체결)."""
+    buys = list(filtered.get("buy_orders") or [])
+    sells = _cap_sell_orders(list(filtered.get("sell_orders") or []), plan)
+    return buys + sells

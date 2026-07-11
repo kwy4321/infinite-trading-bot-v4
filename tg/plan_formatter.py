@@ -182,7 +182,7 @@ def format_plans(app: App, symbols: list[str], premium: int) -> str:
     blocks = [
         section("오늘 주문계획", "📋"),
         dim(f"{today} KST · 미국 거래일 {us_close_date}"),
-        dim(f"※ 종가 LOC 매매 계획 · 본장 개장 {open_label} KST LIMIT+CLS 접수 · 체결은 종가 경매"),
+        dim("※ 종가 LOC · 18:00 계획 · 18:05 매수·매도 CLS 동시 접수 · 체결은 종가 경매"),
         "",
     ]
     if not symbols:

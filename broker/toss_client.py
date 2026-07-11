@@ -286,6 +286,48 @@ class TossClient:
         self._invalidate_holdings_cache()
         return self._parse_order_response(data)
 
+    def cancel_order(self, order_id: str) -> dict:
+        if self.dry_run or not order_id:
+            return {"order_id": order_id}
+        data = self._request(
+            "POST", f"/api/v1/orders/{order_id}/cancel", "ORDER", account=True,
+        )
+        self._invalidate_holdings_cache()
+        result = data.get("result", data)
+        return result if isinstance(result, dict) else {"order_id": order_id}
+
+    def cancel_open_cls_orders(
+        self, symbol: str, *, side: str | None = None,
+    ) -> list[str]:
+        """미체결 CLS(LIMIT+CLS) 취소 — 반대매매 pending(422) 방지."""
+        if self.dry_run:
+            return []
+        canceled: list[str] = []
+        want = side.upper() if side else None
+        try:
+            open_orders = self.get_open_orders(symbol)
+        except Exception:
+            logger.exception("get_open_orders failed %s", symbol)
+            return canceled
+        for o in open_orders:
+            if str(o.get("orderType") or "").upper() != "LIMIT":
+                continue
+            if str(o.get("timeInForce") or "").upper() != "CLS":
+                continue
+            o_side = str(o.get("side") or "").upper()
+            if want and o_side != want:
+                continue
+            oid = str(o.get("orderId") or o.get("order_id") or "")
+            if not oid:
+                continue
+            try:
+                self.cancel_order(oid)
+                canceled.append(oid)
+                logger.info("Canceled open CLS %s %s %s", symbol, o_side, oid)
+            except Exception:
+                logger.exception("cancel CLS failed %s", oid)
+        return canceled
+
     def place_market_order(self, symbol: str, side: str, qty: int) -> dict:
         """시장가 주문. order_id 반환."""
         client_order_id = str(uuid.uuid4())
@@ -649,6 +691,33 @@ class TossClient:
             return start <= now_t <= end
         return now_t >= start or now_t <= end
 
+    def _us_trading_day(self, cal: dict | None = None) -> dict:
+        """현재 시각 기준 미국 거래일 캘린더 항목 (today만 쓰면 저녁 KST에서 빗나갈 수 있음)."""
+        cal = cal or self._get_us_market_calendar_cached()
+        target = self.target_us_date_for_ny_job()
+        day = self.find_us_market_day(cal, target)
+        if day and day.get("regularMarket"):
+            return day
+        return cal.get("today") or {}
+
+    def _in_session_grace(self, now_kst: datetime.datetime, session: dict | None, *, minutes: int = 3) -> bool:
+        """스케줄 Job이 세션 시작 직전(±몇 분)에 돌아도 허용."""
+        if not session:
+            return False
+        start = self._parse_session_time(session["startTime"])
+        end = self._parse_session_time(session["endTime"])
+        grace_start = (
+            datetime.datetime.combine(now_kst.date(), start, tzinfo=KST)
+            - datetime.timedelta(minutes=minutes)
+        ).time()
+        now_t = now_kst.time()
+        if grace_start <= start:
+            if grace_start <= now_t < start:
+                return True
+        if start <= end:
+            return start <= now_t <= end
+        return now_t >= start or now_t <= end
+
     def _market_status_from_calendar(self, day: dict) -> str:
         if not day.get("regularMarket"):
             return "closed"
@@ -707,18 +776,28 @@ class TossClient:
         """프리마켓·정규장 — LOC(CLS) 접수 가능 구간."""
         if self.dry_run:
             return True
+        fb = self._market_status_fallback()
+        fb_ok = fb in ("premarket", "regular")
         try:
             cal = self._get_us_market_calendar_cached()
-            day = cal.get("today") or {}
-            if not day.get("regularMarket"):
-                return False
+            day = self._us_trading_day(cal)
+            if not day:
+                return fb_ok
             now_kst = datetime.datetime.now(KST)
             for session in (day.get("preMarket"), day.get("regularMarket")):
-                if session and self._in_session(now_kst, session):
+                if not session:
+                    continue
+                if self._in_session(now_kst, session) or self._in_session_grace(now_kst, session):
                     return True
+            if fb_ok:
+                logger.info(
+                    "LOC session: calendar preMarket miss — NY fallback (%s)", fb,
+                )
+                return True
+            return False
         except Exception:
-            logger.exception("is_us_loc_session_now calendar check failed")
-        return self._market_status_fallback() in ("premarket", "regular")
+            logger.exception("US LOC session check failed")
+            return fb_ok
 
     def is_us_regular_session_now(self) -> bool:
         """미국 정규장 시간."""
@@ -769,6 +848,7 @@ class TossClient:
             return self._market_status_fallback()
         try:
             cal = self._get_us_market_calendar_cached()
-            return self._market_status_from_calendar(cal.get("today", {}))
+            day = self._us_trading_day(cal)
+            return self._market_status_from_calendar(day)
         except Exception:
             return self._market_status_fallback()

@@ -9,15 +9,15 @@ def _side_ko(side: str) -> str:
 
 def format_market_open(now_kst: str) -> str:
     return (
-        f"🔔 <b>미국 본장 개장</b>  <i>{now_kst} KST</i>\n"
-        f"{dim('오늘 LOC 계획을 보내고, 본장에서 LIMIT+CLS로 접수합니다. 체결은 종가 경매·새벽 sync 반영.')}"
+        f"🔔 <b>미국 프리마켓</b>  <i>{now_kst} KST</i>\n"
+        f"{dim('18:00 계획 · 18:05 매수·매도 CLS 동시 접수. 체결은 종가 경매·새벽 sync 반영.')}"
     )
 
 
 def format_market_open_start(now_kst: str, symbol_count: int) -> str:
     sym = f"{symbol_count}종목" if symbol_count else "—"
     return (
-        f"🔔 <b>본장 LOC 접수</b>  <i>{now_kst} KST</i>\n"
+        f"🔔 <b>프리장 LOC 접수</b>  <i>{now_kst} KST</i>\n"
         f"CLS 주문 접수 · {code(sym)}"
     )
 

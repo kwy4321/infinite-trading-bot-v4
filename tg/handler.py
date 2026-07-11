@@ -678,7 +678,7 @@ class TelegramHandler:
             await context.bot.send_message(
                 chat_id,
                 "⏭️ 지금은 미국 프리마켓·정규장 시간이 아니에요. "
-                "LOC(CLS)는 본장 개장 후 또는 프리마켓·장중에 접수할 수 있어요.",
+                "LOC(CLS)는 프리장(18:05 KST) 또는 장중에 접수할 수 있어요.",
             )
             return
         target = TossClient.target_us_date_for_evening_loc()
@@ -689,12 +689,16 @@ class TelegramHandler:
             )
             return
         ref = float(pos["current_price"] or 0)
+        plan["holdings_qty"] = int(st.get("qty") or 0)
         from strategy.order_planner import prepare_loc_submit_orders
         filtered = {
             "buy_orders": plan.get("buy_orders", []),
             "sell_orders": plan.get("sell_orders", []),
         }
         if is_live:
+            await asyncio.to_thread(
+                self.app.broker.cancel_open_cls_orders, symbol,
+            )
             orders = prepare_loc_submit_orders(filtered, plan)
             wait_fill = False
         else:

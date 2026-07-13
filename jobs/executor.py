@@ -17,7 +17,7 @@ from strategy.order_planner import (
     prepare_loc_submit_orders,
 )
 from strategy.fill_reconciler import FillReconciler
-from strategy.market_schedule import regular_open_kst
+from strategy.market_schedule import loc_auto_submit_kst
 from strategy.session_fill import (
     has_us_session_fill_from_broker,
     has_us_session_fill_in_state,
@@ -56,25 +56,25 @@ class JobExecutor:
     def _is_dry(self) -> bool:
         return self.app.settings.dry_run or not self.app.settings.has_toss
 
-    async def _regular_open_kst(self, us_date: str) -> datetime:
-        return regular_open_kst(us_date)
+    async def _loc_auto_submit_kst(self, us_date: str) -> datetime:
+        return loc_auto_submit_kst(us_date)
 
     async def _already_traded_for_us_session(
         self, symbol: str, us_date: str, *, st: dict | None = None,
     ) -> bool:
-        """해당 KST일 본장 개장 전 LOC 접수가 있으면 True."""
+        """해당 KST일 18:05 이전 LOC 접수가 있으면 True."""
         if st is None:
             st = self.app.state.load(symbol)
-        open_kst = await self._regular_open_kst(us_date)
+        submit_kst = await self._loc_auto_submit_kst(us_date)
         if has_us_session_fill_in_state(
-            st, symbol, us_date, self.app.cycles, open_kst,
+            st, symbol, us_date, self.app.cycles, submit_kst,
         ):
             return True
         if not self._is_dry():
             try:
                 return await asyncio.to_thread(
                     has_us_session_fill_from_broker,
-                    self.app.broker, symbol, us_date, open_kst,
+                    self.app.broker, symbol, us_date, submit_kst,
                 )
             except Exception:
                 logger.exception("broker session fill check failed %s", symbol)
@@ -449,7 +449,7 @@ class JobExecutor:
                     "skipped": True,
                     "line": (
                         f"⏭️ [{symbol}] {us_date} — "
-                        f"본장 시작 전 LOC 이미 접수됨, 스킵"
+                        f"18:05 이전 LOC 이미 접수됨, 스킵"
                     ),
                     "grad_msg": None,
                 }
@@ -507,7 +507,7 @@ class JobExecutor:
 
     def _phase_label(self, phase: JobPhase, *, submit_at_open: bool = False) -> str:
         if phase in _LOC_PHASES:
-            return "본장 LOC" if submit_at_open else "종가 LOC"
+            return "프리장 LOC" if submit_at_open else "종가 LOC"
         return {
             JobPhase.JOB2_SETTLE: "체결정리",
         }.get(phase, phase.value)
@@ -554,7 +554,7 @@ class JobExecutor:
             if not open_:
                 hint = ""
                 if phase in _LOC_PHASES and submit_at_open:
-                    hint = "\n(미국 본장 개장일에만 CLS 접수)"
+                    hint = "\n(미국 프리마켓·정규장 개장일에만 CLS 접수)"
                 await self._notify(
                     f"📅 <b>{us_date}</b> 미국 정규장 휴장 — {label} Job 스킵 (주문 없음){hint}",
                     html=True,
@@ -614,7 +614,12 @@ class JobExecutor:
         elif lines:
             await self._notify("\n".join(lines))
 
-    async def run_morning_briefing(self) -> None:
+    async def run_morning_briefing(self, *, scheduled: bool = True) -> None:
+        if scheduled:
+            from briefing.market_context import should_skip_scheduled_briefing
+            if should_skip_scheduled_briefing():
+                logger.info("morning briefing skipped — US market closed (Sun/Mon KST)")
+                return
         try:
             from briefing.morning_briefing import build_briefing
             text = await build_briefing(self.app)
@@ -677,6 +682,22 @@ class JobExecutor:
                 "premarket LOC skipped — all symbols already filled for %s", target,
             )
             self.app.runtime.mark_job3_run(target)
+            return
+
+        if not self._can_submit_loc_now():
+            logger.warning("premarket LOC skipped — not in US premarket/regular session")
+            status = ""
+            try:
+                status = self.app.broker.get_us_market_status()
+            except Exception:
+                pass
+            await self._notify(
+                "⚠️ 프리마켓 LOC 접수 시간이 아니에요"
+                + (f" (현재: {status})" if status else "")
+                + ".\n"
+                f"{dim('프리마켓·정규장 중 /run job3 로 재시도하세요.')}",
+                html=True,
+            )
             return
 
         premium = self.app.runtime.premium_default()
@@ -853,7 +874,7 @@ class JobExecutor:
                 )
                 await self._notify(
                     f"⏭️ <b>LOC 접수 스킵</b>\n"
-                    f"📅 <b>{target}</b> — 본장 시작 전 LOC 이미 접수됨\n"
+                    f"📅 <b>{target}</b> — 18:05 이전 LOC 이미 접수됨\n"
                     + "\n".join(f"· {s}" for s in skipped),
                     html=True,
                 )
@@ -877,7 +898,7 @@ class JobExecutor:
             "job2": self.run_job2,
             "job3": lambda **kw: self.run_job3(premium=premium, scheduled=False),
             "job4": self.run_job4,
-            "briefing": self.run_morning_briefing,
+            "briefing": lambda **kw: self.run_morning_briefing(scheduled=False),
         }
         fn = mapping.get(name.lower())
         if fn:

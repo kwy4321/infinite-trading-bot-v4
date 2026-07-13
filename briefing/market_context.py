@@ -25,6 +25,16 @@ def _fmt_us_date(iso: str) -> str:
         return iso[:10]
 
 
+def should_skip_scheduled_briefing(kst_now: datetime.datetime | None = None) -> bool:
+    """KST 일·월 07:00 — 미국장 주말·월요일 장전이라 자동 브리핑 생략.
+
+    - 일요일: 토·일 미국장 휴장, 새 마감 없음
+    - 월요일: 금요일 마감은 토요일 브리핑에서 이미 다룸, 월요일 장은 당일 밤 개장
+    """
+    now = kst_now or datetime.datetime.now(KST)
+    return now.weekday() in (6, 0)  # 일=6, 월=0
+
+
 def get_briefing_market_context(broker: "TossClient | None") -> dict:
     """7시 KST 브리핑 — 직전 미국 정규장 마감일·휴장 여부.
 

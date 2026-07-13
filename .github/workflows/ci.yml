@@ -39,3 +39,6 @@ jobs:
 
       - name: Session fill logic test
         run: python scripts/test_session_fill.py
+
+      - name: Briefing schedule test
+        run: python scripts/test_briefing_schedule.py

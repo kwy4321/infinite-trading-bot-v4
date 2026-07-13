@@ -831,10 +831,10 @@ class TossClient:
         return TossClient.target_us_date_for_morning_job(kst_now)
 
     def get_us_regular_market_open_kst(self, us_date: str | None = None) -> datetime.datetime:
-        """미국 본장 개장 시각 — KST 고정 (서머 22:30 / 윈터 23:30)."""
-        from strategy.market_schedule import regular_open_kst
+        """자동 LOC 접수 시각 — KST 18:05."""
+        from strategy.market_schedule import loc_auto_submit_kst
         us_date = us_date or self.target_us_date_for_evening_loc()
-        return regular_open_kst(us_date)
+        return loc_auto_submit_kst(us_date)
 
     @staticmethod
     def target_us_date_for_ny_job(kst_now: datetime.datetime | None = None) -> str:

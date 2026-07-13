@@ -28,8 +28,8 @@ def format_market_open_report(
     ok: int,
     total: int,
 ) -> str:
-    """본장 LOC — 종목별 접수 결과."""
-    header = f"🔔 <b>본장 LOC 접수 완료</b>  <i>{now_kst}</i>"
+    """프리마켓 LOC — 종목별 접수 결과."""
+    header = f"🔔 <b>프리마켓 LOC 접수 완료</b>  <i>{now_kst}</i>"
     if total <= 0:
         return f"{header}\n{dim('오늘 예약할 주문 없음')}"
     body = "\n".join(symbol_lines)

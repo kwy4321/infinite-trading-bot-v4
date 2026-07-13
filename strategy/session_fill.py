@@ -1,11 +1,10 @@
-"""미국 본장(정규장) 개장 시각 LOC — 당일 중복 접수 방지.
+"""미국 프리마켓 18:05 KST LOC — 당일 중복 접수 방지.
 
 타깃 미국 거래일 = KST 당일 (``target_us_date_for_evening_loc``).
 저녁(18:05 KST) 프리마켓 LOC 접수와 같은 미국 거래일 중복 방지.
 - 계획(18:00): 알림만 — 스킵하지 않음
-- LOC 접수(18:05): target US date에 체결 이력이 있으면 주문 생략
+- LOC 접수(18:05): 18:05 이전 접수 이력이 있으면 주문 생략
 """
-
 from __future__ import annotations
 
 import datetime
@@ -41,15 +40,15 @@ def us_session_date_from_when(raw: str) -> str | None:
 
 
 def regular_open_kst_fallback(us_date: str) -> datetime.datetime:
-    """하위 호환 — KST 고정 본장 개장 시각."""
-    from strategy.market_schedule import regular_open_kst as _kst_open
-    return _kst_open(us_date)
+    """하위 호환 — KST 18:05 자동 접수 시각."""
+    from strategy.market_schedule import loc_auto_submit_kst
+    return loc_auto_submit_kst(us_date)
 
 
 def order_submitted_before_regular_open(
     entry: dict, us_date: str, open_kst: datetime.datetime,
 ) -> bool:
-    """KST us_date 당일, 본장 개장 시각 이전 주문 접수 여부."""
+    """KST us_date 당일, 자동 접수 시각(18:05) 이전 주문 접수 여부."""
     ordered_raw = str(
         entry.get("ordered_at") or entry.get("submitted_at") or entry.get("at") or ""
     )
@@ -69,7 +68,7 @@ def has_loc_order_before_regular_open(
     cycles: "CycleTracker",
     open_kst: datetime.datetime,
 ) -> bool:
-    """fill_log·회차 trades·tracked_orders — 본장 전 LOC 접수 여부."""
+    """fill_log·회차 trades·tracked_orders — 18:05 이전 LOC 접수 여부."""
     sym = symbol.upper()
     pools = list(st.get("fill_log") or []) + list(st.get("tracked_orders") or [])
     for entry in pools:
@@ -103,7 +102,6 @@ def has_loc_order_before_regular_open_from_broker(
     return False
 
 
-# 하위 호환 별칭 (executor/plan_formatter)
 def has_us_session_fill_in_state(
     st: dict, symbol: str, us_date: str, cycles: "CycleTracker", open_kst: datetime.datetime,
 ) -> bool:

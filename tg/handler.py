@@ -49,9 +49,9 @@ from tg.ui import DIVIDER, badge_on, code, quote, row, section, usd
 logger = logging.getLogger(__name__)
 
 JOB_LABELS = {
-    "job1": "본장 LOC (job3와 동일)",
+    "job1": "프리장 LOC (job3와 동일)",
     "job2": "(미사용)",
-    "job3": "본장 LOC (매수·매도 CLS 접수)",
+    "job3": "프리장 LOC (매수·매도 CLS 접수)",
     "job4": "오늘 마무리",
     "briefing": "아침 브리핑",
     "morning_briefing": "아침 브리핑",
@@ -367,7 +367,7 @@ class TelegramHandler:
         label = JOB_LABELS.get(name, name)
         await context.bot.send_message(chat_id, f"⏳ {label} 실행 중...")
         if name == "briefing":
-            await self.executor.run_morning_briefing()
+            await self.executor.run_morning_briefing(scheduled=False)
         elif name == "job3":
             await self.executor.run_job3(scheduled=False)
         else:
@@ -685,7 +685,7 @@ class TelegramHandler:
         if await self.executor._already_traded_for_us_session(symbol, target, st=st):
             await context.bot.send_message(
                 chat_id,
-                f"⏭️ [{symbol}] {target} — 본장 시작 전 LOC 이미 접수됨. 스킵합니다.",
+                f"⏭️ [{symbol}] {target} — 18:05 이전 LOC 이미 접수됨. 스킵합니다.",
             )
             return
         ref = float(pos["current_price"] or 0)

@@ -224,6 +224,9 @@ class JobExecutor:
                                 "filled_at": fill_time,
                                 "at": fill_time,
                                 "source": "bot",
+                                "action": filled_order.get("action") or order.get("action") or (
+                                    "BUY_FULL" if side == "BUY" else None
+                                ),
                                 "t_before": t_before,
                                 "t_after": float(st.get("T", 0.0)),
                                 "qty_after": int(st.get("qty", 0)),
@@ -346,6 +349,9 @@ class JobExecutor:
                     "filled_at": fill_time,
                     "at": fill_time,
                     "source": "bot",
+                    "action": filled_order.get("action") or order.get("action") or (
+                        "BUY_FULL" if side == "BUY" else None
+                    ),
                     "t_before": t_before,
                     "t_after": float(st.get("T", 0.0)),
                     "qty_after": int(st.get("qty", 0)),

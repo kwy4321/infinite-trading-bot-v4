@@ -42,3 +42,6 @@ jobs:
 
       - name: Briefing schedule test
         run: python scripts/test_briefing_schedule.py
+
+      - name: News summarizer test
+        run: python scripts/test_news_summarizer.py

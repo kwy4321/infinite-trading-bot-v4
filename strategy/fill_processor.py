@@ -14,7 +14,7 @@ class FillProcessor:
         qty = int(order["qty"])
         price = float(order["price"])
         usd = price * qty
-        action = order.get("action", "BUY_FULL")
+        action = order.get("action") or "BUY_FULL"
         t_before = float(state["T"])
         t_after = self.strategy.calc_next_t(t_before, action)
 

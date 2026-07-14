@@ -128,3 +128,25 @@ def _build_sync(broker: "TossClient | None") -> str:
 
 async def fetch_index_summary(broker: "TossClient | None" = None) -> str:
     return await asyncio.to_thread(_build_sync, broker)
+
+
+def fetch_index_snapshot(broker: "TossClient | None" = None) -> dict:
+    """AI 시황 프롬프트용 — 나스닥·SOX 수치 스냅샷."""
+    ctx = get_briefing_market_context(broker)
+    indices: list[dict] = []
+    for symbol, name in _INDICES:
+        data = _fetch_one(symbol, ctx["session_date"])
+        if data is None:
+            indices.append({"symbol": symbol, "name": name, "ok": False})
+            continue
+        indices.append({
+            "symbol": symbol,
+            "name": name,
+            "ok": True,
+            "price": data["price"],
+            "change": data["change"],
+            "pct": data["pct"],
+            "session_label": data["session_label"],
+            "prev_label": data["prev_label"],
+        })
+    return {**ctx, "indices": indices}

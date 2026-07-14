@@ -510,7 +510,7 @@ class FillReconciler:
                 best = (diff, o)
         if best:
             o = best[1]
-            return o.get("action", "BUY_FULL"), float(o["price"]), o.get("desc", "주문계획 매칭")
+            return o.get("action") or "BUY_FULL", float(o["price"]), o.get("desc", "주문계획 매칭")
 
         t_val = float(st.get("T", 0.0))
         one_buy = float(plan.get("one_buy_amount", 0.0))

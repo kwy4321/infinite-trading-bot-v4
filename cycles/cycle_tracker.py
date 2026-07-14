@@ -467,10 +467,12 @@ class CycleTracker:
             merged["ordered_at"] = ex_when
             merged["filled_at"] = ex_when
             merged["at"] = ex_when
-        for key in ("order_id", "fill_id", "source", "note"):
+        for key in ("order_id", "fill_id", "source", "note", "action", "t_before", "t_after", "avg_after", "qty_after"):
             val = incoming.get(key)
             if val not in (None, ""):
                 merged[key] = val
+            elif existing.get(key) not in (None, ""):
+                merged[key] = existing[key]
         return merged
 
     @classmethod
@@ -564,7 +566,7 @@ class CycleTracker:
         net = 0
         selected: list[dict] = []
         for fill in reversed(sorted_fills):
-            side = str(fill.get("side") or "").upper()
+            side = cls._normalize_side(fill.get("side"))
             qty = int(fill.get("qty") or 0)
             if qty <= 0:
                 continue
@@ -580,7 +582,7 @@ class CycleTracker:
         selected.reverse()
         if net == target_qty:
             return selected
-        buys = [f for f in sorted_fills if str(f.get("side") or "").upper() == "BUY"]
+        buys = [f for f in sorted_fills if cls._normalize_side(f.get("side")) == "BUY"]
         total = 0
         out: list[dict] = []
         for fill in buys:
@@ -622,6 +624,13 @@ class CycleTracker:
         fills = self.select_position_fills(broker_fills, target_qty)
         if not fills:
             return 0
+        data = self._load_all()
+        sym = self._get(data, symbol)
+        stored_by_oid: dict[str, dict] = {}
+        for tr in (sym.get("current") or {}).get("trades") or []:
+            oid = str(tr.get("order_id") or "").strip()
+            if oid:
+                stored_by_oid[oid] = tr
         log_by_oid: dict[str, dict] = {}
         for entry in fill_log or []:
             oid = str(entry.get("order_id") or "").strip()
@@ -630,11 +639,11 @@ class CycleTracker:
         new_trades: list[dict] = []
         for fill in fills:
             oid = str(fill.get("order_id") or "").strip()
-            entry = log_by_oid.get(oid)
+            entry = log_by_oid.get(oid) or stored_by_oid.get(oid)
             when = fill.get("ordered_at") or fill.get("filled_at") or ""
             tr: dict = {
                 "symbol": symbol.upper(),
-                "side": str(fill.get("side") or "").upper(),
+                "side": cls._normalize_side(fill.get("side")),
                 "qty": int(fill.get("qty") or 0),
                 "price": round(float(fill.get("price") or 0), 2),
                 "ordered_at": when,
@@ -644,25 +653,82 @@ class CycleTracker:
                 "source": "broker",
             }
             if entry:
-                tr["fill_id"] = entry.get("id")
-                tr["action"] = entry.get("action")
-                tr["t_before"] = entry.get("t_before")
-                tr["t_after"] = entry.get("t_after")
-                tr["avg_after"] = entry.get("avg_after")
-                tr["qty_after"] = entry.get("qty_after")
-                if entry.get("note"):
-                    tr["note"] = entry.get("note")
+                for key in (
+                    "fill_id", "action", "t_before", "t_after",
+                    "avg_after", "qty_after", "note",
+                ):
+                    val = entry.get(key)
+                    if val not in (None, ""):
+                        tr[key] = val
             new_trades.append(tr)
-        data = self._load_all()
-        sym = self._get(data, symbol)
         cur = sym.get("current")
         if not cur:
             return 0
         cur["trades"] = new_trades
         self._recompute_cycle_totals_from_trades(cur)
         self._update_cycle_started_at(cur)
+        self._recompute_t_metadata(new_trades)
         self._save_all(data)
         return len(new_trades)
+
+    @staticmethod
+    def _normalize_side(raw: str | None) -> str:
+        s = str(raw or "").upper().strip()
+        if s in ("BUY", "B", "PURCHASE", "LONG", "매수"):
+            return "BUY"
+        if s in ("SELL", "S", "SALE", "SHORT", "매도"):
+            return "SELL"
+        return s
+
+    @classmethod
+    def _recompute_t_metadata(cls, trades: list[dict]) -> int:
+        """매매 목록 T·action 순차 재계산 (누락·불일치 보정)."""
+        from strategy.strategy_v40 import InfiniteStrategyV40
+
+        strat = InfiniteStrategyV40()
+        if not trades:
+            return 0
+        updated = 0
+        running_t = 0.0
+        for tr in sorted(trades, key=cls._trade_sort_key):
+            side = cls._normalize_side(tr.get("side"))
+            if side not in ("BUY", "SELL"):
+                continue
+            tr["side"] = side
+            t_before = running_t
+            if side == "BUY":
+                act = tr.get("action") or "BUY_FULL"
+                t_after = strat.calc_next_t(t_before, act)
+                if not tr.get("action"):
+                    tr["action"] = act
+            else:
+                act = tr.get("action")
+                t_after = strat.calc_next_t(t_before, act) if act else t_before
+                if int(tr.get("qty_after", -1)) == 0:
+                    t_after = 0.0
+            new_tb = round(float(t_before), 2)
+            new_ta = round(float(t_after), 2)
+            if tr.get("t_before") != new_tb or tr.get("t_after") != new_ta:
+                updated += 1
+            tr["t_before"] = new_tb
+            tr["t_after"] = new_ta
+            running_t = float(t_after)
+        return updated
+
+    def backfill_trade_t_metadata(self, symbol: str) -> int:
+        """회차 trades — t_before/t_after 누락·불일치 시 순차 재계산."""
+        data = self._load_all()
+        sym = self._get(data, symbol)
+        cur = sym.get("current")
+        if not cur:
+            return 0
+        trades = list(cur.get("trades") or [])
+        if not trades:
+            return 0
+        n = self._recompute_t_metadata(trades)
+        cur["trades"] = trades
+        self._save_all(data)
+        return n
 
     @classmethod
     def _update_cycle_started_at(cls, cur: dict) -> None:
@@ -677,10 +743,8 @@ class CycleTracker:
 
     @classmethod
     def _collect_trades(cls, sym_data: dict, symbol: str, fill_log: list | None = None) -> list[dict]:
-        """현재 회차 매매 내역 — 저장된 trades 우선 (fill_log 병합으로 날짜 덮어쓰지 않음)."""
+        """현재 회차 매매 내역 — 저장 trades + fill_log 병합 후 T 재계산."""
         stored = list((sym_data.get("current") or {}).get("trades") or [])
-        if stored:
-            return cls._dedupe_trades(stored)
         by_key: dict[str, dict] = {}
         for tr in stored:
             key = cls._trade_dedup_key(tr)
@@ -692,7 +756,9 @@ class CycleTracker:
                 by_key[key] = cls._merge_trade(by_key[key], tr)
             else:
                 by_key[key] = tr
-        return cls._dedupe_trades(list(by_key.values()))
+        out = cls._dedupe_trades(list(by_key.values()))
+        cls._recompute_t_metadata(out)
+        return out
 
     @classmethod
     def display_trades_from_broker(
@@ -723,7 +789,7 @@ class CycleTracker:
             when = fill.get("ordered_at") or fill.get("filled_at") or ""
             tr: dict = {
                 "symbol": symbol.upper(),
-                "side": str(fill.get("side") or "").upper(),
+                "side": cls._normalize_side(fill.get("side")),
                 "qty": int(fill.get("qty") or 0),
                 "price": round(float(fill.get("price") or 0), 2),
                 "ordered_at": when,
@@ -741,6 +807,7 @@ class CycleTracker:
                     if meta.get(key) not in (None, ""):
                         tr[key] = meta[key]
             out.append(tr)
+        cls._recompute_t_metadata(out)
         return cls._dedupe_trades(out)
 
     def sync_trades_from_fill_log(self, symbol: str, fill_log: list, principal: float) -> None:
@@ -764,6 +831,7 @@ class CycleTracker:
             trades.append(tr)
             by_key[key] = len(trades) - 1
         cur["trades"] = self._dedupe_trades(trades)[-100:]
+        self._recompute_t_metadata(cur["trades"])
         self._save_all(data)
 
     def reconcile_trade_dates(self, symbol: str, broker_fills: list[dict]) -> int:
@@ -792,6 +860,7 @@ class CycleTracker:
             return
         trades = cur.get("trades") or []
         cur["trades"] = self._dedupe_trades(trades)[-100:]
+        self._recompute_t_metadata(cur["trades"])
         self._save_all(data)
 
     @classmethod
@@ -812,11 +881,18 @@ class CycleTracker:
         total_usd = round(exec_price * qty, 2)
         t_after = tr.get("t_after")
         t_before = tr.get("t_before")
-        if t_before not in (None, "") and float(t_before) != float(t_after or 0):
-            t_txt = f"T {float(t_before):g}→{float(t_after):g}"
-        elif t_after not in (None, ""):
-            t_txt = f"T {float(t_after):g}"
-        else:
+        try:
+            has_before = t_before not in (None, "")
+            has_after = t_after not in (None, "")
+            if has_before and has_after and float(t_before) != float(t_after):
+                t_txt = f"T {float(t_before):g}→{float(t_after):g}"
+            elif has_after:
+                t_txt = f"T {float(t_after):g}"
+            elif has_before:
+                t_txt = f"T {float(t_before):g}"
+            else:
+                t_txt = "T —"
+        except (TypeError, ValueError):
             t_txt = "T —"
         prefix = f"<b>{index}.</b> " if index is not None else ""
         if qty > 1:
@@ -852,7 +928,13 @@ class CycleTracker:
         fill_log: list | None = None,
         *,
         broker_fills: list[dict] | None = None,
+        principal: float | None = None,
     ) -> str:
+        if fill_log and principal:
+            self.ensure_current(symbol, float(principal))
+            self.sync_trades_from_fill_log(symbol, fill_log, float(principal))
+        else:
+            self.backfill_trade_t_metadata(symbol)
         sym = self.get_symbol_data(symbol)
         from tg.ui import pnl_line, trend_arrow
         lines = [f"📒 <b>[{symbol}] 회차 기록</b>\n"]
@@ -864,6 +946,8 @@ class CycleTracker:
             )
         else:
             trades = self._collect_trades(sym, symbol, fill_log)
+
+        self._recompute_t_metadata(trades)
 
         if live:
             lines += [
@@ -901,6 +985,7 @@ class CycleTracker:
                     f"{trend_arrow(c['profit_usd'] >= 0)} {sign}${c['profit_usd']:,.2f} ({sign}{c['profit_pct']:.2f}%)"
                 )
                 c_trades = self._dedupe_trades(c.get("trades") or [])
+                self._recompute_t_metadata(c_trades)
                 for j, tr in enumerate(c_trades[-10:], 1):
                     lines.append(f"  {self.format_trade_line(symbol, tr, index=j)}")
                 lines.append("")

@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 from app import App
 from briefing.index_fetcher import fetch_index_summary
 from briefing.market_context import get_briefing_market_context
+from briefing.news_summarizer import summarize_market_analysis
 from briefing.strategy_briefing import format_strategy_briefing
 
 
@@ -21,6 +22,12 @@ async def build_briefing(app: App) -> str:
             f"지수는 직전 마감일 기준입니다.\n"
         )
     lines.append(await fetch_index_summary(broker))
+    analysis = await summarize_market_analysis(
+        app.settings, broker, market_ctx=ctx,
+    )
+    if analysis:
+        lines.append("")
+        lines.append(analysis)
     lines.append("")
     lines.append(
         format_strategy_briefing(

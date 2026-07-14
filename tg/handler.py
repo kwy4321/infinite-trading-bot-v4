@@ -607,12 +607,28 @@ class TelegramHandler:
                     try:
                         pos = self.app.broker.get_holdings_item(sym)
                         price = float(pos.get("current_price") or st.get("avg_price") or 0)
+                        qty = int(st.get("qty", 0) or pos.get("qty", 0) or 0)
                     except Exception:
                         logger.exception("holdings fetch failed %s", sym)
                         price = float(st.get("avg_price") or 0)
+                        qty = int(st.get("qty", 0) or 0)
+                    broker_fills = None
+                    if qty > 0:
+                        order_ids = FillReconciler.collect_known_order_ids(
+                            self.app, sym, st=st,
+                        )
+                        broker_fills = self.app.broker.list_broker_fills(
+                            sym, days=90, max_orders=200, extra_order_ids=order_ids,
+                        )
+                        if broker_fills:
+                            self.app.cycles.rebuild_trades_from_broker(
+                                sym, broker_fills, st.get("fill_log", []), qty,
+                            )
                     parts.append(self.app.cycles.format_cycles_report(
                         sym, st["qty"], st["avg_price"], price,
                         fill_log=st.get("fill_log", []),
+                        broker_fills=broker_fills,
+                        principal=float(st.get("principal", 0.0)),
                     ))
                     continue
                 if is_live and not already_synced:
@@ -655,6 +671,7 @@ class TelegramHandler:
                     sym, st["qty"], st["avg_price"], price,
                     fill_log=st.get("fill_log", []),
                     broker_fills=broker_fills,
+                    principal=float(st.get("principal", 0.0)),
                 ))
             await target.reply_text("\n\n".join(parts), parse_mode="HTML")
         except Exception as e:

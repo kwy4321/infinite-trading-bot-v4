@@ -643,7 +643,7 @@ class CycleTracker:
             when = fill.get("ordered_at") or fill.get("filled_at") or ""
             tr: dict = {
                 "symbol": symbol.upper(),
-                "side": cls._normalize_side(fill.get("side")),
+                "side": self._normalize_side(fill.get("side")),
                 "qty": int(fill.get("qty") or 0),
                 "price": round(float(fill.get("price") or 0), 2),
                 "ordered_at": when,

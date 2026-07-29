@@ -19,8 +19,7 @@ from config.settings import SYMBOLS
 from tg.home_formatter import format_home
 from tg.balance_formatter import format_balance
 from tg.plan_formatter import format_plans
-from tg.records_formatter import format_graduation_history, format_profit_summary
-from tg.dashboard_formatter import format_dashboard
+from tg.ledger_redirect import format_ledger_redirect
 from tg.status_formatter import format_status
 from tg.token_formatter import format_toss_token_brief, format_toss_token_detail
 from tg.keyboards import (
@@ -41,6 +40,7 @@ from tg.keyboards import (
     MAIN_SETTING,
     MAIN_STATUS,
     MAIN_BALANCE,
+    MAIN_LEDGER,
     MAIN_CYCLES,
 )
 from tg.sender import TelegramSender
@@ -86,6 +86,7 @@ class TelegramHandler:
                 row("🍰", "분할", code(str(st["split_count"]))),
                 row("📈", "큰수매수", code(f"T=0 +{self.app.runtime.premium_default()}%")),
                 row("🎯", "목표수익률", code(f"+{tp:g}%")),
+                row("🔄", "리버스", badge_on(st.get("reverse_mode", False))),
                 row("⚡", "강제1회", badge_on(st.get("force_one", False))),
             )
         )
@@ -99,7 +100,10 @@ class TelegramHandler:
 
     def _setting_keyboard(self, symbol: str):
         st = self.app.state.load(symbol)
-        return setting_keyboard(st.get("force_one", False))
+        return setting_keyboard(
+            st.get("force_one", False),
+            st.get("reverse_mode", False),
+        )
 
     def _allowed(self, update: Update) -> bool:
         ids = self.app.settings.telegram_allowed_chat_ids
@@ -158,15 +162,27 @@ class TelegramHandler:
             logger.exception("cmd_token failed")
             await update.message.reply_text(f"🚨 토큰 조회 실패: {e}")
 
+    async def _sync_ledger(self) -> str | None:
+        if not self.app.settings.has_google_sheets:
+            return None
+        try:
+            from integrations.google_sheets import sync_ledger
+            result = await asyncio.to_thread(sync_ledger, self.app)
+            if result.get("ok"):
+                return result.get("message")
+        except Exception:
+            logger.exception("google sheets sync failed")
+        return None
+
     async def cmd_dashboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
             return await self._deny(update)
-        if not self.app.settings.has_toss and not self.app.settings.dry_run:
-            return await update.message.reply_text(
-                "⚠️ Toss API 키가 없습니다. .env 의 TOSS_CLIENT_ID/SECRET 확인"
-            )
         try:
-            await update.message.reply_text(format_dashboard(self.app), parse_mode="HTML")
+            msg = format_ledger_redirect(self.app, title="현황 대시보드")
+            sheet_msg = await self._sync_ledger()
+            if sheet_msg:
+                msg += f"\n\n✅ {sheet_msg}"
+            await update.message.reply_text(msg, parse_mode="HTML")
         except Exception as e:
             logger.exception("dashboard failed")
             await update.message.reply_text(f"🚨 조회 실패: {e}")
@@ -249,48 +265,20 @@ class TelegramHandler:
         await target.reply_text(text, reply_markup=markup)
 
     async def cmd_cycles_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """하단 메뉴 — 동기화 후 거래 중인 종목의 현재 회차·매매 내역."""
+        """하단 메뉴 — Streamlit / Google Sheets 장부 안내."""
         if not self._allowed(update):
             return await self._deny(update)
-        active = self.app.runtime.active_symbols()
-        if not active:
-            return await update.message.reply_text(
-                "⚠️ 거래 종목이 없어요. ⚙️ 설정 → 📡 거래 종목에서 켜주세요.",
-            )
-        if len(active) == 1:
-            return await self._sync_then_send_cycles(update.message, active[0])
-        symbols_csv = ",".join(active)
-        return await self._sync_then_send_cycles(update.message, symbols_csv)
+        msg = format_ledger_redirect(self.app, title="회차·매매 장부")
+        sheet_msg = await self._sync_ledger()
+        if sheet_msg:
+            msg += f"\n\n✅ {sheet_msg}"
+        await update.message.reply_text(msg, parse_mode="HTML")
 
     async def cmd_cycles(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not self._allowed(update):
-            return await self._deny(update)
-        parts = update.message.text.split()
-        if len(parts) > 1:
-            symbol = parts[1].upper()
-            if symbol in SYMBOLS or symbol == "ALL":
-                return await self._sync_then_send_cycles(update.message, symbol)
-        rows = [
-            [InlineKeyboardButton(s, callback_data=f"CYCLES:{s}") for s in SYMBOLS],
-            [InlineKeyboardButton("전체", callback_data="CYCLES:ALL")],
-        ]
-        kb = InlineKeyboardMarkup(rows)
-        await update.message.reply_text("📒 회차 기록 — 종목:", reply_markup=kb)
+        return await self.cmd_cycles_menu(update, context)
 
     async def cmd_monthly(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not self._allowed(update):
-            return await self._deny(update)
-        parts = update.message.text.split()
-        year = datetime.date.today().year
-        symbol = None
-        for part in parts[1:]:
-            token = part.upper()
-            if token in SYMBOLS:
-                symbol = token
-            elif token.isdigit() and len(token) == 4:
-                year = int(token)
-        msg = format_profit_summary(self.app, year, symbol)
-        await update.message.reply_text(msg, parse_mode="HTML")
+        return await self.cmd_cycles_menu(update, context)
 
     async def cmd_run(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
@@ -320,14 +308,24 @@ class TelegramHandler:
         )
 
     async def cmd_history(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        return await self.cmd_cycles_menu(update, context)
+
+    async def cmd_sheets_sync(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
             return await self._deny(update)
-        parts = update.message.text.split()
-        symbol = parts[1].upper() if len(parts) > 1 else self._symbol(context)
-        await update.message.reply_text(
-            format_graduation_history(self.app, symbol),
-            parse_mode="HTML",
-        )
+        if not self.app.settings.has_google_sheets:
+            return await update.message.reply_text(
+                "⚠️ Google Sheets 미설정\n"
+                "GOOGLE_SHEETS_ENABLED=true\n"
+                "GOOGLE_SPREADSHEET_ID\n"
+                "GOOGLE_SERVICE_ACCOUNT_JSON 경로를 .env에 설정하세요.",
+            )
+        await update.message.reply_text("📗 Google Sheets 동기화 중...")
+        sheet_msg = await self._sync_ledger()
+        if sheet_msg:
+            await update.message.reply_text(f"✅ {sheet_msg}")
+        else:
+            await update.message.reply_text("🚨 Google Sheets 동기화 실패 — 로그 확인")
 
     async def cmd_set_t(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
@@ -440,6 +438,17 @@ class TelegramHandler:
             sym = self._symbol(context)
             st = self.app.state.load(sym)
             self.app.state.set_force_one(sym, not st.get("force_one", False))
+            await query.edit_message_text(
+                self._setting_text(sym),
+                reply_markup=self._setting_keyboard(sym),
+                parse_mode="HTML",
+            )
+            return
+
+        if data == "toggle_reverse_mode":
+            sym = self._symbol(context)
+            st = self.app.state.load(sym)
+            self.app.state.set_reverse_mode(sym, not st.get("reverse_mode", False))
             await query.edit_message_text(
                 self._setting_text(sym),
                 reply_markup=self._setting_keyboard(sym),
@@ -568,8 +577,11 @@ class TelegramHandler:
             return
 
         if data.startswith("CYCLES:"):
-            symbol = data.split(":")[1]
-            await self._sync_then_send_cycles(query.message, symbol)
+            msg = format_ledger_redirect(self.app, title="회차·매매 장부")
+            sheet_msg = await self._sync_ledger()
+            if sheet_msg:
+                msg += f"\n\n✅ {sheet_msg}"
+            await query.message.reply_text(msg, parse_mode="HTML")
             return
 
     async def _sync_then_send_cycles(self, target, symbol: str):
@@ -681,10 +693,8 @@ class TelegramHandler:
     async def _execute_manual(self, chat_id: int, symbol: str, premium: int, context: ContextTypes.DEFAULT_TYPE):
         st = self.app.state.load(symbol)
         pos = self._pos(symbol)
-        plan = self.app.strategy.get_plan(
-            symbol, pos["current_price"], st["avg_price"], st["qty"], st["T"],
-            premium, st["principal"], st["split_count"], st.get("force_one", False),
-            take_profit_pct=st.get("take_profit_pct"),
+        plan = self.app.strategy.get_plan_from_state(
+            symbol, pos["current_price"], st, premium,
         )
         orders = plan.get("buy_orders", []) + plan.get("sell_orders", [])
         if not orders:
@@ -749,7 +759,9 @@ class TelegramHandler:
             MAIN_STATUS: self.cmd_status,
             "📈 현황": self.cmd_status,  # 구 하단 메뉴 (키보드 갱신 전)
             MAIN_BALANCE: self.cmd_balance,
+            MAIN_LEDGER: self.cmd_cycles_menu,
             MAIN_CYCLES: self.cmd_cycles_menu,
+            "📒 회차내역": self.cmd_cycles_menu,
         }
         if text in menu_routes:
             context.user_data.pop("awaiting", None)

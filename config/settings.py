@@ -36,6 +36,24 @@ class Settings:
     log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "WARNING").upper())
     max_split_log: int = field(default_factory=lambda: _int_env("MAX_SPLIT_LOG", 30))
     max_completed_cycles: int = field(default_factory=lambda: _int_env("MAX_COMPLETED_CYCLES", 50))
+    google_sheets_enabled: bool = field(
+        default_factory=lambda: os.getenv("GOOGLE_SHEETS_ENABLED", "false").lower() == "true",
+    )
+    google_spreadsheet_id: str = field(default_factory=lambda: os.getenv("GOOGLE_SPREADSHEET_ID", ""))
+    google_service_account_json: str = field(
+        default_factory=lambda: os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", ""),
+    )
+    google_sheets_url: str = field(default_factory=lambda: os.getenv("GOOGLE_SHEETS_URL", ""))
+    streamlit_url: str = field(default_factory=lambda: os.getenv("STREAMLIT_URL", ""))
+    streamlit_password: str = field(default_factory=lambda: os.getenv("STREAMLIT_PASSWORD", ""))
+
+    @property
+    def has_google_sheets(self) -> bool:
+        return bool(
+            self.google_sheets_enabled
+            and self.google_spreadsheet_id
+            and self.google_service_account_json
+        )
 
     @property
     def has_toss(self) -> bool:

@@ -98,21 +98,67 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup_and_run.ps1
 | `TOSS_CLIENT_ID` / `TOSS_CLIENT_SECRET` | Toss Open API |
 | `DRY_RUN` | `true`면 실주문 없음 |
 
+## Streamlit 대시보드 + Google Sheets 장부
+
+장부·회차·월별 수익은 **Streamlit**과 **Google Sheets**에서 확인합니다. 텔레그램은 주문·설정·현황(T) 중심으로 사용합니다.
+
+### Streamlit 실행
+
+```bash
+cd ~/infinite-trading-bot-v4
+source .venv/bin/activate
+pip install -r requirements.txt
+streamlit run dashboard/streamlit_app.py --server.port 8501 --server.address=0.0.0.0
+```
+
+`.env`에 `STREAMLIT_URL=http://서버IP:8501` 설정 → 텔레그램 `/dashboard`, `📊 장부` 메뉴에서 링크 표시.
+
+systemd (선택):
+
+```bash
+sudo cp deploy/infinite-trading-dashboard.service.tpl /etc/systemd/system/infinite-trading-dashboard.service
+# User, WorkingDirectory, ExecStart 경로 수정 후
+sudo systemctl enable --now infinite-trading-dashboard
+```
+
+### Google Sheets 설정
+
+1. [Google Cloud Console](https://console.cloud.google.com/) → 서비스 계정 생성 → JSON 키 다운로드
+2. Google Sheets 스프레드시트 생성 → 서비스 계정 이메일에 **편집자** 권한 공유
+3. `.env` 설정:
+
+```
+GOOGLE_SHEETS_ENABLED=true
+GOOGLE_SPREADSHEET_ID=스프레드시트ID
+GOOGLE_SERVICE_ACCOUNT_JSON=data/google-service-account.json
+GOOGLE_SHEETS_URL=https://docs.google.com/spreadsheets/d/...
+STREAMLIT_URL=http://서버IP:8501
+```
+
+4. JSON 키를 `data/google-service-account.json`에 저장 (Git에 올리지 않음)
+5. 텔레그램 `/sheets_sync` 또는 job4(06:15) 후 자동 동기화
+
+시트 탭: `Dashboard`, `Status`, `Trades`, `Cycles`, `Monthly`
+
+### 리버스 모드
+
+- **자동**: T > 분할−1 이면 리버스 (쿼터매도 + 별매수, 익절 LOC 없음)
+- **수동**: ⚙️ 설정 → **🔄 리버스 ON** — 보유 중 항상 리버스 전략 적용
+
 ## 텔레그램 명령어
 
 | 구분 | 명령 | 설명 |
 |------|------|------|
-| 현황 | `/dashboard` | 전체 요약 (포지션·회차) |
+| 현황 | `/dashboard` | Streamlit·Sheets 장부 링크 |
 | | `/status [종목]` | 전략·T·잔고 상세 |
 | | `/balance` | Toss API 계좌 잔고 (`DRY_RUN=false`) |
 | | `/plan [종목]` | 오늘 T 기준 주문 계획 |
 | | `/sync [종목]` | API 수량·평단 → 기록 반영 |
-| 설정 | `/setting` | 원금·예수금·분할 |
+| | `/sheets_sync` | Google Sheets 수동 동기화 |
+| 설정 | `/setting` | 원금·분할·리버스·강제1회 |
 | | `/split` | 액면분할 |
 | | `/set_t <값> [종목]` | T 수동 조정 |
-| 기록 | `/cycles [종목]` | 회차 기록 |
-| | `/monthly [종목] [연도]` | 월별 수익 |
-| | `/history [종목]` | 졸업 기록 |
+| 장부 | `/cycles`, `/monthly`, `/history` | Streamlit·Sheets 안내 |
 | | `/cycle_done [종목]` | 수동 졸업 |
 | 운영 | `/pause` `/resume` | 자동 Job 정지·재개 |
 | | `/run` | Job 수동 실행 |

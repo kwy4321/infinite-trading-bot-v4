@@ -21,9 +21,7 @@ def build_symbol_status_lines(app: App, sym: str, *, brief: bool = False) -> lis
     progress = app.cycles.cycle_progress(sym, trading=True, qty=st["qty"])
     live = app.cycles.calc_unrealized_pnl(sym, st["qty"], st["avg_price"], price)
     strat = mode_label(
-        app.strategy.resolve_mode(
-            st["qty"], st["T"], st["split_count"], st.get("force_one", False),
-        ).value,
+        app.strategy.resolve_mode_from_state(st).value,
         brief=brief,
     )
 

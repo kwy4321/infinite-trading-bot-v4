@@ -83,6 +83,7 @@ def main():
     tg.add_handler(CommandHandler("monthly", handler.cmd_monthly))
     tg.add_handler(CommandHandler("cycle_done", handler.cmd_cycle_done))
     tg.add_handler(CommandHandler("sync", handler.cmd_sync))
+    tg.add_handler(CommandHandler("sheets_sync", handler.cmd_sheets_sync))
     tg.add_handler(CommandHandler("pause", handler.cmd_pause))
     tg.add_handler(CommandHandler("resume", handler.cmd_resume))
     tg.add_handler(CommandHandler("run", handler.cmd_run))

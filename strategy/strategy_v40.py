@@ -94,10 +94,39 @@ class InfiniteStrategyV40:
 
     def resolve_mode(
         self, qty: int, t_val: float, split_count: int, force_one: bool = False,
+        *, reverse_mode: bool = False,
     ) -> TradingMode:
         if force_one:
             return TradingMode.FORCE_ONE
+        if reverse_mode and qty > 0:
+            return TradingMode.REVERSE
         return self.detect_mode(qty, t_val, split_count)
+
+    def resolve_mode_from_state(self, st: dict) -> TradingMode:
+        return self.resolve_mode(
+            int(st.get("qty", 0)),
+            float(st.get("T", 0.0)),
+            int(st.get("split_count", 40)),
+            st.get("force_one", False),
+            reverse_mode=st.get("reverse_mode", False),
+        )
+
+    def get_plan_from_state(
+        self, ticker: str, current_price: float, st: dict, premium_pct: int,
+    ) -> dict:
+        return self.get_plan(
+            ticker,
+            current_price,
+            float(st.get("avg_price", 0.0)),
+            int(st.get("qty", 0)),
+            float(st.get("T", 0.0)),
+            premium_pct,
+            float(st.get("principal", 0.0)),
+            int(st.get("split_count", 40)),
+            st.get("force_one", False),
+            take_profit_pct=st.get("take_profit_pct"),
+            reverse_mode=st.get("reverse_mode", False),
+        )
 
     def _floor_qty(self, budget: float, price: float) -> int:
         if price <= 0 or budget <= 0:
@@ -198,10 +227,13 @@ class InfiniteStrategyV40:
     def get_plan(
         self, ticker: str, current_price: float, avg_price: float,
         qty: int, t_val: float, premium_pct: int,
-        principal: float, split_count: int, force_one: bool = False,
+        principal: float,         split_count: int, force_one: bool = False,
         take_profit_pct: float | None = None,
+        *, reverse_mode: bool = False,
     ) -> dict:
-        mode = self.detect_mode(qty, t_val, split_count)
+        mode = self.resolve_mode(
+            qty, t_val, split_count, force_one, reverse_mode=reverse_mode,
+        )
         star_pct = self.calc_star_pct(ticker, t_val, split_count)
         take_profit_pct = self.resolve_take_profit(ticker, take_profit_pct)
         star_price = self.calc_star_price(avg_price, star_pct) if avg_price > 0 else 0.0

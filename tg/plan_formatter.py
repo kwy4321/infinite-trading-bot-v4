@@ -120,11 +120,7 @@ def _format_order_lines(orders: list[dict], plan: dict, side: str) -> list[str]:
 def format_plan_block(app: App, symbol: str, premium: int) -> str:
     st = app.state.load(symbol)
     price = resolve_price(app, symbol)
-    plan = app.strategy.get_plan(
-        symbol, price, st["avg_price"], st["qty"], st["T"],
-        premium, st["principal"], st["split_count"], st.get("force_one", False),
-        take_profit_pct=st.get("take_profit_pct"),
-    )
+    plan = app.strategy.get_plan_from_state(symbol, price, st, premium)
     strat = mode_label(plan["mode"])
     star_pct = float(plan.get("star_pct", 0))
     star_price = float(plan.get("star_price", 0))

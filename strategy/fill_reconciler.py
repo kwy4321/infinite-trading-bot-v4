@@ -482,18 +482,7 @@ class FillReconciler:
     def _plan_for_state(
         self, symbol: str, st: dict, price: float, premium: int,
     ) -> dict:
-        return self.app.strategy.get_plan(
-            symbol,
-            price,
-            float(st.get("avg_price", 0.0)),
-            int(st.get("qty", 0)),
-            float(st.get("T", 0.0)),
-            premium,
-            float(st.get("principal", 0.0)),
-            int(st.get("split_count", 40)),
-            st.get("force_one", False),
-            take_profit_pct=st.get("take_profit_pct"),
-        )
+        return self.app.strategy.get_plan_from_state(symbol, price, st, premium)
 
     def _infer_buy_action(
         self, st: dict, symbol: str, qty: int, price: float, premium: int,

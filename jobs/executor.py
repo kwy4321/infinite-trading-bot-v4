@@ -461,11 +461,7 @@ class JobExecutor:
                 }
         api = self.app.broker.get_holdings_item(symbol)
         price = api["current_price"] or self.app.broker.get_price(symbol)
-        plan = self.app.strategy.get_plan(
-            symbol, price, st["avg_price"], st["qty"], st["T"],
-            premium, st["principal"], st["split_count"], st.get("force_one", False),
-            take_profit_pct=st.get("take_profit_pct"),
-        )
+        plan = self.app.strategy.get_plan_from_state(symbol, price, st, premium)
         plan["holdings_qty"] = int(st.get("qty") or 0)
         filtered = filter_orders_for_phase(plan, phase)
         is_dry = self._is_dry()
@@ -892,6 +888,14 @@ class JobExecutor:
 
     async def run_job4(self, **_):
         await self.run_cycle_sync(notify=True)
+        if self.app.settings.has_google_sheets:
+            try:
+                from integrations.google_sheets import sync_ledger
+                result = await asyncio.to_thread(sync_ledger, self.app)
+                if result.get("ok"):
+                    logger.info("job4 sheets sync: %s", result.get("message"))
+            except Exception:
+                logger.exception("job4 google sheets sync failed")
         await self.run_backup()
         now = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
         await self._notify(f"📊 오늘 마무리 완료 ({now})")

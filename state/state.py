@@ -16,6 +16,7 @@ DEFAULT_STATE = {
     "principal": 10000.0,
     "take_profit_pct": 0.0,
     "force_one": False,
+    "reverse_mode": False,
     "T": 0.0,
     "qty": 0,
     "avg_price": 0.0,
@@ -97,6 +98,12 @@ class StateStore:
     def set_force_one(self, symbol: str, enabled: bool) -> dict:
         state = self.load(symbol)
         state["force_one"] = bool(enabled)
+        self.save(symbol, state)
+        return state
+
+    def set_reverse_mode(self, symbol: str, enabled: bool) -> dict:
+        state = self.load(symbol)
+        state["reverse_mode"] = bool(enabled)
         self.save(symbol, state)
         return state
 

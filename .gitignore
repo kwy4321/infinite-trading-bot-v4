@@ -12,6 +12,8 @@ data/accounts/*/orders.json
 data/accounts/*/cycles.json
 data/accounts/*/*.json
 !data/backups/.gitkeep
+data/google-service-account.json
+**/google-service-account*.json
 *.zip
 .idea/
 .vscode/

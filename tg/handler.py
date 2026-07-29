@@ -170,9 +170,10 @@ class TelegramHandler:
             result = await asyncio.to_thread(sync_ledger, self.app)
             if result.get("ok"):
                 return result.get("message")
-        except Exception:
+            return result.get("message") or "Sheets 동기화 실패"
+        except Exception as exc:
             logger.exception("google sheets sync failed")
-        return None
+            return f"Sheets 동기화 실패: {exc}"
 
     async def cmd_dashboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
@@ -181,7 +182,8 @@ class TelegramHandler:
             msg = format_ledger_redirect(self.app, title="현황 대시보드")
             sheet_msg = await self._sync_ledger()
             if sheet_msg:
-                msg += f"\n\n✅ {sheet_msg}"
+                prefix = "✅" if "완료" in sheet_msg else "🚨"
+                msg += f"\n\n{prefix} {sheet_msg}"
             await update.message.reply_text(msg, parse_mode="HTML")
         except Exception as e:
             logger.exception("dashboard failed")
@@ -271,7 +273,8 @@ class TelegramHandler:
         msg = format_ledger_redirect(self.app, title="회차·매매 장부")
         sheet_msg = await self._sync_ledger()
         if sheet_msg:
-            msg += f"\n\n✅ {sheet_msg}"
+            prefix = "✅" if "완료" in sheet_msg else "🚨"
+            msg += f"\n\n{prefix} {sheet_msg}"
         await update.message.reply_text(msg, parse_mode="HTML")
 
     async def cmd_cycles(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -323,7 +326,8 @@ class TelegramHandler:
         await update.message.reply_text("📗 Google Sheets 동기화 중...")
         sheet_msg = await self._sync_ledger()
         if sheet_msg:
-            await update.message.reply_text(f"✅ {sheet_msg}")
+            prefix = "✅" if "완료" in sheet_msg else "🚨"
+            await update.message.reply_text(f"{prefix} {sheet_msg}")
         else:
             await update.message.reply_text("🚨 Google Sheets 동기화 실패 — 로그 확인")
 

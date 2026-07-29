@@ -64,7 +64,7 @@ def main() -> None:
         st.cache_resource.clear()
         st.rerun()
 
-    snapshot = collect_portfolio_snapshot(app)
+    snapshot = collect_portfolio_snapshot(app, fetch_live_price=True)
     acc = snapshot["account"]
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("총자산 (USD)", f"${acc.get('total_usd', 0):,.2f}")

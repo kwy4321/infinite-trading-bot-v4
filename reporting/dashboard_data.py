@@ -36,9 +36,12 @@ def _trade_row(symbol: str, tr: dict, *, cycle_no: int | None = None, cycle_stat
     }
 
 
-def collect_symbol_status(app: "App", symbol: str) -> dict:
+def collect_symbol_status(app: "App", symbol: str, *, fetch_live_price: bool = False) -> dict:
     st = app.state.load(symbol)
-    price = resolve_price(app, symbol)
+    if fetch_live_price and not is_dry(app):
+        price = resolve_price(app, symbol)
+    else:
+        price = float(st.get("avg_price") or 0)
     mode = app.strategy.resolve_mode_from_state(st).value
     progress = app.cycles.cycle_progress(symbol, trading=True, qty=st["qty"])
     live = app.cycles.calc_unrealized_pnl(symbol, st["qty"], st["avg_price"], price)
@@ -66,7 +69,7 @@ def collect_symbol_status(app: "App", symbol: str) -> dict:
     }
 
 
-def collect_portfolio_snapshot(app: "App") -> dict:
+def collect_portfolio_snapshot(app: "App", *, fetch_live_price: bool = False) -> dict:
     stats = app.cycles.portfolio_stats()
     account = {
         "cash_usd": 0.0,
@@ -76,7 +79,7 @@ def collect_portfolio_snapshot(app: "App") -> dict:
         "unreal_pct": None,
         "fx_rate": 0.0,
     }
-    if not is_dry(app) and app.settings.has_toss:
+    if fetch_live_price and not is_dry(app) and app.settings.has_toss:
         try:
             from tg.records_dashboard_formatter import _fetch_account
             account = _fetch_account(app)
@@ -90,7 +93,10 @@ def collect_portfolio_snapshot(app: "App") -> dict:
         "realized_usd": stats.get("realized_usd", 0),
         "completed_cycles": stats.get("completed_cycles", 0),
         "active_cycles": stats.get("active_cycles", 0),
-        "symbols": [collect_symbol_status(app, sym) for sym in SYMBOLS],
+        "symbols": [
+            collect_symbol_status(app, sym, fetch_live_price=fetch_live_price)
+            for sym in SYMBOLS
+        ],
     }
 
 

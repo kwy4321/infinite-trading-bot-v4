@@ -1,7 +1,13 @@
 """Shared helpers for Telegram formatters."""
 
-from app import App
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from broker.toss_client import _money
+
+if TYPE_CHECKING:
+    from app import App
 
 
 def is_dry(app: App) -> bool:

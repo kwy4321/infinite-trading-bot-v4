@@ -309,31 +309,48 @@ def _build_summary_rows(
     app: "App",
     snapshot: dict,
     status_rows: list[dict],
-) -> tuple[list[list], list[list[float | None]], int, int]:
-    """요약 시트 — 상단 메타 + 종목현황 표. (rows, sign_grid, table_start, ncol)."""
+) -> tuple[list[list], list[tuple[int, float | None]], list[int]]:
+    """요약 시트 — 2열 세로 (모바일). (rows, signed_row_idx, section_header_rows)."""
     updated = _fmt_when(snapshot.get("updated_at", ""))
     dry = snapshot.get("dry_run")
     mode = "DRY_RUN" if dry else "LIVE"
     bot = "정지" if snapshot.get("paused") else "가동"
 
-    table_ncol = len(STATUS_COLUMNS)
-    meta_ncol = max(table_ncol, 6)
     rows: list[list] = [
-        ["라오어 무한매수 4.0 — 장부 요약"] + [""] * (meta_ncol - 1),
-        ["동기화", updated, "모드", mode, "봇", bot] + [""] * (meta_ncol - 6),
-        [""] * meta_ncol,
+        ["라오어 무한매수 4.0 — 장부 요약", ""],
+        ["", ""],
+        ["동기화", updated],
+        ["모드", mode],
+        ["봇", bot],
+        ["", ""],
     ]
-    table_start = len(rows)
+    sign_at: list[tuple[int, float | None]] = []
+    section_at: list[int] = []
 
     if not status_rows:
-        rows.append(["거래 중인 종목 없음"] + [""] * (meta_ncol - 1))
-        return _pad_rows(rows, meta_ncol), [], table_start, meta_ncol
+        rows.append(["거래 중인 종목 없음", ""])
+        return rows, sign_at, section_at
 
-    table, sign_grid = _rows_table(status_rows, STATUS_COLUMNS)
-    ncol = max(meta_ncol, len(table[0]) if table else meta_ncol)
-    rows = _pad_rows(rows, ncol)
-    rows.extend(_pad_rows(table, ncol))
-    return rows, sign_grid, table_start, ncol
+    for item in status_rows:
+        row_item = dict(item)
+        if "mode" in item and "mode_label" not in row_item:
+            row_item["mode_label"] = mode_label(str(item.get("mode", "")), brief=True)
+
+        sym = str(row_item.get("symbol") or "")
+        section_at.append(len(rows))
+        rows.append([sym, ""])
+
+        for key, label, fmt in STATUS_COLUMNS:
+            if key == "symbol":
+                continue
+            raw = row_item.get(key)
+            rows.append([label, _format_value(raw, fmt)])
+            if fmt in SIGNED_FORMATS:
+                sign_at.append((len(rows) - 1, _to_float(raw)))
+
+        rows.append(["", ""])
+
+    return rows, sign_at, section_at
 
 
 class GoogleSheetsLedger:
@@ -450,76 +467,117 @@ class GoogleSheetsLedger:
             logger.debug("table header format skipped", exc_info=True)
 
     @staticmethod
+    def _apply_vertical_signed_colors(
+        spreadsheet,
+        ws,
+        sign_at: list[tuple[int, float | None]],
+    ) -> None:
+        """2열 요약 — 값 열(B) 손익 색상."""
+        if not sign_at:
+            return
+        try:
+            sheet_id = ws.id
+            requests = []
+            for row_0idx, sign in sign_at:
+                if sign is None or sign == 0:
+                    continue
+                color = COLOR_PROFIT if sign > 0 else COLOR_LOSS
+                requests.append({
+                    "repeatCell": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "startRowIndex": row_0idx,
+                            "endRowIndex": row_0idx + 1,
+                            "startColumnIndex": 1,
+                            "endColumnIndex": 2,
+                        },
+                        "cell": {
+                            "userEnteredFormat": {
+                                "textFormat": {
+                                    "foregroundColor": color,
+                                    "bold": True,
+                                },
+                            },
+                        },
+                        "fields": "userEnteredFormat.textFormat",
+                    },
+                })
+            if requests:
+                spreadsheet.batch_update({"requests": requests})
+        except Exception:
+            logger.debug("vertical signed colors skipped", exc_info=True)
+
+    @staticmethod
     def _apply_summary_layout(
         spreadsheet,
         ws,
         *,
         nrows: int,
-        ncol: int,
-        table_start: int,
+        section_at: list[int],
     ) -> None:
-        """요약 시트 — 컴팩트 열 너비·헤더 고정."""
-        status_widths = (52, 48, 72, 44, 80, 40, 48, 72, 44, 40, 76, 56, 48, 48)
+        """요약 시트 — 2열 세로 (모바일)."""
         try:
             sheet_id = ws.id
-            requests: list[dict] = []
-            for idx in range(min(ncol, len(status_widths))):
-                requests.append({
-                    "updateDimensionProperties": {
-                        "range": {
-                            "sheetId": sheet_id,
-                            "dimension": "COLUMNS",
-                            "startIndex": idx,
-                            "endIndex": idx + 1,
+            spreadsheet.batch_update({
+                "requests": [
+                    {
+                        "updateDimensionProperties": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "dimension": "COLUMNS",
+                                "startIndex": 0,
+                                "endIndex": 1,
+                            },
+                            "properties": {"pixelSize": 88},
+                            "fields": "pixelSize",
                         },
-                        "properties": {"pixelSize": status_widths[idx]},
-                        "fields": "pixelSize",
                     },
-                })
-            for idx in range(len(status_widths), ncol):
-                requests.append({
-                    "updateDimensionProperties": {
-                        "range": {
-                            "sheetId": sheet_id,
-                            "dimension": "COLUMNS",
-                            "startIndex": idx,
-                            "endIndex": idx + 1,
+                    {
+                        "updateDimensionProperties": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "dimension": "COLUMNS",
+                                "startIndex": 1,
+                                "endIndex": 2,
+                            },
+                            "properties": {"pixelSize": 168},
+                            "fields": "pixelSize",
                         },
-                        "properties": {"pixelSize": 64},
-                        "fields": "pixelSize",
                     },
-                })
-            spreadsheet.batch_update({"requests": requests})
+                ],
+            })
             from gspread.utils import rowcol_to_a1
 
-            end = rowcol_to_a1(max(nrows, 1), max(ncol, 1))
+            end = rowcol_to_a1(max(nrows, 1), 2)
             ws.format(
                 f"A1:{end}",
                 {
-                    "wrapStrategy": "CLIP",
+                    "wrapStrategy": "WRAP",
                     "verticalAlignment": "MIDDLE",
-                    "textFormat": {"fontSize": 9},
+                    "textFormat": {"fontSize": 10},
                 },
             )
             ws.format(
-                "A1",
+                "A1:B1",
                 {
-                    "textFormat": {"bold": True, "fontSize": 11},
+                    "textFormat": {"bold": True, "fontSize": 12},
                     "backgroundColor": {"red": 0.93, "green": 0.94, "blue": 0.97},
                 },
             )
-            if table_start >= 2:
+            ws.format(
+                "A3:A5",
+                {"textFormat": {"bold": True, "fontSize": 10}},
+            )
+            for idx in section_at:
+                r = idx + 1
                 ws.format(
-                    "A2:F2",
+                    f"A{r}:B{r}",
                     {
-                        "textFormat": {"fontSize": 9},
-                        "backgroundColor": {"red": 0.97, "green": 0.97, "blue": 0.97},
+                        "textFormat": {"bold": True, "fontSize": 11},
+                        "backgroundColor": {"red": 0.85, "green": 0.92, "blue": 0.98},
                     },
                 )
-                ws.format("A2", {"textFormat": {"bold": True, "fontSize": 9}})
-                ws.format("C2", {"textFormat": {"bold": True, "fontSize": 9}})
-                ws.format("E2", {"textFormat": {"bold": True, "fontSize": 9}})
-            ws.freeze(rows=table_start + 1)
+            ws.freeze(rows=1)
         except Exception:
             logger.debug("summary layout skipped", exc_info=True)
 
@@ -529,21 +587,16 @@ class GoogleSheetsLedger:
         snapshot: dict,
         status_rows: list[dict],
     ) -> None:
-        rows, sign_grid, table_start, ncol = _build_summary_rows(
+        rows, sign_at, section_at = _build_summary_rows(
             self.app, snapshot, status_rows,
         )
-        ws = self._get_or_add_worksheet(spreadsheet, TAB_SUMMARY, len(rows) + 5, ncol)
+        ws = self._get_or_add_worksheet(spreadsheet, TAB_SUMMARY, len(rows) + 5, 2)
         ws.clear()
         ws.update(values=rows, range_name="A1", value_input_option="USER_ENTERED")
         self._apply_summary_layout(
-            spreadsheet, ws, nrows=len(rows), ncol=ncol, table_start=table_start,
+            spreadsheet, ws, nrows=len(rows), section_at=section_at,
         )
-        if status_rows:
-            self._style_table_header(ws, table_start, ncol)
-            self._apply_signed_colors(
-                spreadsheet, ws, sign_grid, STATUS_COLUMNS,
-                header_rows=table_start + 1,
-            )
+        self._apply_vertical_signed_colors(spreadsheet, ws, sign_at)
 
     def _write_table_tab(
         self,

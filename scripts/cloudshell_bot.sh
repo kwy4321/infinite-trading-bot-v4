@@ -154,10 +154,18 @@ if [[ ! -d "$INSTALL_DIR/.git" ]]; then
 fi
 
 cd "$INSTALL_DIR"
-git fetch origin main
-git reset --hard origin/main
-find "$INSTALL_DIR" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
-bash scripts/kill_all_bots.sh || true
+
+case "$ACTION" in
+  start|restart)
+    git fetch origin main
+    git reset --hard origin/main
+    find "$INSTALL_DIR" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+    ;;
+  stop|kill)
+    bash scripts/bot.sh "$ACTION"
+    exit 0
+    ;;
+esac
 
 if [[ ! -f "$INSTALL_DIR/.env" ]]; then
   echo "⚠️ VM에 .env 없음 — SSH 접속 후 nano $INSTALL_DIR/.env 설정 필요"
@@ -189,6 +197,8 @@ echo "=== bot.sh $ACTION (VM) ==="
 _sync_secrets
 _run_remote
 
-echo ""
-echo "완료 — Cloud Shell을 꺼도 VM에서 봇이 계속 실행됩니다."
-echo "상태 확인: bash scripts/cloudshell_bot.sh status"
+if [[ "$ACTION" == "start" || "$ACTION" == "restart" ]]; then
+  echo ""
+  echo "완료 — Cloud Shell을 꺼도 VM에서 봇이 계속 실행됩니다."
+  echo "상태 확인: bash scripts/cloudshell_bot.sh status"
+fi

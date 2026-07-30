@@ -122,6 +122,9 @@ case "$ACTION" in
       exit 0
     fi
     echo "⏹ 봇 꺼짐"
+    echo "   시작: bash scripts/bot.sh start"
+    echo "   Cloud Shell: bash scripts/cloudshell_bot.sh start"
+    echo "   로그: bash scripts/bot.sh logs"
     exit 1
     ;;
   logs)

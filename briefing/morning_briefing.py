@@ -10,10 +10,13 @@ from briefing.news_summarizer import summarize_market_analysis
 from briefing.strategy_briefing import format_strategy_briefing
 
 
+from tg.format_helpers import is_dry
+
+
 async def build_briefing(app: App) -> str:
     kst = ZoneInfo("Asia/Seoul")
     now = datetime.datetime.now(kst).strftime("%Y-%m-%d %H:%M")
-    broker = app.broker if not app.settings.dry_run else None
+    broker = app.broker if not is_dry(app) else None
     ctx = get_briefing_market_context(broker)
     lines = [f"🌅 <b>아침 브리핑</b> ({now} KST)\n"]
     if ctx["us_holiday"]:

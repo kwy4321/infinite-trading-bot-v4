@@ -8,7 +8,7 @@ from account.account import AccountPaths
 from broker.rate_limiter import RateLimiter
 from broker.toss_auth import TossAuth
 from broker.toss_client import TossClient
-from config.settings import Settings, get_settings
+from config.settings import Settings, is_dry_mode, reload_settings
 from cycles.cycle_tracker import CycleTracker
 from state.runtime_settings import RuntimeSettings
 from state.state import StateStore
@@ -32,13 +32,13 @@ class App:
 
     @classmethod
     def create(cls) -> "App":
-        settings = get_settings()
+        settings = reload_settings()
         paths = AccountPaths()
         limiter = RateLimiter()
         runtime = RuntimeSettings()
-        dry = settings.dry_run or not settings.has_toss
-        if runtime.force_live() and settings.has_toss:
-            dry = False
+        if settings.has_toss and not settings.dry_run:
+            runtime.set_force_live(True)
+        dry = is_dry_mode(settings, force_live=runtime.force_live())
         auth = TossAuth(
             settings.toss_client_id,
             settings.toss_client_secret,
@@ -59,3 +59,10 @@ class App:
         )
         app.reconciler = FillReconciler(app)
         return app
+
+    def reload_settings(self) -> None:
+        """.env 재로드 + broker DRY/LIVE 동기화."""
+        from tg.format_helpers import sync_broker_dry_run
+
+        self.settings = reload_settings()
+        sync_broker_dry_run(self)

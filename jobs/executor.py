@@ -53,6 +53,10 @@ class JobExecutor:
             return []
         return self.app.runtime.active_symbols()
 
+    def _reload_settings(self) -> None:
+        """스케줄 job 전 .env 재반영 (VM .env 수정·cloudshell 업로드 후)."""
+        self.app.reload_settings()
+
     def _is_dry(self) -> bool:
         return app_is_dry(self.app)
 
@@ -529,6 +533,7 @@ class JobExecutor:
         submit_at_open: bool = False,
         scheduled_loc: bool = False,
     ) -> None:
+        self._reload_settings()
         if premium is None:
             premium = self.app.runtime.premium_default()
 
@@ -627,6 +632,7 @@ class JobExecutor:
 
     async def run_scheduled_sheets_sync(self) -> None:
         """아침 브리핑 직후 Google Sheets 1회 동기화 (조용히, 실패 시만 알림)."""
+        self._reload_settings()
         if not self.app.settings.has_google_sheets:
             return
         try:
@@ -649,6 +655,7 @@ class JobExecutor:
             await self._notify("⚠️ Sheets 자동 동기화 실패 — /sheets_sync 로 재시도")
 
     async def run_morning_briefing(self, *, scheduled: bool = True) -> None:
+        self._reload_settings()
         if scheduled:
             from briefing.market_context import should_skip_scheduled_briefing
             if should_skip_scheduled_briefing():
@@ -823,6 +830,7 @@ class JobExecutor:
         self, notify: bool = True, symbols: list[str] | None = None,
     ) -> None:
         """회차 기록을 토스 실계좌 기준으로 동기화 (symbols 미지정 시 활성 종목)."""
+        self._reload_settings()
         if app_is_dry(self.app):
             if notify:
                 await self._notify("🧪 DRY_RUN — 실계좌 회차 동기화는 LIVE에서만 됩니다.")

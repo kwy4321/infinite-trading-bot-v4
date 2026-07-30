@@ -55,23 +55,36 @@ def extract_spreadsheet_id(raw: str) -> str:
     return text
 
 
+def is_dry_mode(settings: "Settings", *, force_live: bool = False) -> bool:
+    """LIVE = Toss 키 있음 + (DRY_RUN 꺼짐 또는 force_live)."""
+    if force_live and settings.has_toss:
+        return False
+    return settings.dry_run or not settings.has_toss
+
+
 @dataclass
 class Settings:
-    toss_client_id: str = field(default_factory=lambda: os.getenv("TOSS_CLIENT_ID", ""))
-    toss_client_secret: str = field(default_factory=lambda: os.getenv("TOSS_CLIENT_SECRET", ""))
-    toss_account_seq: str = field(default_factory=lambda: os.getenv("TOSS_ACCOUNT_SEQ", "1"))
-    telegram_bot_token: str = field(default_factory=lambda: os.getenv("TELEGRAM_BOT_TOKEN", ""))
+    toss_client_id: str = field(default_factory=lambda: _env_first("TOSS_CLIENT_ID"))
+    toss_client_secret: str = field(default_factory=lambda: _env_first("TOSS_CLIENT_SECRET"))
+    toss_account_seq: str = field(default_factory=lambda: _env_first("TOSS_ACCOUNT_SEQ", default="1"))
+    telegram_bot_token: str = field(default_factory=lambda: _env_first("TELEGRAM_BOT_TOKEN"))
     telegram_allowed_chat_ids: tuple = field(default_factory=lambda: _parse_chat_ids())
-    dry_run: bool = field(default_factory=lambda: os.getenv("DRY_RUN", "false").lower() == "true")
-    news_api_key: str = field(default_factory=lambda: os.getenv("NEWS_API_KEY", ""))
-    summarizer_api_key: str = field(default_factory=lambda: os.getenv("SUMMARIZER_API_KEY", ""))
+    dry_run: bool = field(default_factory=lambda: _env_bool("DRY_RUN", default=False))
+    news_api_key: str = field(default_factory=lambda: _env_first("NEWS_API_KEY"))
+    summarizer_api_key: str = field(
+        default_factory=lambda: _env_first(
+            "SUMMARIZER_API_KEY",
+            "GOOGLE_API_KEY",
+            "GEMINI_API_KEY",
+        ),
+    )
     # 뉴스 요약 LLM: gemini | openai (키가 있을 때만 동작). 모델은 비우면 기본값(gemini-2.5-flash) 사용.
     summarizer_provider: str = field(default_factory=lambda: os.getenv("SUMMARIZER_PROVIDER", "gemini").lower())
     summarizer_model: str = field(default_factory=lambda: os.getenv("SUMMARIZER_MODEL", ""))
     # GCP e2-micro 등 소형 VM — 디스크·RAM 절약
     backup_enabled: bool = field(default_factory=lambda: os.getenv("BACKUP_ENABLED", "true").lower() == "true")
     backup_keep: int = field(default_factory=lambda: _int_env("BACKUP_KEEP", 5))
-    briefing_enabled: bool = field(default_factory=lambda: os.getenv("BRIEFING_ENABLED", "true").lower() == "true")
+    briefing_enabled: bool = field(default_factory=lambda: _env_bool("BRIEFING_ENABLED", default=True))
     log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "WARNING").upper())
     max_split_log: int = field(default_factory=lambda: _int_env("MAX_SPLIT_LOG", 30))
     max_completed_cycles: int = field(default_factory=lambda: _int_env("MAX_COMPLETED_CYCLES", 50))
@@ -94,6 +107,8 @@ class Settings:
             "GOOGLE_SERVICE_ACCOUNT_JSON",
             "GOOGLE_APPLICATION_CREDENTIALS",
             "GOOGLE_SERVICE_ACCOUNT_FILE",
+            "GOOGLE_CREDENTIALS_JSON",
+            "GOOGLE_SERVICE_ACCOUNT",
         ),
     )
     google_sheets_url: str = field(
@@ -176,6 +191,14 @@ def _normalize_http_url(raw: str) -> str:
 def resolve_service_account_path(raw: str = "") -> Path | None:
     """서비스 계정 JSON — 경로·기본 위치·GOOGLE_APPLICATION_CREDENTIALS·인라인 JSON."""
     text = _clean_env(raw)
+    if not text:
+        text = _env_first(
+            "GOOGLE_SERVICE_ACCOUNT_JSON",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "GOOGLE_SERVICE_ACCOUNT_FILE",
+            "GOOGLE_CREDENTIALS_JSON",
+            "GOOGLE_SERVICE_ACCOUNT",
+        )
     inline = text.startswith("{")
     candidates: list[Path] = []
 
@@ -237,4 +260,5 @@ def reload_settings() -> Settings:
 
 
 def get_settings() -> Settings:
+    load_dotenv(ROOT / ".env", encoding="utf-8-sig")
     return Settings()

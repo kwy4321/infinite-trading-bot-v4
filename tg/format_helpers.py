@@ -6,24 +6,24 @@ from typing import TYPE_CHECKING
 
 from broker.toss_client import _money
 
+from config.settings import is_dry_mode
+
 if TYPE_CHECKING:
     from app import App
 
 
 def is_dry(app: App) -> bool:
-    if app.runtime.force_live() and app.settings.has_toss:
-        return False
-    return app.settings.dry_run or not app.settings.has_toss
+    return is_dry_mode(app.settings, force_live=app.runtime.force_live())
 
 
 def dry_mode_reason(app: App) -> str:
     """DRY일 때 원인 한 줄."""
-    if app.runtime.force_live() and app.settings.has_toss:
-        return ""
-    if not app.settings.has_toss:
-        return "토스 API 키 미설정"
-    if app.settings.dry_run:
-        return ".env DRY_RUN=true"
+    if is_dry_mode(app.settings, force_live=app.runtime.force_live()):
+        if not app.settings.has_toss:
+            return "토스 API 키 미설정"
+        if app.settings.dry_run:
+            return ".env DRY_RUN=true (설정→실거래 켜기)"
+        return "알 수 없음"
     return ""
 
 

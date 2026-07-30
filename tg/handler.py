@@ -14,7 +14,7 @@ from app import App
 from broker.toss_client import TossClient
 from jobs.executor import JobExecutor
 from strategy.split_handler import apply_split, calc_adjustment, format_preview, parse_ratio
-from config.settings import SYMBOLS, google_sheets_issues, reload_settings
+from config.settings import SYMBOLS, google_sheets_issues
 from tg.build_info import git_rev
 from tg.home_formatter import format_home_status
 from tg.balance_formatter import format_balance
@@ -251,7 +251,7 @@ class TelegramHandler:
 
     def _refresh_env(self) -> None:
         """장부 명령 시 .env 재로드 — VM에 .env 동기화 후 재시작 없이 반영."""
-        self.app.settings = reload_settings()
+        self.app.reload_settings()
 
     _LEDGER_SYNCING = "🔄 Google Sheets 동기화 중…"
 
@@ -477,6 +477,7 @@ class TelegramHandler:
     async def cmd_sync(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
             return await self._deny(update)
+        self._refresh_env()
         if is_dry(self.app):
             return await update.message.reply_text(
                 "⚠️ LIVE 모드에서만 실계좌 동기화가 됩니다.\n"

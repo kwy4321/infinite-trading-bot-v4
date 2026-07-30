@@ -199,7 +199,10 @@ def _build_sync(
 ) -> str:
     api_key = settings.summarizer_api_key
     if not api_key:
-        return dim("💡 SUMMARIZER_API_KEY 설정 시 나스닥·반도체 AI 시황 요약이 포함됩니다.")
+        return dim(
+            "💡 SUMMARIZER_API_KEY 또는 GOOGLE_API_KEY(Gemini) 설정 시 "
+            "나스닥·반도체 AI 시황 요약이 포함됩니다."
+        )
 
     snapshot = fetch_index_snapshot(broker)
     ctx = market_ctx or snapshot

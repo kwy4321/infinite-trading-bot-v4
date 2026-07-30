@@ -7,6 +7,7 @@ import datetime
 from zoneinfo import ZoneInfo
 
 from app import App
+from tg.format_helpers import is_dry
 from tg.ui import quote, section
 
 
@@ -36,7 +37,7 @@ def _is_usable(status: dict) -> bool:
 def format_toss_token_brief(app: App, status: dict | None = None) -> str:
     """/start용 — 사용 가능 여부만 (plain text)."""
     settings = app.settings
-    if settings.dry_run:
+    if is_dry(app):
         return "🔑 토스 토큰  🧪 DRY_RUN"
     if not settings.has_toss:
         return "🔑 토스 토큰  🔴 키 없음"
@@ -50,7 +51,7 @@ def format_toss_token_brief(app: App, status: dict | None = None) -> str:
 def format_toss_token_detail(app: App, status: dict | None = None) -> str:
     """/token용 — 남은 시간·만료 시각 (blockquote 안은 plain text)."""
     settings = app.settings
-    if settings.dry_run:
+    if is_dry(app):
         return f"{section('토스 API 토큰', '🔑')}\n{quote('🧪 DRY_RUN — 토큰 미사용')}"
     if not settings.has_toss:
         return f"{section('토스 API 토큰', '🔑')}\n{quote('🔴 API 키 없음 · .env 확인')}"

@@ -23,6 +23,15 @@ def _print_runtime_error(exc: BaseException) -> None:
     traceback.print_exc()
 
 
+def _mask(s: str) -> str:
+    s = (s or "").strip()
+    if not s:
+        return ""
+    if len(s) <= 8:
+        return "***"
+    return f"{s[:4]}…{s[-4:]}"
+
+
 def main() -> int:
     env_path = ROOT / ".env"
     if not env_path.is_file():
@@ -33,6 +42,7 @@ def main() -> int:
         from config.settings import (
             ROOT as PROJECT_ROOT,
             google_sheets_issues,
+            is_dry_mode,
             reload_settings,
             resolve_service_account_path,
         )
@@ -44,9 +54,17 @@ def main() -> int:
         settings = reload_settings()
         json_path = resolve_service_account_path(settings.google_service_account_json)
         issues = google_sheets_issues(settings)
+        dry = is_dry_mode(settings, force_live=False)
         info = {
             "env_file": str(PROJECT_ROOT / ".env"),
             "env_exists": True,
+            "dry_run_env": settings.dry_run,
+            "has_toss": settings.has_toss,
+            "toss_client_id": _mask(settings.toss_client_id),
+            "trading_mode": "DRY" if dry else "LIVE",
+            "briefing_enabled": settings.briefing_enabled,
+            "summarizer_api_key_set": bool(settings.summarizer_api_key),
+            "summarizer_provider": settings.summarizer_provider,
             "google_sheets_enabled": settings.google_sheets_enabled,
             "google_spreadsheet_id_raw": settings.google_spreadsheet_id or "",
             "resolved_spreadsheet_id": settings.resolved_spreadsheet_id or "",
@@ -60,8 +78,17 @@ def main() -> int:
         }
         print(json.dumps(info, ensure_ascii=False, indent=2))
 
+        config_ok = True
+        if dry:
+            print("\n⚠️ DRY 모드 — 실주문·실계좌 조회 안 함")
+            if not settings.has_toss:
+                print("   - TOSS_CLIENT_ID / TOSS_CLIENT_SECRET 확인")
+            if settings.dry_run:
+                print("   - .env DRY_RUN=false 또는 텔레그램 설정→💹 실거래 켜기")
+            config_ok = False
+
         if issues:
-            print("\n⚠️ Google Sheets 설정 미완료 (Python 오류 아님 — 아래 항목 채우기)")
+            print("\n⚠️ Google Sheets 설정 미완료")
             for item in issues:
                 print(f"   - {item}")
             print("\n.env 예시:")
@@ -72,11 +99,19 @@ def main() -> int:
             print(f"   {PROJECT_ROOT / 'data' / 'google-service-account.json'}")
             print("\n설정 후 VM 반영:")
             print("   bash scripts/cloudshell_bot.sh restart")
-            return _EXIT_CONFIG
+            config_ok = False
 
-        print("\n✅ Google Sheets 설정 OK")
-        print(f"   링크: {settings.google_sheets_link}")
-        return _EXIT_OK
+        if settings.briefing_enabled and not settings.summarizer_api_key:
+            print("\n💡 아침 브리핑 AI 요약: SUMMARIZER_API_KEY 또는 GOOGLE_API_KEY(Gemini) 설정")
+
+        if config_ok:
+            print("\n✅ 설정 OK")
+            print(f"   거래: {'LIVE' if not dry else 'DRY'}")
+            if settings.has_google_sheets:
+                print(f"   Sheets: {settings.google_sheets_link}")
+            return _EXIT_OK
+
+        return _EXIT_CONFIG
     except Exception as exc:
         _print_runtime_error(exc)
         return _EXIT_ERROR

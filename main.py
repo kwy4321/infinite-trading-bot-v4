@@ -68,6 +68,14 @@ def main():
     application_app = App.create()
     from tg.format_helpers import is_dry
     dry = is_dry(application_app)
+    logger.info(
+        "Trading mode=%s | toss=%s | sheets=%s | briefing=%s | summarizer=%s",
+        "DRY" if dry else "LIVE",
+        application_app.settings.has_toss,
+        application_app.settings.has_google_sheets,
+        application_app.settings.briefing_enabled,
+        bool(application_app.settings.summarizer_api_key),
+    )
     default_level = "INFO" if not dry else application_app.settings.log_level
     log_level = getattr(logging, default_level, logging.INFO)
     logging.basicConfig(

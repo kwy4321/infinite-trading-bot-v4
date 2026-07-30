@@ -1,37 +1,49 @@
-# main push → CI 통과 후 Oracle VM 자동 git pull + bot restart
-name: Deploy
+# main push 시 CI 통과 후에만 서버 배포
+name: Deploy to Server
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
+  push:
     branches: [main]
   workflow_dispatch:
 
 jobs:
-  deploy:
-    if: >
-      (github.event_name == 'workflow_dispatch' ||
-       (github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.head_branch == 'main')) &&
-      secrets.DEPLOY_HOST != '' &&
-      secrets.DEPLOY_SSH_PRIVATE_KEY != ''
+  check:
     runs-on: ubuntu-latest
-    env:
-      INSTALL_DIR: ${{ secrets.DEPLOY_INSTALL_DIR != '' && secrets.DEPLOY_INSTALL_DIR || '/home/ubuntu/infinite-trading-bot-v4' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10"]
     steps:
-      - name: Deploy to VM (git pull + restart)
-        uses: appleboy/ssh-action@v1.2.0
-        env:
-          INSTALL_DIR: ${{ env.INSTALL_DIR }}
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER != '' && secrets.DEPLOY_USER || 'ubuntu' }}
-          key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
-          port: ${{ secrets.DEPLOY_SSH_PORT != '' && secrets.DEPLOY_SSH_PORT || 22 }}
+          python-version: ${{ matrix.python-version }}
+      - run: pip install --no-cache-dir -r requirements.txt
+      - run: python -m compileall -q .
+      - run: python -c "import main; print('import main OK')"
+
+  deploy:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
           command_timeout: 10m
-          envs: INSTALL_DIR
+          script_stop: true
           script: |
             set -euo pipefail
-            cd "$INSTALL_DIR"
-            bash scripts/vm_deploy.sh
+            DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
+            DEPLOY_PATH="${DEPLOY_PATH/#\~/$HOME}"
+            echo "Deploy path: $DEPLOY_PATH"
+            if [[ ! -d "$DEPLOY_PATH" ]]; then
+              echo "ERROR: directory not found: $DEPLOY_PATH"
+              echo "Set GitHub Secret DEPLOY_PATH=/home/ubuntu/infinite-trading-bot-v4"
+              exit 1
+            fi
+            cd "$DEPLOY_PATH"
+            bash scripts/deploy.sh

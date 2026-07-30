@@ -140,27 +140,6 @@ STREAMLIT_URL=http://서버IP:8501
 
 시트 탭: `요약`, `매매내역`, `완료회차`, `월별수익`
 
-### push → VM 자동 배포 (GitHub Actions)
-
-`main`에 push하면 CI 통과 후 VM에서 `git pull` + 봇 재시작이 자동 실행됩니다.
-
-**한 번만 설정** — GitHub 저장소 → **Settings → Secrets and variables → Actions**:
-
-| Secret | 값 |
-|--------|-----|
-| `DEPLOY_HOST` | VM 공인 IP (`bash scripts/cloudshell_bot.sh status` 또는 OCI 콘솔) |
-| `DEPLOY_SSH_PRIVATE_KEY` | Cloud Shell `~/.ssh/id_rsa` **전체 내용** (BEGIN~END 포함) |
-| `DEPLOY_USER` | (선택) `ubuntu` |
-| `DEPLOY_INSTALL_DIR` | (선택) `/home/ubuntu/infinite-trading-bot-v4` |
-
-설정 후 push하면 [Actions → Deploy](https://github.com/kwy4321/infinite-trading-bot-v4/actions) 워크플로에서 배포 로그 확인.
-
-Secrets 미설정 시 Deploy는 건너뛰며, 수동 배포:
-
-```bash
-bash scripts/cloudshell_bot.sh restart
-```
-
 ### 리버스 모드
 
 - **자동**: T > 분할−1 이면 리버스 (쿼터매도 + 별매수, 익절 LOC 없음)

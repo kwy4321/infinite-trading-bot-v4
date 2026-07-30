@@ -12,6 +12,17 @@ echo "Deploying in $ROOT (branch: $BRANCH)"
 git fetch origin "$BRANCH"
 git reset --hard "origin/$BRANCH"
 
+find "$ROOT" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+
+if grep -rq "아래 버튼으로 Google Sheets" tg/ 2>/dev/null; then
+  echo "ERROR: 구 장부 안내 문구가 코드에 남아 있음"
+  exit 1
+fi
+if [[ -f tg/ledger_redirect.py ]]; then
+  echo "ERROR: tg/ledger_redirect.py 가 아직 존재"
+  exit 1
+fi
+
 if [[ ! -d .venv ]]; then
   python3 -m venv .venv
 fi
@@ -37,7 +48,8 @@ elif command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files infinite-
     echo "systemd unit found but sudo unavailable — run: bash scripts/run.sh"
   fi
 else
-  echo "No systemd service — start manually: bash scripts/run.sh"
+  echo "No systemd service — bot.sh restart"
+  bash scripts/bot.sh restart
 fi
 
 echo "Deploy done: $(git rev-parse --short HEAD)"

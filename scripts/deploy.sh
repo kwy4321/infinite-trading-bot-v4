@@ -22,14 +22,22 @@ pip install --no-cache-dir -r requirements.txt -q
 
 PYTHON="$ROOT/.venv/bin/python" bash scripts/check_python.sh
 
-if systemctl is-active --quiet infinite-trading-bot 2>/dev/null; then
-  sudo systemctl restart infinite-trading-bot
-  echo "Service restarted."
-elif systemctl list-unit-files infinite-trading-bot.service &>/dev/null; then
-  sudo systemctl start infinite-trading-bot
-  echo "Service started."
+if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet infinite-trading-bot 2>/dev/null; then
+  if command -v sudo >/dev/null 2>&1 && [[ -x /usr/bin/sudo || -x /bin/sudo ]]; then
+    sudo systemctl restart infinite-trading-bot
+    echo "Service restarted."
+  else
+    echo "systemd active but sudo unavailable — run: bash scripts/run.sh"
+  fi
+elif command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files infinite-trading-bot.service &>/dev/null; then
+  if command -v sudo >/dev/null 2>&1 && [[ -x /usr/bin/sudo || -x /bin/sudo ]]; then
+    sudo systemctl start infinite-trading-bot
+    echo "Service started."
+  else
+    echo "systemd unit found but sudo unavailable — run: bash scripts/run.sh"
+  fi
 else
-  echo "systemd service not found — run scripts/server_setup.sh first."
+  echo "No systemd service — start manually: bash scripts/run.sh"
 fi
 
 echo "Deploy done: $(git rev-parse --short HEAD)"

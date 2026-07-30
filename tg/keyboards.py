@@ -17,13 +17,8 @@ MAIN_CYCLES = MAIN_LEDGER  # 하위 호환
 
 
 def ledger_keyboard(settings) -> InlineKeyboardMarkup | None:
-    """Streamlit / Google Sheets 바로가기 + Sheets 동기화."""
+    """Google Sheets 바로가기 + Sheets 동기화."""
     rows: list[list[InlineKeyboardButton]] = []
-    streamlit = settings.streamlit_link
-    if streamlit:
-        rows.append([
-            InlineKeyboardButton("🖥️ Streamlit 대시보드", url=streamlit),
-        ])
     if settings.has_google_sheets:
         url = settings.google_sheets_link
         if url:

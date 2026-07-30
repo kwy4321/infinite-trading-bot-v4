@@ -203,13 +203,13 @@ class TelegramHandler:
         markup = ledger_keyboard(self.app.settings)
         if not markup:
             msg += (
-                "\n\n⚠️ 링크 버튼 없음 — .env에 STREAMLIT_URL 또는 Google Sheets 설정 후 "
+                "\n\n⚠️ 링크 버튼 없음 — .env에 Google Sheets 설정 후 "
                 "봇을 재시작하세요. (python3 scripts/check_env.py 로 확인)"
             )
         await target.reply_text(msg, parse_mode="HTML", reply_markup=markup)
 
     async def cmd_ledger(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """장부 — Streamlit / Google Sheets 바로가기."""
+        """장부 — Google Sheets 바로가기."""
         if not self._allowed(update):
             return await self._deny(update)
         try:

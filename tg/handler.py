@@ -369,9 +369,10 @@ class TelegramHandler:
         if not self.app.settings.has_google_sheets:
             issues = google_sheets_issues(self.app.settings)
             detail = "\n".join(f"· {x}" for x in issues) if issues else ""
-            return await update.message.reply_text(
-                f"🚨 Google Sheets 미설정{('\n' + detail) if detail else ''}",
-            )
+            msg = "🚨 Google Sheets 미설정"
+            if detail:
+                msg += "\n" + detail
+            return await update.message.reply_text(msg)
         result = await self._sync_ledger(rebuild_broker=True)
         markup = ledger_keyboard(self.app.settings)
         await update.message.reply_text(

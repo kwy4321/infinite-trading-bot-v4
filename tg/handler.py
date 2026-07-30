@@ -141,9 +141,11 @@ class TelegramHandler:
 
     def _allowed(self, update: Update) -> bool:
         ids = self.app.settings.telegram_allowed_chat_ids
+        chat = update.effective_chat
+        if chat:
+            self.app.runtime.remember_notify_chat(chat.id)
         if not ids:
             return True
-        chat = update.effective_chat
         return chat and chat.id in ids
 
     async def _deny(self, update: Update) -> None:
@@ -498,11 +500,18 @@ class TelegramHandler:
         self.app.runtime.set_paused(False)
         await update.message.reply_text("⏰  자동 실행을 재개했습니다.")
 
+    async def cmd_briefing(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self._allowed(update):
+            return await self._deny(update)
+        chat_id = update.effective_chat.id
+        await update.message.reply_text("⏳ 아침 브리핑 생성 중...")
+        await self.executor.run_morning_briefing(scheduled=False, chat_id=chat_id)
+
     async def _run_job(self, chat_id: int, context: ContextTypes.DEFAULT_TYPE, name: str):
         label = JOB_LABELS.get(name, name)
         await context.bot.send_message(chat_id, f"⏳ {label} 실행 중...")
         if name == "briefing":
-            await self.executor.run_morning_briefing(scheduled=False)
+            await self.executor.run_morning_briefing(scheduled=False, chat_id=chat_id)
         elif name == "job3":
             await self.executor.run_job3(scheduled=False)
         else:

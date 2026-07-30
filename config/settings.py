@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env", encoding="utf-8-sig")
@@ -253,12 +253,26 @@ def google_sheets_issues(settings: "Settings") -> list[str]:
     return issues
 
 
+def _apply_env_file() -> None:
+    """.env 재적용 — 빈 값은 기존 환경 변수를 지우지 않음 (systemd·VM 안전)."""
+    env_path = ROOT / ".env"
+    if not env_path.is_file():
+        return
+    for key, val in dotenv_values(env_path, encoding="utf-8-sig").items():
+        if val is None:
+            continue
+        cleaned = _clean_env(str(val))
+        if cleaned:
+            os.environ[key] = cleaned
+
+
 def reload_settings() -> Settings:
-    """런타임 .env 재로드 (봇 재시작 없이 장부 설정 반영)."""
-    load_dotenv(ROOT / ".env", override=True, encoding="utf-8-sig")
+    """런타임 .env 재로드 (봇 재시작 없이 설정 반영)."""
+    _apply_env_file()
     return Settings()
 
 
 def get_settings() -> Settings:
     load_dotenv(ROOT / ".env", encoding="utf-8-sig")
+    _apply_env_file()
     return Settings()

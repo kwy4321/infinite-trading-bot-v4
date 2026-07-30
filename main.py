@@ -32,13 +32,6 @@ def _register_jobs(app_tg, executor: JobExecutor):
     async def briefing(ctx):
         await executor.run_morning_briefing()
 
-    async def post_close_sheets(ctx):
-        """브리핑 비활성 시에도 장 마감 후 Sheets 동기화."""
-        from briefing.market_context import should_skip_scheduled_briefing
-        if should_skip_scheduled_briefing():
-            return
-        await executor.run_scheduled_sheets_sync()
-
     async def premarket_plan(ctx):
         await executor.run_market_open_plan()
 
@@ -49,14 +42,10 @@ def _register_jobs(app_tg, executor: JobExecutor):
     chat_id = chat_ids[0] if chat_ids else None
 
     jq = app_tg.job_queue
-    if executor.app.settings.briefing_enabled:
-        jq.run_daily(briefing, time=datetime.time(7, 0, tzinfo=KST), chat_id=chat_id, name="briefing")
-    else:
-        jq.run_daily(
-            post_close_sheets,
-            time=datetime.time(7, 0, tzinfo=KST),
-            chat_id=chat_id,
-            name="post_close_sheets",
+    jq.run_daily(briefing, time=datetime.time(7, 0, tzinfo=KST), chat_id=chat_id, name="briefing")
+    if not executor.app.settings.briefing_enabled:
+        logger.warning(
+            "BRIEFING_ENABLED=false — 07:00 job은 Sheets 동기화만 실행 (.env true 권장)"
         )
     jq.run_daily(job4, time=datetime.time(6, 15, tzinfo=KST), chat_id=chat_id, name="job4")
     jq.run_daily(premarket_plan, time=PLAN_PREMARKET_KST, chat_id=chat_id, name="premarket_plan")
@@ -89,7 +78,11 @@ def main():
         return
 
     chat_ids = list(application_app.settings.telegram_allowed_chat_ids)
-    sender = TelegramSender(bot=None, chat_ids=chat_ids)
+    for cid in chat_ids:
+        application_app.runtime.remember_notify_chat(cid)
+    sender = TelegramSender(
+        bot=None, chat_ids=chat_ids, runtime=application_app.runtime,
+    )
     executor = JobExecutor(application_app, sender=sender)
     handler = TelegramHandler(application_app, executor, sender)
 
@@ -146,6 +139,7 @@ def main():
     tg.add_handler(CommandHandler("pause", handler.cmd_pause))
     tg.add_handler(CommandHandler("resume", handler.cmd_resume))
     tg.add_handler(CommandHandler("run", handler.cmd_run))
+    tg.add_handler(CommandHandler("briefing", handler.cmd_briefing))
     tg.add_handler(CommandHandler("token", handler.cmd_token))
     tg.add_handler(CallbackQueryHandler(handler.handle_callback))
     tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handler.handle_message))

@@ -18,6 +18,7 @@ DEFAULT = {
     "premium_pct_default": 10,
     "last_job3_us_date": "",
     "force_live": False,
+    "notify_chat_ids": [],
 }
 
 
@@ -155,4 +156,23 @@ class RuntimeSettings:
     def set_force_live(self, enabled: bool) -> None:
         data = self.load()
         data["force_live"] = bool(enabled)
+        self.save(data)
+
+    def notify_chat_ids(self) -> list[int]:
+        raw = self.load().get("notify_chat_ids") or []
+        out: list[int] = []
+        for item in raw:
+            try:
+                out.append(int(item))
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    def remember_notify_chat(self, chat_id: int) -> None:
+        cid = int(chat_id)
+        data = self.load()
+        ids = [int(x) for x in (data.get("notify_chat_ids") or []) if str(x).lstrip("-").isdigit()]
+        if cid not in ids:
+            ids.append(cid)
+        data["notify_chat_ids"] = ids[-5:]
         self.save(data)

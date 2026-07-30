@@ -44,9 +44,16 @@ class JobExecutor:
         self.sender = sender
         self._retry = 3
 
-    async def _notify(self, text: str, html: bool = False):
-        if self.sender:
-            await self.sender.send(text, parse_mode="HTML" if html else None)
+    async def _notify(
+        self, text: str, html: bool = False, *, chat_id: int | None = None,
+    ):
+        if not self.sender:
+            return
+        mode = "HTML" if html else None
+        if chat_id is not None:
+            await self.sender.send_to(chat_id, text, parse_mode=mode)
+            return
+        await self.sender.send(text, parse_mode=mode)
 
     def _active_symbols(self) -> list:
         if self.app.runtime.is_paused():
@@ -654,8 +661,14 @@ class JobExecutor:
             logger.exception("scheduled sheets sync failed")
             await self._notify("⚠️ Sheets 자동 동기화 실패 — /sheets_sync 로 재시도")
 
-    async def run_morning_briefing(self, *, scheduled: bool = True) -> None:
+    async def run_morning_briefing(
+        self, *, scheduled: bool = True, chat_id: int | None = None,
+    ) -> None:
         self._reload_settings()
+        if scheduled and not self.app.settings.briefing_enabled:
+            logger.info("morning briefing disabled — BRIEFING_ENABLED=false")
+            await self.run_scheduled_sheets_sync()
+            return
         if scheduled:
             from briefing.market_context import should_skip_scheduled_briefing
             if should_skip_scheduled_briefing():
@@ -664,10 +677,13 @@ class JobExecutor:
         try:
             from briefing.morning_briefing import build_briefing
             text = await build_briefing(self.app)
-            await self._notify(text, html=True)
+            await self._notify(text, html=True, chat_id=chat_id)
         except Exception as e:
             logger.exception("morning briefing failed")
-            await self._notify(f"🚨 아침 브리핑 생성 실패: {e}")
+            await self._notify(
+                f"🚨 아침 브리핑 생성 실패: {e}",
+                chat_id=chat_id,
+            )
             return
         if scheduled:
             await self.run_scheduled_sheets_sync()

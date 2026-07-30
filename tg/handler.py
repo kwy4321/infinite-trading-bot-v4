@@ -209,7 +209,7 @@ class TelegramHandler:
         issues = google_sheets_issues(self.app.settings)
         if issues and not markup:
             msg += "\n\n⚠️ " + " · ".join(issues)
-            msg += "\n" + dim("Cloud Shell에서 .env 설정 후: bash scripts/cloudshell_bot.sh restart")
+            msg += "\n" + dim("설정 확인: bash scripts/check_env.sh")
         elif not markup:
             msg += (
                 "\n\n⚠️ Google Sheets 미설정 — python3 scripts/check_env.py 로 확인"

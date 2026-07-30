@@ -8,7 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(ROOT / ".env")
+load_dotenv(ROOT / ".env", encoding="utf-8-sig")
 
 DATA_DIR = ROOT / "data" / "accounts" / "default"
 SYMBOLS = ("TQQQ", "SOXL")
@@ -230,7 +230,7 @@ def google_sheets_issues(settings: "Settings") -> list[str]:
 
 def reload_settings() -> Settings:
     """런타임 .env 재로드 (봇 재시작 없이 장부 설정 반영)."""
-    load_dotenv(ROOT / ".env", override=True)
+    load_dotenv(ROOT / ".env", override=True, encoding="utf-8-sig")
     return Settings()
 
 

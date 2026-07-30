@@ -138,7 +138,7 @@ _sync_secrets() {
   fi
   echo "=== VM 설정 확인 ==="
   ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "${SSH_USER}@${IP}" \
-    "cd '$INSTALL_DIR' && .venv/bin/python scripts/check_env.py" || true
+    "cd '$INSTALL_DIR' && bash scripts/check_env.sh" || true
 }
 
 _run_remote() {

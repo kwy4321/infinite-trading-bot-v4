@@ -12,6 +12,7 @@ from reporting.dashboard_data import (
     collect_completed_cycles,
     collect_monthly_rows,
     collect_portfolio_snapshot,
+    collect_sheet_symbol_status,
     collect_sheet_trades,
     ledger_data_sources,
     prepare_ledger_for_export,
@@ -36,20 +37,17 @@ Column = tuple[str, str, str | None]
 
 STATUS_COLUMNS: list[Column] = [
     ("symbol", "종목", None),
-    ("active", "거래종목", "_fmt_yesno"),
     ("mode_label", "전략모드", None),
-    ("T", "T값", "_fmt_num2"),
-    ("split_count", "분할", None),
-    ("principal", "원금($)", "_fmt_usd"),
-    ("qty", "보유수량", None),
     ("avg_price", "평단($)", "_fmt_usd"),
-    ("current_price", "현재가($)", "_fmt_usd"),
-    ("eval_usd", "평가($)", "_fmt_usd"),
+    ("qty", "보유수량(주)", None),
+    ("purchase_usd", "매입금액($)", "_fmt_usd"),
+    ("T", "T값", "_fmt_num2"),
+    ("take_profit_pct", "목표수익률", "_fmt_pct_plain"),
+    ("star_price", "별값($)", "_fmt_usd"),
+    ("star_pct", "별%", "_fmt_pct_plain"),
     ("cycle_no", "회차", None),
-    ("cycle_started_at", "회차시작", "_fmt_when"),
     ("cycle_pnl_usd", "회차손익($)", "_fmt_usd_signed"),
     ("cycle_pnl_pct", "회차수익률", "_fmt_pct"),
-    ("take_profit_pct", "목표수익률", "_fmt_pct_plain"),
     ("reverse_mode", "리버스", "_fmt_onoff"),
     ("force_one", "강제1회", "_fmt_onoff"),
 ]
@@ -214,34 +212,49 @@ def _rows_table(items: list[dict], columns: list[Column]) -> list[list]:
     return [headers, *body]
 
 
-def _rows_summary(snapshot: dict) -> list[list]:
-    acc = snapshot.get("account") or {}
+def _rows_summary(app: "App", snapshot: dict) -> list[list]:
     updated = _fmt_when(snapshot.get("updated_at", ""))
     dry = snapshot.get("dry_run")
     mode = "DRY_RUN (모의)" if dry else "LIVE (실거래)"
-    bot = "⏸ 정지" if snapshot.get("paused") else "▶️ 가동"
+    bot = "정지" if snapshot.get("paused") else "가동"
+    premium = app.runtime.premium_default()
 
     rows: list[list] = [
-        ["라오어 무한매수 4.0 — 장부 요약", ""],
-        ["", ""],
-        ["항목", "값"],
+        ["라오어 무한매수 4.0 장부 요약", ""],
         ["마지막 동기화", updated],
         ["운영 모드", mode],
         ["봇 상태", bot],
-        ["", ""],
-        ["── 계좌 ──", ""],
-        ["달러 예수금", _fmt_usd(acc.get("cash_usd", 0))],
-        ["총 자산(USD)", _fmt_usd(acc.get("total_usd", 0))],
-        ["총 자산(KRW)", f"₩{float(acc.get('total_krw') or 0):,.0f}"],
-        ["평가손익", _fmt_usd_signed(acc.get("unreal_usd", 0))],
-        ["평가수익률", _fmt_pct(acc.get("unreal_pct")) if acc.get("unreal_pct") not in (None, "") else ""],
-        ["환율", f"{float(acc.get('fx_rate') or 0):,.2f} KRW/USD" if acc.get("fx_rate") else ""],
-        ["", ""],
-        ["── 누적 ──", ""],
-        ["실현수익(완료회차)", _fmt_usd_signed(snapshot.get("realized_usd", 0))],
-        ["완료 회차 수", snapshot.get("completed_cycles", 0)],
-        ["진행 중 회차", snapshot.get("active_cycles", 0)],
     ]
+
+    active = app.runtime.active_symbols()
+    if not active:
+        rows.extend([["", ""], ["거래 종목 없음", "텔레그램 설정에서 종목 선택"]])
+        return rows
+
+    for sym in active:
+        st = app.state.load(sym)
+        qty = int(st.get("qty") or 0)
+        avg = float(st.get("avg_price") or 0)
+        purchase = round(avg * qty, 2) if qty and avg else 0
+        t_val = float(st.get("T", 0))
+        plan_price = avg or float(st.get("current_price") or 0)
+        plan = app.strategy.get_plan_from_state(sym, plan_price, st, premium)
+        star_price = float(plan.get("star_price") or 0)
+        star_pct = float(plan.get("star_pct") or 0)
+        tp = float(plan.get("take_profit_pct") or app.strategy.resolve_take_profit(sym, st.get("take_profit_pct")))
+
+        star_txt = f"${star_price:,.2f} (+{star_pct:g}%)" if star_price > 0 else "—"
+
+        rows.extend([
+            ["", ""],
+            [f"■ {sym}", ""],
+            ["[매입정보] 평단가", _fmt_usd(avg) if avg else "—"],
+            ["[매입정보] 보유수량", f"{qty}주"],
+            ["[매입정보] 매입금액", _fmt_usd(purchase) if purchase else "—"],
+            ["[무매공식] T값", f"{t_val:.2f}"],
+            ["[무매공식] 목표수익률", f"{tp:g}%"],
+            ["[무매공식] 별값", star_txt],
+        ])
     return rows
 
 
@@ -295,6 +308,51 @@ class GoogleSheetsLedger:
         except Exception:
             logger.debug("sheet format skipped", exc_info=True)
 
+    @staticmethod
+    def _apply_summary_layout(spreadsheet, ws, nrows: int) -> None:
+        """요약 시트 — 열 너비·줄바꿈 (글자 잘림 방지)."""
+        try:
+            sheet_id = ws.id
+            spreadsheet.batch_update({
+                "requests": [
+                    {
+                        "updateDimensionProperties": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "dimension": "COLUMNS",
+                                "startIndex": 0,
+                                "endIndex": 1,
+                            },
+                            "properties": {"pixelSize": 200},
+                            "fields": "pixelSize",
+                        },
+                    },
+                    {
+                        "updateDimensionProperties": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "dimension": "COLUMNS",
+                                "startIndex": 1,
+                                "endIndex": 2,
+                            },
+                            "properties": {"pixelSize": 320},
+                            "fields": "pixelSize",
+                        },
+                    },
+                ],
+            })
+            ws.format(
+                f"A1:B{max(nrows, 1)}",
+                {
+                    "wrapStrategy": "WRAP",
+                    "verticalAlignment": "TOP",
+                },
+            )
+            ws.format("A1", {"textFormat": {"bold": True, "fontSize": 14}})
+            ws.freeze(rows=1)
+        except Exception:
+            logger.debug("summary layout skipped", exc_info=True)
+
     def _write_tab(
         self,
         spreadsheet,
@@ -310,16 +368,8 @@ class GoogleSheetsLedger:
         ws = self._get_or_add_worksheet(spreadsheet, title, len(rows) + 5, ncol)
         ws.clear()
         ws.update(values=rows, range_name="A1", value_input_option="USER_ENTERED")
-        if summary_title and len(rows) >= 3:
-            try:
-                ws.format("A1", {"textFormat": {"bold": True, "fontSize": 14}})
-                ws.format("A3:B3", {
-                    "textFormat": {"bold": True},
-                    "backgroundColor": {"red": 0.85, "green": 0.92, "blue": 0.98},
-                })
-                ws.freeze(rows=3)
-            except Exception:
-                pass
+        if summary_title:
+            self._apply_summary_layout(spreadsheet, ws, len(rows))
         elif header_rows:
             self._style_worksheet(ws, header_rows=header_rows, ncol=ncol)
 
@@ -344,11 +394,7 @@ class GoogleSheetsLedger:
             monthly = collect_monthly_rows(self.app)
             sources = ledger_data_sources(self.app)
 
-            status_rows = []
-            for sym in snapshot.get("symbols") or []:
-                row = dict(sym)
-                row["mode_label"] = mode_label(str(sym.get("mode", "")), brief=True)
-                status_rows.append(row)
+            status_rows = collect_sheet_symbol_status(self.app)
 
             client = self._client()
             sid = self.settings.resolved_spreadsheet_id
@@ -357,11 +403,12 @@ class GoogleSheetsLedger:
             spreadsheet = client.open_by_key(sid)
 
             self._write_tab(
-                spreadsheet, TAB_SUMMARY, _rows_summary(snapshot),
+                spreadsheet, TAB_SUMMARY, _rows_summary(self.app, snapshot),
                 summary_title=True,
             )
             self._write_tab(
-                spreadsheet, TAB_STATUS, _rows_table(status_rows, STATUS_COLUMNS),
+                spreadsheet, TAB_STATUS,
+                _rows_table(status_rows, STATUS_COLUMNS) if status_rows else [["거래 중인 종목 없음", ""]],
             )
             self._write_tab(
                 spreadsheet, TAB_TRADES, _rows_table(trades, TRADES_COLUMNS),

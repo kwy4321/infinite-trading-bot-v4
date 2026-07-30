@@ -74,6 +74,26 @@ def collect_symbol_status(app: "App", symbol: str, *, fetch_live_price: bool = F
     }
 
 
+def collect_sheet_symbol_status(app: "App") -> list[dict]:
+    """Sheets 종목현황 — 거래 중인 종목만."""
+    premium = app.runtime.premium_default()
+    rows: list[dict] = []
+    for symbol in app.runtime.active_symbols():
+        st = app.state.load(symbol)
+        row = collect_symbol_status(app, symbol, fetch_live_price=False)
+        row["mode_label"] = mode_label(str(row.get("mode", "")), brief=True)
+        qty = int(st.get("qty") or 0)
+        avg = float(st.get("avg_price") or 0)
+        row["purchase_usd"] = round(avg * qty, 2) if qty and avg else 0
+        plan_price = float(row.get("current_price") or avg or 0)
+        plan = app.strategy.get_plan_from_state(symbol, plan_price, st, premium)
+        row["star_price"] = float(plan.get("star_price") or 0)
+        row["star_pct"] = float(plan.get("star_pct") or 0)
+        row["take_profit_pct"] = plan.get("take_profit_pct") or row["take_profit_pct"]
+        rows.append(row)
+    return rows
+
+
 def collect_portfolio_snapshot(app: "App", *, fetch_live_price: bool = False) -> dict:
     stats = app.cycles.portfolio_stats()
     account = {

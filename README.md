@@ -136,7 +136,7 @@ STREAMLIT_URL=http://서버IP:8501
 ```
 
 4. JSON 키를 `data/google-service-account.json`에 저장 (Git에 올리지 않음)
-5. 텔레그램 `/sheets_sync` 또는 job4(06:15) 후 자동 동기화
+5. 텔레그램 `/sheets_sync` 또는 아침 브리핑(07:00) 직후 자동 동기화
 
 시트 탭: `Dashboard`, `Status`, `Trades`, `Cycles`, `Monthly`
 

@@ -18,7 +18,6 @@ from config.settings import SYMBOLS, google_sheets_issues, reload_settings
 from tg.home_formatter import format_home
 from tg.balance_formatter import format_balance
 from tg.plan_formatter import format_plans
-from tg.ledger_redirect import format_ledger_redirect
 from tg.status_formatter import format_status
 from tg.token_formatter import format_toss_token_brief, format_toss_token_detail
 from tg.keyboards import (
@@ -179,17 +178,19 @@ class TelegramHandler:
             return {"ok": False, "message": f"Sheets 동기화 실패: {exc}"}
 
     @staticmethod
-    def _format_sheets_result(result: dict | None) -> str:
+    def _format_sheets_result(result: dict | None, *, brief: bool = False) -> str:
         if not result:
-            return "🚨 Google Sheets 동기화 실패 — 로그 확인"
+            return "🚨 Google Sheets 동기화 실패"
+        if result.get("ok"):
+            if brief:
+                return "✅ Google Sheets 동기화 완료"
+            msg = result.get("message") or "Sheets 동기화 완료"
+            return f"✅ {msg}"
         msg = result.get("message") or "Sheets 동기화 실패"
-        prefix = "✅" if result.get("ok") else "🚨"
-        lines = [f"{prefix} {msg}"]
+        if brief:
+            return f"🚨 {msg}"
+        lines = [f"🚨 {msg}"]
         prep = result.get("prep") or {}
-        if prep.get("fill_log_entries"):
-            lines.append(f"fill_log {prep['fill_log_entries']}건 반영")
-        if prep.get("broker_symbols"):
-            lines.append(f"토스체결: {', '.join(prep['broker_symbols'])}")
         if prep.get("errors"):
             lines.append(f"⚠️ {prep['errors'][0]}")
         return "\n".join(lines)
@@ -200,21 +201,17 @@ class TelegramHandler:
 
     async def _reply_ledger(self, target, *, sync: bool = True) -> None:
         self._refresh_env()
-        msg = format_ledger_redirect(self.app)
-        if sync and self.app.settings.has_google_sheets:
-            await target.reply_text("📗 Google Sheets 동기화 중...", parse_mode="HTML")
-            result = await self._sync_ledger(rebuild_broker=True)
-            msg += f"\n\n{self._format_sheets_result(result)}"
         markup = ledger_keyboard(self.app.settings)
-        issues = google_sheets_issues(self.app.settings)
-        if issues and not markup:
-            msg += "\n\n⚠️ " + " · ".join(issues)
-            msg += "\n" + dim("설정 확인: bash scripts/check_env.sh")
-        elif not markup:
-            msg += (
-                "\n\n⚠️ Google Sheets 미설정 — python3 scripts/check_env.py 로 확인"
-            )
-        await target.reply_text(msg, parse_mode="HTML", reply_markup=markup)
+        if not markup:
+            issues = google_sheets_issues(self.app.settings)
+            detail = " · ".join(issues) if issues else "Google Sheets 미설정"
+            await target.reply_text(f"🚨 {detail}")
+            return
+        status = ""
+        if sync and self.app.settings.has_google_sheets:
+            result = await self._sync_ledger(rebuild_broker=True)
+            status = self._format_sheets_result(result, brief=True)
+        await target.reply_text(status or "✅", reply_markup=markup)
 
     async def cmd_ledger(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """장부 — Google Sheets 바로가기."""
@@ -363,16 +360,12 @@ class TelegramHandler:
             issues = google_sheets_issues(self.app.settings)
             detail = "\n".join(f"· {x}" for x in issues) if issues else ""
             return await update.message.reply_text(
-                "⚠️ Google Sheets 미설정\n"
-                f"{detail}\n\n"
-                "Cloud Shell: bash scripts/cloudshell_bot.sh restart",
+                f"🚨 Google Sheets 미설정{('\n' + detail) if detail else ''}",
             )
-        await update.message.reply_text("📗 Google Sheets 동기화 중...")
         result = await self._sync_ledger(rebuild_broker=True)
         markup = ledger_keyboard(self.app.settings)
         await update.message.reply_text(
-            self._format_sheets_result(result),
-            parse_mode="HTML",
+            self._format_sheets_result(result, brief=True),
             reply_markup=markup,
         )
 
@@ -633,8 +626,7 @@ class TelegramHandler:
             result = await self._sync_ledger(rebuild_broker=True)
             markup = ledger_keyboard(self.app.settings)
             await query.message.reply_text(
-                self._format_sheets_result(result),
-                parse_mode="HTML",
+                self._format_sheets_result(result, brief=True),
                 reply_markup=markup,
             )
             return

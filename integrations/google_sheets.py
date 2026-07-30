@@ -27,34 +27,36 @@ logger = logging.getLogger(__name__)
 KST = ZoneInfo("Asia/Seoul")
 
 TAB_SUMMARY = "요약"
-TAB_STATUS = "종목현황"
 TAB_TRADES = "매매내역"
 TAB_CYCLES = "완료회차"
 TAB_MONTHLY = "월별수익"
-LEGACY_TABS = ("Dashboard", "Status", "Trades", "Cycles", "Monthly")
+REMOVED_TABS = ("종목현황", "Dashboard", "Status", "Trades", "Cycles", "Monthly")
 
 Column = tuple[str, str, str | None]
 
 # 한국 주식 관례 — 이득 빨강, 손실 파랑
 COLOR_PROFIT = {"red": 0.88, "green": 0.18, "blue": 0.18}
 COLOR_LOSS = {"red": 0.15, "green": 0.40, "blue": 0.88}
-SIGNED_FORMATS = frozenset({"_fmt_usd_signed", "_fmt_pct", "_fmt_pnl"})
+SIGNED_FORMATS = frozenset({
+    "_fmt_usd_signed", "_fmt_pct", "_fmt_pnl",
+    "_fmt_usd_signed_compact", "_fmt_pct_compact",
+})
 
 STATUS_COLUMNS: list[Column] = [
-    ("symbol", "📊 종목", None),
-    ("mode_label", "♾️ 전략", None),
-    ("avg_price", "💵 평단", "_fmt_usd"),
-    ("qty", "📦 보유(주)", None),
-    ("purchase_usd", "💰 매입금액", "_fmt_usd"),
-    ("T", "🎯 T값", "_fmt_num2"),
-    ("take_profit_pct", "🏁 목표%", "_fmt_pct_plain"),
-    ("star_price", "⭐ 별값", "_fmt_usd"),
-    ("star_pct", "✨ 별%", "_fmt_pct_plain"),
-    ("cycle_no", "🔢 회차", None),
-    ("cycle_pnl_usd", "📈 회차손익", "_fmt_usd_signed"),
-    ("cycle_pnl_pct", "📊 수익률", "_fmt_pct"),
-    ("reverse_mode", "🔄 리버스", "_fmt_onoff"),
-    ("force_one", "⚡ 강제1회", "_fmt_onoff"),
+    ("symbol", "종목", None),
+    ("mode_label", "전략", None),
+    ("avg_price", "평단", "_fmt_usd_compact"),
+    ("qty", "보유", None),
+    ("purchase_usd", "매입금액", "_fmt_usd_compact"),
+    ("T", "T", "_fmt_num_compact"),
+    ("take_profit_pct", "목표%", "_fmt_pct_compact_plain"),
+    ("star_price", "별값", "_fmt_usd_compact"),
+    ("star_pct", "별%", "_fmt_pct_compact_plain"),
+    ("cycle_no", "회차", None),
+    ("cycle_pnl_usd", "회차손익", "_fmt_usd_signed_compact"),
+    ("cycle_pnl_pct", "수익률", "_fmt_pct_compact"),
+    ("reverse_mode", "리버스", "_fmt_onoff_compact"),
+    ("force_one", "강제1회", "_fmt_onoff_compact"),
 ]
 
 TRADES_COLUMNS: list[Column] = [
@@ -105,6 +107,55 @@ def _to_float(v: Any) -> float | None:
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+def _fmt_usd_compact(v: Any) -> str:
+    try:
+        return f"${float(v):,.2f}"
+    except (TypeError, ValueError):
+        return str(v or "")
+
+
+def _fmt_usd_signed_compact(v: Any) -> str:
+    try:
+        n = float(v)
+        if n > 0:
+            return f"+${n:,.2f}"
+        if n < 0:
+            return f"-${abs(n):,.2f}"
+        return "$0.00"
+    except (TypeError, ValueError):
+        return str(v or "")
+
+
+def _fmt_pct_compact(v: Any) -> str:
+    try:
+        n = float(v)
+        if n > 0:
+            return f"+{n:.2f}%"
+        if n < 0:
+            return f"{n:.2f}%"
+        return "0.00%"
+    except (TypeError, ValueError):
+        return str(v or "")
+
+
+def _fmt_pct_compact_plain(v: Any) -> str:
+    try:
+        return f"{float(v):g}%"
+    except (TypeError, ValueError):
+        return str(v or "")
+
+
+def _fmt_num_compact(v: Any) -> str:
+    try:
+        return f"{float(v):.2f}"
+    except (TypeError, ValueError):
+        return str(v or "")
+
+
+def _fmt_onoff_compact(v: Any) -> str:
+    return "ON" if v in (True, "true", "True", 1, "1") else "OFF"
 
 
 def _fmt_usd(v: Any) -> str:
@@ -194,6 +245,12 @@ def _fmt_when(v: Any) -> str:
 
 
 _FORMATTERS: dict[str, Callable[[Any], Any]] = {
+    "_fmt_usd_compact": _fmt_usd_compact,
+    "_fmt_usd_signed_compact": _fmt_usd_signed_compact,
+    "_fmt_pct_compact": _fmt_pct_compact,
+    "_fmt_pct_compact_plain": _fmt_pct_compact_plain,
+    "_fmt_num_compact": _fmt_num_compact,
+    "_fmt_onoff_compact": _fmt_onoff_compact,
     "_fmt_usd": _fmt_usd,
     "_fmt_usd_signed": _fmt_usd_signed,
     "_fmt_pct": _fmt_pct,
@@ -244,50 +301,39 @@ def _rows_table(items: list[dict], columns: list[Column]) -> tuple[list[list], l
     return [headers, *body], sign_grid
 
 
-def _rows_summary(app: "App", snapshot: dict) -> list[list]:
+def _pad_rows(rows: list[list], ncol: int) -> list[list]:
+    return [list(r) + [""] * (ncol - len(r)) for r in rows]
+
+
+def _build_summary_rows(
+    app: "App",
+    snapshot: dict,
+    status_rows: list[dict],
+) -> tuple[list[list], list[list[float | None]], int, int]:
+    """요약 시트 — 상단 메타 + 종목현황 표. (rows, sign_grid, table_start, ncol)."""
     updated = _fmt_when(snapshot.get("updated_at", ""))
     dry = snapshot.get("dry_run")
-    mode = "🧪 DRY_RUN (모의)" if dry else "💹 LIVE (실거래)"
-    bot = "⏸️ 정지" if snapshot.get("paused") else "▶️ 가동"
-    premium = app.runtime.premium_default()
+    mode = "DRY_RUN" if dry else "LIVE"
+    bot = "정지" if snapshot.get("paused") else "가동"
 
+    table_ncol = len(STATUS_COLUMNS)
+    meta_ncol = max(table_ncol, 6)
     rows: list[list] = [
-        ["📒 라오어 무한매수 4.0 — 장부 요약", ""],
-        ["🕐 마지막 동기화", updated],
-        ["⚙️ 운영 모드", mode],
-        ["🤖 봇 상태", bot],
+        ["라오어 무한매수 4.0 — 장부 요약"] + [""] * (meta_ncol - 1),
+        ["동기화", updated, "모드", mode, "봇", bot] + [""] * (meta_ncol - 6),
+        [""] * meta_ncol,
     ]
+    table_start = len(rows)
 
-    active = app.runtime.active_symbols()
-    if not active:
-        rows.extend([["", ""], ["⚠️ 거래 종목 없음", "텔레그램 ⚙️설정에서 종목 선택"]])
-        return rows
+    if not status_rows:
+        rows.append(["거래 중인 종목 없음"] + [""] * (meta_ncol - 1))
+        return _pad_rows(rows, meta_ncol), [], table_start, meta_ncol
 
-    for sym in active:
-        st = app.state.load(sym)
-        qty = int(st.get("qty") or 0)
-        avg = float(st.get("avg_price") or 0)
-        purchase = round(avg * qty, 2) if qty and avg else 0
-        t_val = float(st.get("T", 0))
-        plan_price = avg or float(st.get("current_price") or 0)
-        plan = app.strategy.get_plan_from_state(sym, plan_price, st, premium)
-        star_price = float(plan.get("star_price") or 0)
-        star_pct = float(plan.get("star_pct") or 0)
-        tp = float(plan.get("take_profit_pct") or app.strategy.resolve_take_profit(sym, st.get("take_profit_pct")))
-
-        star_txt = f"⭐ ${star_price:,.2f} (+{star_pct:g}%)" if star_price > 0 else "—"
-
-        rows.extend([
-            ["", ""],
-            [f"📊 {sym}", ""],
-            ["💼 평단가", _fmt_usd(avg) if avg else "—"],
-            ["📦 보유수량", f"{qty}주"],
-            ["💰 매입금액", _fmt_usd(purchase) if purchase else "—"],
-            ["🎯 T값", f"{t_val:.2f}"],
-            ["🏁 목표수익률", f"{tp:g}%"],
-            ["⭐ 별값", star_txt],
-        ])
-    return rows
+    table, sign_grid = _rows_table(status_rows, STATUS_COLUMNS)
+    ncol = max(meta_ncol, len(table[0]) if table else meta_ncol)
+    rows = _pad_rows(rows, ncol)
+    rows.extend(_pad_rows(table, ncol))
+    return rows, sign_grid, table_start, ncol
 
 
 class GoogleSheetsLedger:
@@ -387,52 +433,117 @@ class GoogleSheetsLedger:
             logger.debug("signed colors skipped", exc_info=True)
 
     @staticmethod
-    def _apply_summary_layout(spreadsheet, ws, nrows: int) -> None:
-        """요약 시트 — 열 너비·줄바꿈·섹션 강조."""
+    def _style_table_header(ws, row_0idx: int, ncol: int) -> None:
+        try:
+            from gspread.utils import rowcol_to_a1
+
+            r = row_0idx + 1
+            ws.format(
+                f"{rowcol_to_a1(r, 1)}:{rowcol_to_a1(r, max(ncol, 1))}",
+                {
+                    "textFormat": {"bold": True, "fontSize": 9},
+                    "backgroundColor": {"red": 0.85, "green": 0.92, "blue": 0.98},
+                    "horizontalAlignment": "CENTER",
+                },
+            )
+        except Exception:
+            logger.debug("table header format skipped", exc_info=True)
+
+    @staticmethod
+    def _apply_summary_layout(
+        spreadsheet,
+        ws,
+        *,
+        nrows: int,
+        ncol: int,
+        table_start: int,
+    ) -> None:
+        """요약 시트 — 컴팩트 열 너비·헤더 고정."""
+        status_widths = (52, 48, 72, 44, 80, 40, 48, 72, 44, 40, 76, 56, 48, 48)
         try:
             sheet_id = ws.id
-            spreadsheet.batch_update({
-                "requests": [
-                    {
-                        "updateDimensionProperties": {
-                            "range": {
-                                "sheetId": sheet_id,
-                                "dimension": "COLUMNS",
-                                "startIndex": 0,
-                                "endIndex": 1,
-                            },
-                            "properties": {"pixelSize": 220},
-                            "fields": "pixelSize",
+            requests: list[dict] = []
+            for idx in range(min(ncol, len(status_widths))):
+                requests.append({
+                    "updateDimensionProperties": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "COLUMNS",
+                            "startIndex": idx,
+                            "endIndex": idx + 1,
                         },
+                        "properties": {"pixelSize": status_widths[idx]},
+                        "fields": "pixelSize",
                     },
-                    {
-                        "updateDimensionProperties": {
-                            "range": {
-                                "sheetId": sheet_id,
-                                "dimension": "COLUMNS",
-                                "startIndex": 1,
-                                "endIndex": 2,
-                            },
-                            "properties": {"pixelSize": 340},
-                            "fields": "pixelSize",
+                })
+            for idx in range(len(status_widths), ncol):
+                requests.append({
+                    "updateDimensionProperties": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "COLUMNS",
+                            "startIndex": idx,
+                            "endIndex": idx + 1,
                         },
+                        "properties": {"pixelSize": 64},
+                        "fields": "pixelSize",
                     },
-                ],
-            })
+                })
+            spreadsheet.batch_update({"requests": requests})
+            from gspread.utils import rowcol_to_a1
+
+            end = rowcol_to_a1(max(nrows, 1), max(ncol, 1))
             ws.format(
-                f"A1:B{max(nrows, 1)}",
-                {"wrapStrategy": "WRAP", "verticalAlignment": "TOP"},
+                f"A1:{end}",
+                {
+                    "wrapStrategy": "CLIP",
+                    "verticalAlignment": "MIDDLE",
+                    "textFormat": {"fontSize": 9},
+                },
             )
             ws.format(
                 "A1",
                 {
-                    "textFormat": {"bold": True, "fontSize": 14},
-                    "backgroundColor": {"red": 0.92, "green": 0.94, "blue": 0.98},
+                    "textFormat": {"bold": True, "fontSize": 11},
+                    "backgroundColor": {"red": 0.93, "green": 0.94, "blue": 0.97},
                 },
             )
-            ws.freeze(rows=1)
+            if table_start >= 2:
+                ws.format(
+                    "A2:F2",
+                    {
+                        "textFormat": {"fontSize": 9},
+                        "backgroundColor": {"red": 0.97, "green": 0.97, "blue": 0.97},
+                    },
+                )
+                ws.format("A2", {"textFormat": {"bold": True, "fontSize": 9}})
+                ws.format("C2", {"textFormat": {"bold": True, "fontSize": 9}})
+                ws.format("E2", {"textFormat": {"bold": True, "fontSize": 9}})
+            ws.freeze(rows=table_start + 1)
         except Exception:
             logger.debug("summary layout skipped", exc_info=True)
+
+    def _write_summary_tab(
+        self,
+        spreadsheet,
+        snapshot: dict,
+        status_rows: list[dict],
+    ) -> None:
+        rows, sign_grid, table_start, ncol = _build_summary_rows(
+            self.app, snapshot, status_rows,
+        )
+        ws = self._get_or_add_worksheet(spreadsheet, TAB_SUMMARY, len(rows) + 5, ncol)
+        ws.clear()
+        ws.update(values=rows, range_name="A1", value_input_option="USER_ENTERED")
+        self._apply_summary_layout(
+            spreadsheet, ws, nrows=len(rows), ncol=ncol, table_start=table_start,
+        )
+        if status_rows:
+            self._style_table_header(ws, table_start, ncol)
+            self._apply_signed_colors(
+                spreadsheet, ws, sign_grid, STATUS_COLUMNS,
+                header_rows=table_start + 1,
+            )
 
     def _write_table_tab(
         self,
@@ -459,7 +570,6 @@ class GoogleSheetsLedger:
         rows: list[list],
         *,
         header_rows: int = 1,
-        summary_title: bool = False,
     ) -> None:
         if not rows:
             rows = [["(데이터 없음)", ""]]
@@ -467,14 +577,12 @@ class GoogleSheetsLedger:
         ws = self._get_or_add_worksheet(spreadsheet, title, len(rows) + 5, ncol)
         ws.clear()
         ws.update(values=rows, range_name="A1", value_input_option="USER_ENTERED")
-        if summary_title:
-            self._apply_summary_layout(spreadsheet, ws, len(rows))
-        elif header_rows:
+        if header_rows:
             self._style_worksheet(ws, header_rows=header_rows, ncol=ncol)
 
     @staticmethod
-    def _remove_legacy_tabs(spreadsheet) -> None:
-        for name in LEGACY_TABS:
+    def _remove_extra_tabs(spreadsheet) -> None:
+        for name in REMOVED_TABS:
             try:
                 ws = spreadsheet.worksheet(name)
                 spreadsheet.del_worksheet(ws)
@@ -501,18 +609,11 @@ class GoogleSheetsLedger:
                 return {"ok": False, "message": "GOOGLE_SPREADSHEET_ID 또는 GOOGLE_SHEETS_URL 확인"}
             spreadsheet = client.open_by_key(sid)
 
-            self._write_tab(
-                spreadsheet, TAB_SUMMARY, _rows_summary(self.app, snapshot),
-                summary_title=True,
-            )
-            if status_rows:
-                self._write_table_tab(spreadsheet, TAB_STATUS, status_rows, STATUS_COLUMNS)
-            else:
-                self._write_tab(spreadsheet, TAB_STATUS, [["⚠️ 거래 중인 종목 없음", ""]])
+            self._write_summary_tab(spreadsheet, snapshot, status_rows)
             self._write_table_tab(spreadsheet, TAB_TRADES, trades, TRADES_COLUMNS)
             self._write_table_tab(spreadsheet, TAB_CYCLES, cycles, CYCLES_COLUMNS)
             self._write_table_tab(spreadsheet, TAB_MONTHLY, monthly, MONTHLY_COLUMNS)
-            self._remove_legacy_tabs(spreadsheet)
+            self._remove_extra_tabs(spreadsheet)
 
             msg = f"Sheets 동기화 완료 — 매매 {len(trades)}건 · 완료회차 {len(cycles)}건"
             if len(trades) == 0 and len(cycles) == 0:

@@ -616,6 +616,29 @@ class JobExecutor:
         elif lines:
             await self._notify("\n".join(lines))
 
+    async def run_scheduled_sheets_sync(self) -> None:
+        """아침 브리핑 직후 Google Sheets 1회 동기화 (조용히, 실패 시만 알림)."""
+        if not self.app.settings.has_google_sheets:
+            return
+        try:
+            from integrations.google_sheets import sync_ledger
+            result = await asyncio.wait_for(
+                asyncio.to_thread(sync_ledger, self.app, rebuild_broker=True),
+                timeout=120.0,
+            )
+            if result.get("ok"):
+                logger.info("scheduled sheets sync: %s", result.get("message"))
+                return
+            msg = result.get("message") or "Sheets 동기화 실패"
+            logger.warning("scheduled sheets sync failed: %s", msg)
+            await self._notify(f"⚠️ Sheets 자동 동기화 실패: {msg}")
+        except asyncio.TimeoutError:
+            logger.exception("scheduled sheets sync timeout")
+            await self._notify("⚠️ Sheets 자동 동기화 시간 초과 (120초)")
+        except Exception:
+            logger.exception("scheduled sheets sync failed")
+            await self._notify("⚠️ Sheets 자동 동기화 실패 — /sheets_sync 로 재시도")
+
     async def run_morning_briefing(self, *, scheduled: bool = True) -> None:
         if scheduled:
             from briefing.market_context import should_skip_scheduled_briefing
@@ -629,6 +652,9 @@ class JobExecutor:
         except Exception as e:
             logger.exception("morning briefing failed")
             await self._notify(f"🚨 아침 브리핑 생성 실패: {e}")
+            return
+        if scheduled:
+            await self.run_scheduled_sheets_sync()
 
     async def run_market_open_plan(self) -> None:
         """18:00 KST — 오늘 주문계획 알림만 (접수는 18:05)."""
@@ -888,14 +914,6 @@ class JobExecutor:
 
     async def run_job4(self, **_):
         await self.run_cycle_sync(notify=True)
-        if self.app.settings.has_google_sheets:
-            try:
-                from integrations.google_sheets import sync_ledger
-                result = await asyncio.to_thread(sync_ledger, self.app)
-                if result.get("ok"):
-                    logger.info("job4 sheets sync: %s", result.get("message"))
-            except Exception:
-                logger.exception("job4 google sheets sync failed")
         await self.run_backup()
         now = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
         await self._notify(f"📊 오늘 마무리 완료 ({now})")

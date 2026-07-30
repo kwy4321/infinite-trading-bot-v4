@@ -15,5 +15,11 @@ pip install --no-cache-dir -r requirements.txt -q
 
 PYTHON="$ROOT/.venv/bin/python" bash scripts/check_python.sh
 
+echo ""
+echo "포그라운드 실행 중 (창 닫으면 종료됨)."
+echo "백그라운드: bash scripts/bot.sh start"
+echo "Cloud Shell → VM: bash scripts/cloudshell_bot.sh start"
+echo ""
+
 echo "Starting bot: $ROOT"
 exec "$ROOT/.venv/bin/python" main.py

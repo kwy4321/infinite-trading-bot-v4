@@ -14,6 +14,7 @@ from app import App
 from jobs.executor import JobExecutor
 from tg.bot_lock import acquire_bot_lock
 from tg.handler import TelegramHandler
+from tg.keyboards import main_menu_keyboard
 from tg.sender import TelegramSender
 
 logger = logging.getLogger(__name__)
@@ -104,6 +105,7 @@ def main():
                 await app.bot.send_message(
                     chat_id=cid,
                     text=f"🟢 봇 가동 ({rev}) — /start",
+                    reply_markup=main_menu_keyboard(),
                 )
             except Exception as exc:
                 logger.error("startup ping chat_id=%s failed: %s", cid, exc)

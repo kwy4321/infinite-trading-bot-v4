@@ -35,6 +35,7 @@ from tg.keyboards import (
     main_menu_keyboard,
     ledger_keyboard,
     MAIN_HOME,
+    MAIN_HOME_LEGACY,
     MAIN_PLAN,
     MAIN_SETTING,
     MAIN_STATUS,
@@ -71,6 +72,23 @@ class TelegramHandler:
 
     def _effective_take_profit(self, symbol: str, st: dict) -> float:
         return self.app.strategy.resolve_take_profit(symbol, st.get("take_profit_pct"))
+
+    def _main_menu_markup(self):
+        return main_menu_keyboard()
+
+    async def _refresh_main_menu(self, update: Update) -> None:
+        """텔레그램은 새 ReplyKeyboard를 받을 때까지 예전 하단 버튼을 유지한다."""
+        if not update.message:
+            return
+        try:
+            msg = await update.message.reply_text(
+                "\u200b",
+                reply_markup=self._main_menu_markup(),
+                disable_notification=True,
+            )
+            await msg.delete()
+        except Exception:
+            logger.debug("main menu keyboard refresh failed", exc_info=True)
 
     def _reverse_status_line(self, st: dict) -> str:
         st = dict(st)
@@ -162,6 +180,7 @@ class TelegramHandler:
             token_line = await self._resolve_token_line()
             await update.message.reply_text(
                 format_home_status(self.app, token_line),
+                reply_markup=self._main_menu_markup(),
                 parse_mode="HTML",
             )
         except Exception as e:
@@ -175,7 +194,7 @@ class TelegramHandler:
             token_line = await self._resolve_token_line()
             await update.message.reply_text(
                 format_home_status(self.app, token_line),
-                reply_markup=main_menu_keyboard(),
+                reply_markup=self._main_menu_markup(),
                 parse_mode="HTML",
             )
         except Exception as e:
@@ -294,6 +313,7 @@ class TelegramHandler:
         if not self._allowed(update):
             return await self._deny(update)
         try:
+            await self._refresh_main_menu(update)
             await self._reply_ledger(update.message)
         except Exception as e:
             logger.exception("ledger menu failed")
@@ -314,10 +334,15 @@ class TelegramHandler:
             return await update.message.reply_text(
                 "⚠️ DRY 모드 — 실제 계좌 조회 안 함.\n"
                 "⚙️ 설정 → 💹 실거래 켜기 로 LIVE 전환하거나\n"
-                ".env DRY_RUN=false 후 봇 재시작"
+                ".env DRY_RUN=false 후 봇 재시작",
+                reply_markup=self._main_menu_markup(),
             )
         try:
-            await update.message.reply_text(format_balance(self.app), parse_mode="HTML")
+            await update.message.reply_text(
+                format_balance(self.app),
+                reply_markup=self._main_menu_markup(),
+                parse_mode="HTML",
+            )
         except Exception as e:
             logger.exception("Toss balance failed")
             await update.message.reply_text(f"🚨 Toss API 조회 실패: {e}")
@@ -345,7 +370,10 @@ class TelegramHandler:
         symbols = self._plan_symbols(context, parts)
         premium = self.app.runtime.premium_default()
         context.user_data["plan_symbols"] = symbols
-        status = await update.message.reply_text("📋 주문계획 조회 중...")
+        status = await update.message.reply_text(
+            "📋 주문계획 조회 중...",
+            reply_markup=self._main_menu_markup(),
+        )
         try:
             msg, markup = await asyncio.wait_for(
                 asyncio.to_thread(self._build_plan_reply, symbols, premium),
@@ -774,6 +802,7 @@ class TelegramHandler:
 
         menu_routes = {
             MAIN_HOME: self.cmd_home,
+            MAIN_HOME_LEGACY: self.cmd_home,
             MAIN_PLAN: self.cmd_plan,
             "📋 주문 계획": self.cmd_plan,
             MAIN_SETTING: self.cmd_setting,
@@ -787,6 +816,7 @@ class TelegramHandler:
         if text in menu_routes:
             context.user_data.pop("awaiting", None)
             context.user_data.pop("awaiting_symbol", None)
+            await self._refresh_main_menu(update)
             return await menu_routes[text](update, context)
 
         if text in ("/version", "버전"):

@@ -5,12 +5,14 @@ from __future__ import annotations
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 # 하단 고정 메뉴 (Reply Keyboard) — 탭하면 명령어 입력 없이 실행
-MAIN_HOME = "🏠 메인"
+MAIN_HOME = "🏠 메인·현황"
 MAIN_PLAN = "📋 주문계획"
 MAIN_SETTING = "⚙️ 설정"
-MAIN_STATUS = "♾️ 현황"  # 구 하단 메뉴 (키보드 갱신 전)
 MAIN_BALANCE = "💼 잔고"
 MAIN_LEDGER = "📊 장부"
+# 구 하단 메뉴 라벨 (키보드 갱신 전 — 탭 시 메인·현황과 동일 동작)
+MAIN_STATUS = "♾️ 현황"
+MAIN_HOME_LEGACY = "🏠 메인"
 MAIN_CYCLES = MAIN_LEDGER  # 하위 호환
 
 

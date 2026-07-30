@@ -185,11 +185,6 @@ def help_block() -> str:
             (f"{code('/set_t')}", "🎯 T 값 조정"),
             (f"{code('/token')}", "🔑 API 토큰 상태·갱신"),
         ]),
-        ("📊 장부", [
-            (f"{code('/dashboard')}", "Google Sheets (버튼 링크)"),
-            (f"{code('/sheets_sync')}", "Google Sheets 수동 동기화"),
-            (f"{code('/sync')}", "실계좌 T·체결 동기화"),
-        ]),
         ("🔧 운영", [
             (f"{code('/pause')}", "⏸ 자동 실행 멈춤"),
             (f"{code('/resume')}", "⏰ 자동 실행 재개"),

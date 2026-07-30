@@ -102,6 +102,7 @@ case "$ACTION" in
     _stop_nohup
     ;;
   restart)
+    find "$ROOT" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
     "$0" stop
     sleep 1
     "$0" start

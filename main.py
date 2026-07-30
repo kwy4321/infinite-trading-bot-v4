@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import datetime
 import logging
+import subprocess
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from telegram.ext import ApplicationBuilder, CallbackQueryHandler, CommandHandler, MessageHandler, filters
@@ -108,7 +110,16 @@ def main():
     _register_jobs(tg, executor)
 
     mode = "DRY_RUN" if dry else "LIVE"
-    logger.info("🚀 라오어 무한매수 4.0 v1.0 시작 (%s)", mode)
+    try:
+        rev = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(Path(__file__).resolve().parent),
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        rev = "?"
+    logger.info("🚀 라오어 무한매수 4.0 v1.0 시작 (%s, %s)", mode, rev)
     tg.run_polling(drop_pending_updates=True)
 
 

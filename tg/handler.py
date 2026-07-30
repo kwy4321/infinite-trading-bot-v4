@@ -215,6 +215,24 @@ class TelegramHandler:
             status = self._format_sheets_result(result, brief=True)
         await target.reply_text(status or "✅", reply_markup=markup)
 
+    async def cmd_myid(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """채팅 ID 확인 — .env TELEGRAM_ALLOWED_CHAT_IDS 설정용 (허용 검사 없음)."""
+        chat = update.effective_chat
+        user = update.effective_user
+        if not chat or not update.message:
+            return
+        lines = [f"chat_id: {chat.id}"]
+        if user:
+            lines.append(f"user_id: {user.id}")
+        allowed = self.app.settings.telegram_allowed_chat_ids
+        if allowed:
+            ok = "✅ 허용됨" if chat.id in allowed else "❌ .env에 이 chat_id 추가 필요"
+            lines.append(f"허용 목록: {', '.join(str(x) for x in allowed)}")
+            lines.append(ok)
+        else:
+            lines.append("허용 목록: (비어 있음 — 모든 채팅 허용)")
+        await update.message.reply_text("\n".join(lines))
+
     async def cmd_version(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
             return await self._deny(update)

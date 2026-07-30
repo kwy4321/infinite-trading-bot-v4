@@ -83,10 +83,39 @@ def main():
     executor = JobExecutor(application_app, sender=sender)
     handler = TelegramHandler(application_app, executor, sender)
 
-    tg = ApplicationBuilder().token(token).build()
+    async def _post_init(app):
+        from tg.build_info import git_rev
+
+        me = await app.bot.get_me()
+        wh = await app.bot.get_webhook_info()
+        logger.info(
+            "Telegram @%s | webhook=%s | allowed_chats=%s",
+            me.username,
+            wh.url or "(none)",
+            chat_ids or "(all)",
+        )
+        if wh.url:
+            await app.bot.delete_webhook(drop_pending_updates=True)
+            logger.info("webhook deleted — polling mode")
+        rev = git_rev()
+        for cid in chat_ids:
+            try:
+                await app.bot.send_message(
+                    chat_id=cid,
+                    text=f"🟢 봇 가동 ({rev}) — /start",
+                )
+            except Exception as exc:
+                logger.error("startup ping chat_id=%s failed: %s", cid, exc)
+
+    async def _on_error(update, context):
+        logger.exception("telegram error: %s", context.error)
+
+    tg = ApplicationBuilder().token(token).post_init(_post_init).build()
+    tg.add_error_handler(_on_error)
     tg.bot_data["chat_ids"] = chat_ids
     sender.set_bot(tg.bot)
 
+    tg.add_handler(CommandHandler("myid", handler.cmd_myid))
     tg.add_handler(CommandHandler("start", handler.cmd_start))
     tg.add_handler(CommandHandler("help", handler.cmd_start))
     tg.add_handler(CommandHandler("version", handler.cmd_version))

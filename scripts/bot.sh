@@ -101,6 +101,9 @@ case "$ACTION" in
     else
       _start_nohup
     fi
+    echo ""
+    echo "=== 텔레그램 연결 확인 ==="
+    bash "$ROOT/scripts/diag_telegram.sh" || true
     ;;
   restart)
     find "$ROOT" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true

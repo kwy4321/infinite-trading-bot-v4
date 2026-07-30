@@ -33,19 +33,25 @@ pip install --no-cache-dir -r requirements.txt -q
 
 PYTHON="$ROOT/.venv/bin/python" bash scripts/check_python.sh
 
-if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet infinite-trading-bot 2>/dev/null; then
+echo "=== stop all bot processes ==="
+bash scripts/bot.sh stop || true
+sleep 1
+pkill -f "[p]ython.*main\.py" 2>/dev/null || true
+pkill -f "[p]ython3.*main\.py" 2>/dev/null || true
+sleep 1
+
+if grep -q "format_ledger_redirect" tg/handler.py 2>/dev/null; then
+  echo "ERROR: handler.py still imports format_ledger_redirect"
+  exit 1
+fi
+
+if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files infinite-trading-bot.service &>/dev/null; then
   if command -v sudo >/dev/null 2>&1 && [[ -x /usr/bin/sudo || -x /bin/sudo ]]; then
     sudo systemctl restart infinite-trading-bot
     echo "Service restarted."
   else
-    echo "systemd active but sudo unavailable — run: bash scripts/run.sh"
-  fi
-elif command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files infinite-trading-bot.service &>/dev/null; then
-  if command -v sudo >/dev/null 2>&1 && [[ -x /usr/bin/sudo || -x /bin/sudo ]]; then
-    sudo systemctl start infinite-trading-bot
-    echo "Service started."
-  else
-    echo "systemd unit found but sudo unavailable — run: bash scripts/run.sh"
+    echo "systemd unit found but sudo unavailable — bot.sh start"
+    bash scripts/bot.sh start
   fi
 else
   echo "No systemd service — bot.sh restart"

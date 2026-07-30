@@ -87,6 +87,7 @@ def main():
 
     tg.add_handler(CommandHandler("start", handler.cmd_start))
     tg.add_handler(CommandHandler("help", handler.cmd_start))
+    tg.add_handler(CommandHandler("version", handler.cmd_version))
     tg.add_handler(CommandHandler("dashboard", handler.cmd_dashboard))
     tg.add_handler(CommandHandler("status", handler.cmd_status))
     tg.add_handler(CommandHandler("balance", handler.cmd_balance))

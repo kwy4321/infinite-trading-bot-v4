@@ -100,6 +100,8 @@ case "$ACTION" in
   stop)
     _stop_systemd
     _stop_nohup
+    pkill -f "[p]ython.*main\.py" 2>/dev/null || true
+    pkill -f "[p]ython3.*main\.py" 2>/dev/null || true
     ;;
   restart)
     find "$ROOT" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true

@@ -15,6 +15,7 @@ from broker.toss_client import TossClient
 from jobs.executor import JobExecutor
 from strategy.split_handler import apply_split, calc_adjustment, format_preview, parse_ratio
 from config.settings import SYMBOLS, google_sheets_issues, reload_settings
+from tg.build_info import git_rev
 from tg.home_formatter import format_home
 from tg.balance_formatter import format_balance
 from tg.plan_formatter import format_plans
@@ -183,7 +184,8 @@ class TelegramHandler:
             return "🚨 Google Sheets 동기화 실패"
         if result.get("ok"):
             if brief:
-                return "✅ Google Sheets 동기화 완료"
+                rev = git_rev()
+                return f"✅ Google Sheets 동기화 완료 ({rev})"
             msg = result.get("message") or "Sheets 동기화 완료"
             return f"✅ {msg}"
         msg = result.get("message") or "Sheets 동기화 실패"
@@ -212,6 +214,14 @@ class TelegramHandler:
             result = await self._sync_ledger(rebuild_broker=True)
             status = self._format_sheets_result(result, brief=True)
         await target.reply_text(status or "✅", reply_markup=markup)
+
+    async def cmd_version(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self._allowed(update):
+            return await self._deny(update)
+        from tg.build_info import ledger_ui_label
+        await update.message.reply_text(
+            f"봇 빌드: {git_rev()}\n장부 UI: {ledger_ui_label()}",
+        )
 
     async def cmd_ledger(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """장부 — Google Sheets 바로가기."""

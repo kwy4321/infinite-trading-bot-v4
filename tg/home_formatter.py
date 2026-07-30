@@ -1,5 +1,7 @@
 """Format /start — home hub (하단 메뉴 안내)."""
 
+from __future__ import annotations
+
 from app import App
 from tg.format_helpers import is_dry
 from tg.ui import (

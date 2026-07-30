@@ -1,5 +1,7 @@
 """Telegram outbound messages — isolated from trading logic."""
 
+from __future__ import annotations
+
 import logging
 from typing import Optional, Sequence
 

@@ -1,5 +1,7 @@
 """Format /dashboard — records asset dashboard (자산·손익·환율·실현수익)."""
 
+from __future__ import annotations
+
 from broker.toss_client import _money, _pct
 from app import App
 from config.settings import SYMBOLS

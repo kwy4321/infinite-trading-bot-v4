@@ -1,5 +1,7 @@
 """Format /balance — account snapshot (계좌현황)."""
 
+from __future__ import annotations
+
 from broker.toss_client import _money
 from app import App
 from config.settings import SYMBOLS

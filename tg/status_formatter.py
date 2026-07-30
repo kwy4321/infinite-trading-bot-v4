@@ -1,5 +1,7 @@
 """Format /status — strategy progress (전략 진행, 메인과 역할 분리)."""
 
+from __future__ import annotations
+
 from app import App
 from tg.format_helpers import is_dry, resolve_price
 from tg.ui import (

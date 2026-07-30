@@ -1,5 +1,7 @@
 """Format /history and /monthly — 기록 (종료·수익)."""
 
+from __future__ import annotations
+
 from app import App
 from tg.ui import (
     THIN,

@@ -1,5 +1,7 @@
 """Shared Telegram UI styling — HTML-safe (Telegram parse_mode=HTML)."""
 
+from __future__ import annotations
+
 DIVIDER = "━━━━━━━━━━━━━━━━"
 THIN = "┈┈┈┈┈┈┈┈┈┈┈┈"
 DOTS = "· · · · · · · · · · · ·"

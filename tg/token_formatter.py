@@ -1,5 +1,7 @@
 """Toss API token status for Telegram UI."""
 
+from __future__ import annotations
+
 import html
 import datetime
 from zoneinfo import ZoneInfo

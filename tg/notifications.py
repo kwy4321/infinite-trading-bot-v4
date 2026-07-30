@@ -1,5 +1,7 @@
 """Telegram notification text — 장시작·장마감·주문 접수·체결."""
 
+from __future__ import annotations
+
 from tg.ui import code, dim, side_icon
 
 

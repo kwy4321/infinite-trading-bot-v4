@@ -1,5 +1,7 @@
 """Streamlit / Google Sheets 장부 안내."""
 
+from __future__ import annotations
+
 from app import App
 from tg.ui import code, dim, quote, row, section
 

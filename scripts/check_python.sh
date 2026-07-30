@@ -10,5 +10,6 @@ echo "check_python: $($PYTHON --version) @ $ROOT"
 
 "$PYTHON" -m compileall -q .
 "$PYTHON" -c "import main; print('import main: OK')"
+"$PYTHON" -c "from config.settings import get_settings, google_sheets_issues; print('config.settings: OK')"
 
 echo "check_python: all passed"

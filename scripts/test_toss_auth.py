@@ -1,5 +1,7 @@
 """Toss Open API — token issue, file cache, refresh, 401 retry test."""
 
+from __future__ import annotations
+
 import datetime
 import json
 import os

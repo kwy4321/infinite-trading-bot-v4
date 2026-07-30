@@ -1,5 +1,7 @@
 """Lightweight backup — JSON only, keeps last N zip files."""
 
+from __future__ import annotations
+
 import datetime
 import zipfile
 from pathlib import Path

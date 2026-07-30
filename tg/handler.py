@@ -16,10 +16,9 @@ from jobs.executor import JobExecutor
 from strategy.split_handler import apply_split, calc_adjustment, format_preview, parse_ratio
 from config.settings import SYMBOLS, google_sheets_issues, reload_settings
 from tg.build_info import git_rev
-from tg.home_formatter import format_home
+from tg.home_formatter import format_home_status
 from tg.balance_formatter import format_balance
 from tg.plan_formatter import format_plans
-from tg.status_formatter import format_status
 from tg.token_formatter import format_toss_token_brief, format_toss_token_detail
 from tg.keyboards import (
     plan_action_keyboard,
@@ -44,7 +43,8 @@ from tg.keyboards import (
     MAIN_CYCLES,
 )
 from tg.sender import TelegramSender
-from tg.ui import DIVIDER, badge_on, code, dim, quote, row, section, usd
+from tg.format_helpers import dry_mode_reason, is_dry, sync_broker_dry_run
+from tg.ui import DIVIDER, badge_live, badge_on, code, dim, quote, row, section, usd
 
 logger = logging.getLogger(__name__)
 
@@ -72,21 +72,37 @@ class TelegramHandler:
     def _effective_take_profit(self, symbol: str, st: dict) -> float:
         return self.app.strategy.resolve_take_profit(symbol, st.get("take_profit_pct"))
 
+    def _reverse_status_line(self, st: dict) -> str:
+        st = dict(st)
+        self.app.strategy.sync_reverse_flags(st)
+        split = int(st.get("split_count", 40))
+        if st.get("reverse_exited"):
+            return "⚪ 종료 (회복 대기)"
+        if st.get("reverse_mode"):
+            return "🟢 ON · T 자동"
+        return f"⚪ OFF · T>{split - 1} 시 자동"
+
     def _setting_text(self, symbol: str) -> str:
         st = self.app.state.load(symbol)
         active = self.app.runtime.active_symbols()
         active_str = ", ".join(active) if active else "없음"
         tp = self._effective_take_profit(symbol, st)
         edit_hint = f" · {symbol} 편집" if symbol in active else ""
+        dry = is_dry(self.app)
+        dry_hint = dry_mode_reason(self.app)
+        trade_mode = badge_live(dry)
+        if dry_hint:
+            trade_mode += f" ({dry_hint})"
         return (
             f"{section('설정', '⚙️')}\n"
             + quote(
+                row("💹", "거래 모드", code(trade_mode)),
                 row("📡", "거래 종목", code(active_str + edit_hint)),
                 row("💰", "원금", usd(st["principal"], decimals=0)),
                 row("🍰", "분할", code(str(st["split_count"]))),
                 row("📈", "큰수매수", code(f"T=0 +{self.app.runtime.premium_default()}%")),
                 row("🎯", "목표수익률", code(f"+{tp:g}%")),
-                row("🔄", "리버스", badge_on(st.get("reverse_mode", False))),
+                row("🔄", "리버스", code(self._reverse_status_line(st))),
                 row("⚡", "강제1회", badge_on(st.get("force_one", False))),
             )
         )
@@ -102,7 +118,7 @@ class TelegramHandler:
         st = self.app.state.load(symbol)
         return setting_keyboard(
             st.get("force_one", False),
-            st.get("reverse_mode", False),
+            dry=is_dry(self.app),
         )
 
     def _allowed(self, update: Update) -> bool:
@@ -127,21 +143,38 @@ class TelegramHandler:
             return await asyncio.to_thread(auth.force_refresh)
         return await asyncio.to_thread(auth.get_status)
 
+    async def _resolve_token_line(self) -> str:
+        dry = is_dry(self.app)
+        token_line = format_toss_token_brief(self.app)
+        if not dry and self.app.settings.has_toss:
+            try:
+                status = await self._fetch_token_status(refresh=False)
+                token_line = format_toss_token_brief(self.app, status)
+            except Exception:
+                logger.exception("token brief check failed")
+                token_line = "🔑 토스 토큰  🔴 사용 불가"
+        return token_line
+
+    async def cmd_home(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self._allowed(update):
+            return await self._deny(update)
+        try:
+            token_line = await self._resolve_token_line()
+            await update.message.reply_text(
+                format_home_status(self.app, token_line),
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.exception("home failed")
+            await update.message.reply_text(f"🚨 조회 실패: {e}")
+
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
             return await self._deny(update)
         try:
-            dry = self.app.settings.dry_run or not self.app.settings.has_toss
-            token_line = format_toss_token_brief(self.app)
-            if not dry and self.app.settings.has_toss:
-                try:
-                    status = await self._fetch_token_status(refresh=False)
-                    token_line = format_toss_token_brief(self.app, status)
-                except Exception:
-                    logger.exception("token brief check failed")
-                    token_line = "🔑 토스 토큰  🔴 사용 불가"
+            token_line = await self._resolve_token_line()
             await update.message.reply_text(
-                format_home(self.app, token_line),
+                format_home_status(self.app, token_line),
                 reply_markup=main_menu_keyboard(),
                 parse_mode="HTML",
             )
@@ -152,7 +185,7 @@ class TelegramHandler:
     async def cmd_token(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
             return await self._deny(update)
-        dry = self.app.settings.dry_run or not self.app.settings.has_toss
+        dry = is_dry(self.app)
         try:
             status = None if dry or not self.app.settings.has_toss else await self._fetch_token_status()
             text = format_toss_token_detail(self.app, status)
@@ -270,27 +303,18 @@ class TelegramHandler:
         return await self.cmd_ledger(update, context)
 
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not self._allowed(update):
-            return await self._deny(update)
-        try:
-            await update.message.reply_text(
-                format_status(self.app),
-                parse_mode="HTML",
-            )
-        except Exception as e:
-            logger.exception("status failed")
-            await update.message.reply_text(f"🚨 조회 실패: {e}")
+        return await self.cmd_home(update, context)
 
     async def cmd_balance(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
             return await self._deny(update)
         if not self.app.settings.has_toss:
             return await update.message.reply_text("⚠️ Toss API 키가 없습니다. .env 의 TOSS_CLIENT_ID/SECRET 확인")
-        if self.app.settings.dry_run:
+        if is_dry(self.app):
             return await update.message.reply_text(
-                "⚠️ DRY_RUN=true — 실제 계좌 조회 안 함.\n"
-                "잔고 확인: .env 에서 DRY_RUN=false 후\n"
-                "sudo systemctl restart infinite-trading-bot"
+                "⚠️ DRY 모드 — 실제 계좌 조회 안 함.\n"
+                "⚙️ 설정 → 💹 실거래 켜기 로 LIVE 전환하거나\n"
+                ".env DRY_RUN=false 후 봇 재시작"
             )
         try:
             await update.message.reply_text(format_balance(self.app), parse_mode="HTML")
@@ -425,9 +449,10 @@ class TelegramHandler:
     async def cmd_sync(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
             return await self._deny(update)
-        if not self.app.settings.has_toss or self.app.settings.dry_run:
+        if is_dry(self.app):
             return await update.message.reply_text(
-                "⚠️ LIVE 모드에서만 실계좌 동기화가 됩니다. (.env: DRY_RUN=false + Toss 키)"
+                "⚠️ LIVE 모드에서만 실계좌 동기화가 됩니다.\n"
+                "⚙️ 설정 → 💹 실거래 켜기"
             )
         await update.message.reply_text("🔄 토스 체결·실계좌에서 T·회차 동기화 중...")
         await self.executor.run_cycle_sync(notify=True)
@@ -517,21 +542,30 @@ class TelegramHandler:
             )
             return
 
-        if data == "toggle_force_one":
+        if data == "toggle_force_live":
+            if not self.app.settings.has_toss:
+                await query.answer(
+                    "토스 API 키(TOSS_CLIENT_ID/SECRET)가 없어 실거래를 켤 수 없어요.",
+                    show_alert=True,
+                )
+                return
+            enable = is_dry(self.app)
+            self.app.runtime.set_force_live(enable)
+            sync_broker_dry_run(self.app)
             sym = self._symbol(context)
-            st = self.app.state.load(sym)
-            self.app.state.set_force_one(sym, not st.get("force_one", False))
             await query.edit_message_text(
                 self._setting_text(sym),
                 reply_markup=self._setting_keyboard(sym),
                 parse_mode="HTML",
             )
+            mode = "실거래(LIVE)" if enable else "DRY(시뮬)"
+            await query.answer(f"거래 모드 → {mode}")
             return
 
-        if data == "toggle_reverse_mode":
+        if data == "toggle_force_one":
             sym = self._symbol(context)
             st = self.app.state.load(sym)
-            self.app.state.set_reverse_mode(sym, not st.get("reverse_mode", False))
+            self.app.state.set_force_one(sym, not st.get("force_one", False))
             await query.edit_message_text(
                 self._setting_text(sym),
                 reply_markup=self._setting_keyboard(sym),
@@ -559,7 +593,7 @@ class TelegramHandler:
             return
 
         if data == "set_token":
-            dry = self.app.settings.dry_run or not self.app.settings.has_toss
+            dry = is_dry(self.app)
             try:
                 status = None if dry or not self.app.settings.has_toss else await self._fetch_token_status()
                 text = format_toss_token_detail(self.app, status)
@@ -642,7 +676,7 @@ class TelegramHandler:
             return
 
         if data == "TOKEN:refresh":
-            if self.app.settings.dry_run or not self.app.settings.has_toss:
+            if is_dry(self.app) or not self.app.settings.has_toss:
                 await query.edit_message_text("⚠️ LIVE 모드에서만 토큰 갱신이 됩니다.")
                 return
             await query.edit_message_text("⏳ 토큰 갱신 중…")
@@ -676,14 +710,17 @@ class TelegramHandler:
     async def _execute_manual(self, chat_id: int, symbol: str, premium: int, context: ContextTypes.DEFAULT_TYPE):
         st = self.app.state.load(symbol)
         pos = self._pos(symbol)
+        from tg.format_helpers import resolve_available_cash
+        cash = resolve_available_cash(self.app, symbol, st)
         plan = self.app.strategy.get_plan_from_state(
-            symbol, pos["current_price"], st, premium,
+            symbol, pos["current_price"], st, premium, available_cash=cash,
         )
+        self.app.state.save(symbol, st)
         orders = plan.get("buy_orders", []) + plan.get("sell_orders", [])
         if not orders:
             await context.bot.send_message(chat_id, f"[{symbol}] 주문 없음")
             return
-        is_live = self.app.settings.has_toss and not self.app.settings.dry_run
+        is_live = self.app.settings.has_toss and not is_dry(self.app)
         if is_live and not self.app.broker.is_us_loc_session_now():
             await context.bot.send_message(
                 chat_id,
@@ -736,12 +773,12 @@ class TelegramHandler:
         text = update.message.text.strip()
 
         menu_routes = {
-            MAIN_HOME: self.cmd_start,
+            MAIN_HOME: self.cmd_home,
             MAIN_PLAN: self.cmd_plan,
             "📋 주문 계획": self.cmd_plan,
             MAIN_SETTING: self.cmd_setting,
-            MAIN_STATUS: self.cmd_status,
-            "📈 현황": self.cmd_status,  # 구 하단 메뉴 (키보드 갱신 전)
+            MAIN_STATUS: self.cmd_home,
+            "📈 현황": self.cmd_home,
             MAIN_BALANCE: self.cmd_balance,
             MAIN_LEDGER: self.cmd_ledger,
             MAIN_CYCLES: self.cmd_ledger,

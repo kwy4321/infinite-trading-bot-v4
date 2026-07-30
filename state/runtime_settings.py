@@ -17,6 +17,7 @@ DEFAULT = {
     "default_symbol": "TQQQ",
     "premium_pct_default": 10,
     "last_job3_us_date": "",
+    "force_live": False,
 }
 
 
@@ -146,4 +147,12 @@ class RuntimeSettings:
     def mark_job3_run(self, us_date: str) -> None:
         data = self.load()
         data["last_job3_us_date"] = str(us_date)
+        self.save(data)
+
+    def force_live(self) -> bool:
+        return bool(self.load().get("force_live", False))
+
+    def set_force_live(self, enabled: bool) -> None:
+        data = self.load()
+        data["force_live"] = bool(enabled)
         self.save(data)

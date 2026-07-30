@@ -130,6 +130,12 @@ def order_label(desc: str) -> str:
         for drop in (20, 30):
             if f"-{drop}%" in desc:
                 return f"하단방어 −{drop}%"
+    if "첫매도 MOC" in desc or ("MOC" in desc and "리버스" in desc):
+        return "리버스 MOC"
+    if "LOC매도" in desc and "리버스" in desc:
+        return "리버스 매도"
+    if "쿼터매수" in desc and "리버스" in desc:
+        return "리버스 쿼터매수"
     if "쿼터" in desc:
         return "쿼터 매도"
     if "익절" in desc:

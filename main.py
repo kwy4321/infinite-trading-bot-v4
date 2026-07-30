@@ -65,7 +65,8 @@ def _register_jobs(app_tg, executor: JobExecutor):
 def main():
     _lock = acquire_bot_lock()
     application_app = App.create()
-    dry = application_app.settings.dry_run or not application_app.settings.has_toss
+    from tg.format_helpers import is_dry
+    dry = is_dry(application_app)
     default_level = "INFO" if not dry else application_app.settings.log_level
     log_level = getattr(logging, default_level, logging.INFO)
     logging.basicConfig(

@@ -86,7 +86,10 @@ def collect_sheet_symbol_status(app: "App") -> list[dict]:
         avg = float(st.get("avg_price") or 0)
         row["purchase_usd"] = round(avg * qty, 2) if qty and avg else 0
         plan_price = float(row.get("current_price") or avg or 0)
-        plan = app.strategy.get_plan_from_state(symbol, plan_price, st, premium)
+        plan = app.strategy.get_plan_from_state(
+            symbol, plan_price, st, premium,
+            available_cash=max(0.0, float(st.get("principal", 0))),
+        )
         row["star_price"] = float(plan.get("star_price") or 0)
         row["star_pct"] = float(plan.get("star_pct") or 0)
         row["take_profit_pct"] = plan.get("take_profit_pct") or row["take_profit_pct"]

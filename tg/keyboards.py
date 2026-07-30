@@ -8,7 +8,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton,
 MAIN_HOME = "🏠 메인"
 MAIN_PLAN = "📋 주문계획"
 MAIN_SETTING = "⚙️ 설정"
-MAIN_STATUS = "♾️ 현황"
+MAIN_STATUS = "♾️ 현황"  # 구 하단 메뉴 (키보드 갱신 전)
 MAIN_BALANCE = "💼 잔고"
 MAIN_LEDGER = "📊 장부"
 MAIN_CYCLES = MAIN_LEDGER  # 하위 호환
@@ -29,7 +29,7 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [
             [KeyboardButton(MAIN_HOME), KeyboardButton(MAIN_PLAN), KeyboardButton(MAIN_SETTING)],
-            [KeyboardButton(MAIN_STATUS), KeyboardButton(MAIN_BALANCE), KeyboardButton(MAIN_LEDGER)],
+            [KeyboardButton(MAIN_BALANCE), KeyboardButton(MAIN_LEDGER)],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -75,9 +75,9 @@ def symbol_picker(prefix: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([row])
 
 
-def setting_keyboard(force_one: bool = False, reverse_mode: bool = False) -> InlineKeyboardMarkup:
+def setting_keyboard(force_one: bool = False, *, dry: bool = True) -> InlineKeyboardMarkup:
     force_label = "⚡ 강제1회 OFF" if force_one else "⚡ 강제1회 ON"
-    reverse_label = "🔄 리버스 OFF" if reverse_mode else "🔄 리버스 ON"
+    live_label = "💹 실거래 켜기" if dry else "🧪 DRY 모드"
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📡 거래 종목", callback_data="set_symbols")],
         [InlineKeyboardButton("💰 원금", callback_data="set_seed")],
@@ -85,7 +85,7 @@ def setting_keyboard(force_one: bool = False, reverse_mode: bool = False) -> Inl
         [InlineKeyboardButton("📈 큰수매수", callback_data="set_premium")],
         [InlineKeyboardButton("🎯 목표수익률", callback_data="set_takeprofit")],
         [InlineKeyboardButton("🔑 API 토큰", callback_data="set_token")],
-        [InlineKeyboardButton(reverse_label, callback_data="toggle_reverse_mode")],
+        [InlineKeyboardButton(live_label, callback_data="toggle_force_live")],
         [InlineKeyboardButton(force_label, callback_data="toggle_force_one")],
     ])
 

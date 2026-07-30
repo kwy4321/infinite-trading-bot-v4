@@ -1,6 +1,11 @@
 """체결 반영 → T값·수량·회차 금액."""
 
-from strategy.strategy_v40 import InfiniteStrategyV40
+from strategy.strategy_v40 import (
+    REVERSE_BUY,
+    REVERSE_SELL,
+    REVERSE_SELL_FIRST,
+    InfiniteStrategyV40,
+)
 
 
 class FillProcessor:
@@ -15,8 +20,9 @@ class FillProcessor:
         price = float(order["price"])
         usd = price * qty
         action = order.get("action") or "BUY_FULL"
+        split = int(state.get("split_count", 40))
         t_before = float(state["T"])
-        t_after = self.strategy.calc_next_t(t_before, action)
+        t_after = self.strategy.calc_next_t(t_before, action, split)
 
         old_q, old_a = int(state["qty"]), float(state["avg_price"])
         new_q = old_q + qty
@@ -48,14 +54,21 @@ class FillProcessor:
         price = float(order["price"])
         usd = price * qty
         action = order.get("action")
+        split = int(state.get("split_count", 40))
         t_before = float(state["T"])
         t_after = t_before
         if action:
-            t_after = self.strategy.calc_next_t(t_before, action)
+            t_after = self.strategy.calc_next_t(t_before, action, split)
+
+        if action == REVERSE_SELL_FIRST:
+            state["reverse_first_day"] = False
 
         state["qty"] = max(0, int(state["qty"]) - qty)
         if state["qty"] == 0:
             state["avg_price"] = 0.0
+            state["reverse_mode"] = False
+            state["reverse_first_day"] = False
+            state["reverse_exited"] = False
         state["T"] = t_after if state["qty"] > 0 else 0.0
         state["last_t_qty"] = int(state["qty"])
 

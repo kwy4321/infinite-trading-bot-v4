@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Optional
 
 from account.account import AccountPaths
+from zoneinfo import ZoneInfo
+
 from config.json_io import load_json, save_json
 from config.settings import SYMBOLS
 
@@ -17,6 +19,8 @@ DEFAULT_STATE = {
     "take_profit_pct": 0.0,
     "force_one": False,
     "reverse_mode": False,
+    "reverse_first_day": False,
+    "reverse_exited": False,
     "T": 0.0,
     "qty": 0,
     "avg_price": 0.0,
@@ -101,9 +105,30 @@ class StateStore:
         self.save(symbol, state)
         return state
 
-    def set_reverse_mode(self, symbol: str, enabled: bool) -> dict:
+    def sync_close_prices_from_broker(self, symbol: str, broker) -> dict:
+        """API 일봉으로 close_prices 갱신 (최근 10거래일)."""
         state = self.load(symbol)
-        state["reverse_mode"] = bool(enabled)
+        daily = broker.get_daily_closes(symbol, count=10)
+        if daily:
+            state["close_prices"] = daily[-30:]
+            self.save(symbol, state)
+        return state
+
+    def record_close_price(
+        self, symbol: str, close: float, *, date: str = "", us_trading_day: bool = True,
+    ) -> dict:
+        """job4 종가 스냅샷 — US 거래일 1회만 기록."""
+        if not us_trading_day or close <= 0:
+            return self.load(symbol)
+        state = self.load(symbol)
+        if not date:
+            date = datetime.datetime.now(ZoneInfo("Asia/Seoul")).date().isoformat()
+        hist: list = list(state.get("close_prices") or [])
+        hist = [h for h in hist if not (
+            isinstance(h, dict) and h.get("date") == date
+        )]
+        hist.append({"date": date, "close": round(float(close), 4)})
+        state["close_prices"] = hist[-30:]
         self.save(symbol, state)
         return state
 

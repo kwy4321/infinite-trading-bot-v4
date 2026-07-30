@@ -52,9 +52,18 @@ def resolve_loc_side_conflict(gated: dict) -> dict:
 
 def prepare_loc_orders(filtered: dict, close_price: float) -> list[dict]:
     """DRY_RUN·종가 시뮬 — 종가 스냅샷으로 어떤 LOC가 체결됐을지 판정."""
-    gated = gate_orders_by_close_price(filtered, close_price)
+    loc_sells = [
+        o for o in filtered.get("sell_orders", [])
+        if str(o.get("exec", "")).upper() != "MOC"
+    ]
+    loc_filtered = {**filtered, "sell_orders": loc_sells}
+    gated = gate_orders_by_close_price(loc_filtered, close_price)
     picked = resolve_loc_side_conflict(gated)
-    return picked["buy_orders"] + picked["sell_orders"]
+    moc_sells = [
+        o for o in filtered.get("sell_orders", [])
+        if str(o.get("exec", "")).upper() == "MOC"
+    ]
+    return picked["buy_orders"] + picked["sell_orders"] + moc_sells
 
 
 def _cap_sell_orders(sells: list[dict], plan: dict) -> list[dict]:
@@ -77,7 +86,11 @@ def _cap_sell_orders(sells: list[dict], plan: dict) -> list[dict]:
 
 
 def prepare_loc_submit_orders(filtered: dict, plan: dict) -> list[dict]:
-    """장중 CLS 접수 — 매수·매도 LOC 전부 (종가에서 조건 맞는 것만 체결)."""
+    """장중 CLS 접수 — 매수·매도 LOC + 리버스 MOC 매도."""
     buys = list(filtered.get("buy_orders") or [])
     sells = _cap_sell_orders(list(filtered.get("sell_orders") or []), plan)
-    return buys + sells
+    moc = [
+        o for o in (filtered.get("sell_orders") or [])
+        if str(o.get("exec", "")).upper() == "MOC"
+    ]
+    return buys + sells + moc

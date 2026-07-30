@@ -698,12 +698,12 @@ class CycleTracker:
             t_before = running_t
             if side == "BUY":
                 act = tr.get("action") or "BUY_FULL"
-                t_after = strat.calc_next_t(t_before, act)
+                t_after = strat.calc_next_t(t_before, act, int(tr.get("split_count") or 40))
                 if not tr.get("action"):
                     tr["action"] = act
             else:
                 act = tr.get("action")
-                t_after = strat.calc_next_t(t_before, act) if act else t_before
+                t_after = strat.calc_next_t(t_before, act, int(tr.get("split_count") or 40)) if act else t_before
                 if int(tr.get("qty_after", -1)) == 0:
                     t_after = 0.0
             new_tb = round(float(t_before), 2)

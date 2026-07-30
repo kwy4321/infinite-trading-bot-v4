@@ -35,7 +35,10 @@ class App:
         settings = get_settings()
         paths = AccountPaths()
         limiter = RateLimiter()
+        runtime = RuntimeSettings()
         dry = settings.dry_run or not settings.has_toss
+        if runtime.force_live() and settings.has_toss:
+            dry = False
         auth = TossAuth(
             settings.toss_client_id,
             settings.toss_client_secret,
@@ -47,7 +50,7 @@ class App:
             settings=settings,
             paths=paths,
             state=StateStore(paths),
-            runtime=RuntimeSettings(),
+            runtime=runtime,
             cycles=CycleTracker(str(paths.root)),
             strategy=InfiniteStrategyV40(),
             fills=FillProcessor(),

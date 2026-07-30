@@ -11,7 +11,36 @@ if TYPE_CHECKING:
 
 
 def is_dry(app: App) -> bool:
+    if app.runtime.force_live() and app.settings.has_toss:
+        return False
     return app.settings.dry_run or not app.settings.has_toss
+
+
+def dry_mode_reason(app: App) -> str:
+    """DRY일 때 원인 한 줄."""
+    if app.runtime.force_live() and app.settings.has_toss:
+        return ""
+    if not app.settings.has_toss:
+        return "토스 API 키 미설정"
+    if app.settings.dry_run:
+        return ".env DRY_RUN=true"
+    return ""
+
+
+def sync_broker_dry_run(app: App) -> None:
+    app.broker.dry_run = is_dry(app)
+
+
+def resolve_available_cash(app: App, symbol: str, st: dict | None = None) -> float:
+    """리버스 쿼터매수용 가용 잔금 ≈ 원금 − 매수 + 매도 (회차 기준)."""
+    if st is None:
+        st = app.state.load(symbol)
+    principal = float(st.get("principal", 0.0))
+    sym_data = app.cycles.get_symbol_data(symbol.upper())
+    cur = sym_data.get("current") or {}
+    buy = float(cur.get("total_buy_usd", 0.0))
+    sell = float(cur.get("total_sell_usd", 0.0))
+    return max(0.0, round(principal - buy + sell, 2))
 
 
 def resolve_price(app: App, symbol: str) -> float:

@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 from app import App
 from broker.toss_client import TossClient
-from tg.format_helpers import is_dry, resolve_price, resolve_prices
+from tg.format_helpers import is_dry, resolve_available_cash, resolve_price, resolve_prices
 from tg.ui import (
     code,
     dim,
@@ -40,6 +40,12 @@ def _short_label(desc: str) -> str:
             if f"-{drop}%" in desc:
                 return f"하단방어 −{drop}%"
         return "하단방어"
+    if "첫매도 MOC" in desc or ("MOC" in desc and "리버스" in desc):
+        return "리버스 MOC"
+    if "LOC매도" in desc and "리버스" in desc:
+        return "리버스 매도"
+    if "쿼터매수" in desc and "리버스" in desc:
+        return "리버스 쿼터매수"
     if "리버스 쿼터" in desc:
         return "리버스 쿼터"
     if "쿼터" in desc:
@@ -49,7 +55,7 @@ def _short_label(desc: str) -> str:
     if "강제1회" in desc:
         return "강제1회"
     if "리버스" in desc and "매수" in desc:
-        return "리버스 매수"
+        return "리버스 별매수"
     return desc.split("(")[0].strip()[:12]
 
 
@@ -68,8 +74,13 @@ def _order_formula(order: dict, plan: dict) -> str:
         label = _short_label(order.get("desc", ""))
         if label == "큰수매수":
             return f"현재가 ${cur:.2f} × (1+{premium}%)"
-        if label in ("별지점", "리버스 매수"):
-            return f"별가 ${star_price:.2f} − 0.01"
+        if label in ("별지점", "리버스 별매수", "리버스 매수", "리버스 쿼터매수"):
+            return f"별 ${star_price:.2f} − 0.01 (쿼터매수)"
+    if action == "REVERSE_BUY":
+        qb = float(plan.get("quarter_buy_budget", 0))
+        return f"잔금÷4 ${qb:,.0f} · 별 ${star_price:.2f} 아래"
+    if action in ("REVERSE_SELL", "REVERSE_SELL_FIRST"):
+        return f"5일 종가 평균(별) ${star_price:.2f}"
     if action == "BUY_HALF":
         label = _short_label(order.get("desc", ""))
         if label == "평단":
@@ -125,13 +136,18 @@ def format_plan_block(
     st = app.state.load(symbol)
     if price is None:
         price = resolve_price(app, symbol)
-    plan = app.strategy.get_plan_from_state(symbol, price, st, premium)
+    cash = resolve_available_cash(app, symbol, st)
+    plan = app.strategy.get_plan_from_state(
+        symbol, price, st, premium, available_cash=cash,
+    )
+    app.state.save(symbol, st)
     strat = mode_label(plan["mode"])
     star_pct = float(plan.get("star_pct", 0))
     star_price = float(plan.get("star_price", 0))
     tp_pct = float(plan.get("take_profit_pct", 0))
     avg = float(plan.get("avg_price", 0) or st["avg_price"])
     one_buy = float(plan.get("one_buy_amount", 0))
+    is_reverse = bool(plan.get("reverse_mode"))
 
     card = [
         symbol_card(symbol),
@@ -149,13 +165,20 @@ def format_plan_block(
         card.append("현재가 —  (LIVE 전환 후 표시)")
 
     card.extend(["", "📐 기준가"])
-    if avg > 0 and star_price > 0:
+    if is_reverse and star_price > 0:
+        card.append(f"별(5일 종가 평균)  →  ${star_price:.2f}")
+        if plan.get("reverse_first_day"):
+            card.append(dim("첫날: MOC 무조건 매도 · 매수 없음"))
+        else:
+            qb = float(plan.get("quarter_buy_budget", 0))
+            card.append(f"쿼터매수(잔금÷4)  →  ${qb:,.2f}")
+    elif avg > 0 and star_price > 0:
         card.append(f"별% +{star_pct:g}%  →  ${star_price:.2f}")
         tp_price = round(avg * (1 + tp_pct / 100), 2)
         card.append(f"익절 +{tp_pct:g}%  →  ${tp_price:.2f}")
     elif star_pct != 0:
         card.append(f"별% +{star_pct:g}%  (진입 후 산출)")
-    if one_buy > 0:
+    if one_buy > 0 and not is_reverse:
         card.append(f"1회 매수액  →  ${one_buy:,.2f}")
 
     buys = plan.get("buy_orders", [])

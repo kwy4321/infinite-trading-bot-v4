@@ -7,6 +7,9 @@ import logging
 import math
 from typing import TYPE_CHECKING
 
+from strategy.strategy_v40 import InfiniteStrategyV40, REVERSE_BUY
+from tg.format_helpers import is_dry as app_is_dry
+
 if TYPE_CHECKING:
     from app import App
 
@@ -29,7 +32,7 @@ class FillReconciler:
         qty_before = int(st.get("qty", 0))
         applied: list[dict] = []
 
-        if self.app.settings.dry_run or not self.app.settings.has_toss:
+        if app_is_dry(self.app):
             return {
                 "applied": applied,
                 "t_before": t_before,
@@ -482,7 +485,11 @@ class FillReconciler:
     def _plan_for_state(
         self, symbol: str, st: dict, price: float, premium: int,
     ) -> dict:
-        return self.app.strategy.get_plan_from_state(symbol, price, st, premium)
+        from tg.format_helpers import resolve_available_cash
+        cash = resolve_available_cash(self.app, symbol, st)
+        return self.app.strategy.get_plan_from_state(
+            symbol, price, st, premium, available_cash=cash,
+        )
 
     def _infer_buy_action(
         self, st: dict, symbol: str, qty: int, price: float, premium: int,
@@ -500,6 +507,9 @@ class FillReconciler:
         if best:
             o = best[1]
             return o.get("action") or "BUY_FULL", float(o["price"]), o.get("desc", "주문계획 매칭")
+
+        if st.get("reverse_mode"):
+            return REVERSE_BUY, price, "수동/외부 매수 (리버스 쿼터매수 추정)"
 
         t_val = float(st.get("T", 0.0))
         one_buy = float(plan.get("one_buy_amount", 0.0))
@@ -532,6 +542,11 @@ class FillReconciler:
             return o.get("action"), float(o["price"]), o.get("desc", "주문계획 매칭")
 
         held = int(st.get("qty", 0))
+        split = int(st.get("split_count", 40))
+        div = InfiniteStrategyV40.reverse_sell_divisor(split)
+        rev_q = max(1, math.floor(held / div)) if held > 0 else 1
+        if qty <= rev_q:
+            return "REVERSE_SELL", price, "수동/외부 매도 (리버스 추정)"
         qtr = max(1, math.floor(held / 4)) if held > 0 else 1
         if qty <= qtr:
             return "SELL_QUARTER", price, "수동/외부 매도 (쿼터 추정)"

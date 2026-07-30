@@ -16,7 +16,7 @@ from strategy.order_planner import (
     prepare_loc_orders,
     prepare_loc_submit_orders,
 )
-from strategy.fill_reconciler import FillReconciler
+from tg.format_helpers import is_dry as app_is_dry
 from strategy.market_schedule import loc_auto_submit_kst
 from strategy.session_fill import (
     has_us_session_fill_from_broker,
@@ -54,7 +54,7 @@ class JobExecutor:
         return self.app.runtime.active_symbols()
 
     def _is_dry(self) -> bool:
-        return self.app.settings.dry_run or not self.app.settings.has_toss
+        return app_is_dry(self.app)
 
     async def _loc_auto_submit_kst(self, us_date: str) -> datetime:
         return loc_auto_submit_kst(us_date)
@@ -389,12 +389,16 @@ class JobExecutor:
         pending_loc: list[tuple[dict, str]] = []
         for order in orders:
             work = dict(order)
-            if not is_dry and ref_price > 0 and use_market:
+            is_moc = (
+                str(work.get("exec", "")).upper() == "MOC"
+                or str(work.get("type", "")).upper() == "MOC"
+            )
+            if not is_dry and ref_price > 0 and (use_market or is_moc):
                 work["price"] = round(ref_price, 2)
             sub_ok, fill_ok, st, grad, oid = await self._execute_one_order(
                 symbol, work, ref_price, st,
-                use_market=use_market,
-                use_loc=use_loc,
+                use_market=use_market or is_moc,
+                use_loc=use_loc and not is_moc,
                 notify=notify_per_order,
                 wait_fill=wait_fill and not loc_two_phase,
             )
@@ -461,7 +465,12 @@ class JobExecutor:
                 }
         api = self.app.broker.get_holdings_item(symbol)
         price = api["current_price"] or self.app.broker.get_price(symbol)
-        plan = self.app.strategy.get_plan_from_state(symbol, price, st, premium)
+        from tg.format_helpers import resolve_available_cash
+        cash = resolve_available_cash(self.app, symbol, st)
+        plan = self.app.strategy.get_plan_from_state(
+            symbol, price, st, premium, available_cash=cash,
+        )
+        self.app.state.save(symbol, st)
         plan["holdings_qty"] = int(st.get("qty") or 0)
         filtered = filter_orders_for_phase(plan, phase)
         is_dry = self._is_dry()
@@ -744,9 +753,7 @@ class JobExecutor:
             "applied": [], "t_before": 0.0, "t_after": 0.0,
             "holdings": {}, "warnings": [],
         }
-        is_live = self.app.reconciler and not (
-            self.app.settings.dry_run or not self.app.settings.has_toss
-        )
+        is_live = self.app.reconciler and not app_is_dry(self.app)
         if is_live:
             try:
                 reconcile = self.app.reconciler.reconcile_symbol(symbol, premium)
@@ -785,6 +792,10 @@ class JobExecutor:
         st["qty"] = qty
         st["avg_price"] = round(avg, 4)
         st["last_t_qty"] = qty
+        if price > 0:
+            self.app.state.record_close_price(symbol, price)
+            if self.app.strategy.maybe_exit_reverse(st, symbol, price):
+                logger.info("reverse mode exited for %s (price recovery)", symbol)
         self.app.state.save(symbol, st)
 
         if not is_live:
@@ -812,8 +823,7 @@ class JobExecutor:
         self, notify: bool = True, symbols: list[str] | None = None,
     ) -> None:
         """회차 기록을 토스 실계좌 기준으로 동기화 (symbols 미지정 시 활성 종목)."""
-        is_dry = self.app.settings.dry_run or not self.app.settings.has_toss
-        if is_dry:
+        if app_is_dry(self.app):
             if notify:
                 await self._notify("🧪 DRY_RUN — 실계좌 회차 동기화는 LIVE에서만 됩니다.")
             return

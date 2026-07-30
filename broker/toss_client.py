@@ -286,6 +286,55 @@ class TossClient:
         self._invalidate_holdings_cache()
         return self._parse_order_response(data)
 
+    def place_moc_order(self, symbol: str, side: str, qty: int) -> dict:
+        """MOC — 종가 경매 무조건 체결 (MARKET + CLS). 실패 시 LIMIT CLS 극단가 fallback."""
+        client_order_id = str(uuid.uuid4())
+        if self.dry_run:
+            logger.info("[DRY_RUN] MOC %s %s %s", side, qty, symbol)
+            return {"order_id": f"dry-moc-{client_order_id[:8]}", "client_order_id": client_order_id}
+        body = {
+            "symbol": symbol.upper(),
+            "side": side.upper(),
+            "orderType": "MARKET",
+            "timeInForce": "CLS",
+            "quantity": qty,
+            "clientOrderId": client_order_id,
+        }
+        try:
+            data = self._request("POST", "/api/v1/orders", "ORDER", account=True, json=body)
+        except requests.HTTPError:
+            logger.warning("MOC MARKET+CLS failed — LIMIT CLS fallback %s", symbol)
+            fb_price = 0.01 if side.upper() == "SELL" else 999999.99
+            return self.place_loc_order(symbol, side, fb_price, qty)
+        self._invalidate_holdings_cache()
+        return self._parse_order_response(data)
+
+    def get_daily_closes(self, symbol: str, count: int = 10) -> list[dict]:
+        """일봉 종가 — 리버스 5거래일 별지점용. [{date, close}, ...] 오름차순."""
+        if self.dry_run:
+            return []
+        try:
+            data = self._request(
+                "GET", "/api/v1/candles", "MARKET_DATA",
+                params={"symbol": symbol.upper(), "interval": "1d", "count": count},
+            )
+        except Exception:
+            logger.exception("get_daily_closes failed %s", symbol)
+            return []
+        result = data.get("result", data)
+        candles = result.get("candles") or []
+        out: list[dict] = []
+        for c in candles:
+            close = float(c.get("closePrice") or 0)
+            if close <= 0:
+                continue
+            ts = str(c.get("timestamp") or "")[:10]
+            if not ts:
+                continue
+            out.append({"date": ts, "close": round(close, 4)})
+        out.sort(key=lambda x: x["date"])
+        return out
+
     def cancel_order(self, order_id: str) -> dict:
         if self.dry_run or not order_id:
             return {"order_id": order_id}

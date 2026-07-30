@@ -17,13 +17,10 @@ MAIN_CYCLES = MAIN_LEDGER  # 하위 호환
 def ledger_keyboard(settings) -> InlineKeyboardMarkup | None:
     """Google Sheets 바로가기 + Sheets 동기화."""
     rows: list[list[InlineKeyboardButton]] = []
-    if settings.has_google_sheets:
-        url = settings.google_sheets_link
-        if url:
-            rows.append([InlineKeyboardButton("📗 Google Sheets", url=url)])
-        rows.append([InlineKeyboardButton("🔄 Sheets 동기화", callback_data="LEDGER:sync")])
-    elif settings.google_sheets_enabled or settings.google_spreadsheet_id:
-        # URL 없어도 동기화 버튼은 표시 (설정 일부만 된 경우)
+    url = settings.google_sheets_link
+    if url:
+        rows.append([InlineKeyboardButton("📗 Google Sheets", url=url)])
+    if settings.has_google_sheets or url:
         rows.append([InlineKeyboardButton("🔄 Sheets 동기화", callback_data="LEDGER:sync")])
     return InlineKeyboardMarkup(rows) if rows else None
 

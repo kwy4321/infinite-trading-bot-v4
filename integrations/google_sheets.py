@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from config.settings import ROOT
+from config.settings import resolve_service_account_path
 from reporting.dashboard_data import (
     collect_all_trades,
     collect_completed_cycles,
@@ -44,18 +43,6 @@ DASHBOARD_HEADERS = [
 ]
 
 
-def _resolve_json_path(raw: str) -> Path:
-    path = Path(raw)
-    if path.is_file():
-        return path
-    candidate = ROOT / raw
-    if candidate.is_file():
-        return candidate
-    raise FileNotFoundError(
-        f"Service account JSON not found: {raw} (also tried {candidate})"
-    )
-
-
 def _cell(value: Any) -> str | int | float:
     if value is None:
         return ""
@@ -77,7 +64,9 @@ class GoogleSheetsLedger:
         import gspread
         from google.oauth2.service_account import Credentials
 
-        path = _resolve_json_path(self.settings.google_service_account_json)
+        path = resolve_service_account_path(self.settings.google_service_account_json)
+        if path is None:
+            raise FileNotFoundError("Google service account JSON not found")
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive",
@@ -140,7 +129,10 @@ class GoogleSheetsLedger:
             }]
 
             client = self._client()
-            spreadsheet = client.open_by_key(self.settings.google_spreadsheet_id)
+            sid = self.settings.resolved_spreadsheet_id
+            if not sid:
+                return {"ok": False, "message": "GOOGLE_SPREADSHEET_ID 또는 GOOGLE_SHEETS_URL 확인"}
+            spreadsheet = client.open_by_key(sid)
             self._write_tab(
                 spreadsheet, "Dashboard",
                 self._rows_from_dicts(dashboard_row, DASHBOARD_HEADERS),
@@ -185,12 +177,7 @@ class GoogleSheetsLedger:
             return {"ok": False, "message": f"Sheets 동기화 실패: {exc}"}
 
     def sheets_url(self) -> str:
-        if self.settings.google_sheets_url:
-            return self.settings.google_sheets_url
-        sid = self.settings.google_spreadsheet_id
-        if sid:
-            return f"https://docs.google.com/spreadsheets/d/{sid}"
-        return ""
+        return self.settings.google_sheets_link
 
 
 def sync_ledger(app: "App", *, rebuild_broker: bool = True) -> dict:

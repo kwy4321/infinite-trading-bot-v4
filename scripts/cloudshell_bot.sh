@@ -117,14 +117,28 @@ _sync_secrets() {
   else
     echo "  .env 없음 (Cloud Shell $ROOT/.env)"
   fi
-  local json="$ROOT/data/google-service-account.json"
-  if [[ -f "$json" ]]; then
+  local json=""
+  for candidate in \
+    "$ROOT/data/google-service-account.json" \
+    "$ROOT/google-service-account.json" \
+    "$HOME/google-service-account.json" \
+    "$HOME"/Downloads/*service*account*.json \
+    "$HOME"/*service*account*.json; do
+    if [[ -f "$candidate" ]]; then
+      json="$candidate"
+      break
+    fi
+  done
+  if [[ -n "$json" ]]; then
     scp -o StrictHostKeyChecking=no -i "$SSH_KEY" "$json" \
       "${SSH_USER}@${IP}:${INSTALL_DIR}/data/google-service-account.json"
-    echo "  google-service-account.json 업로드"
+    echo "  google-service-account.json 업로드 ($json)"
   else
-    echo "  google-service-account.json 없음 ($json)"
+    echo "  google-service-account.json 없음 — Cloud Shell에 JSON 업로드 필요"
   fi
+  echo "=== VM 설정 확인 ==="
+  ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "${SSH_USER}@${IP}" \
+    "cd '$INSTALL_DIR' && .venv/bin/python scripts/check_env.py" || true
 }
 
 _run_remote() {

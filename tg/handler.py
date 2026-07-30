@@ -14,7 +14,7 @@ from app import App
 from broker.toss_client import TossClient
 from jobs.executor import JobExecutor
 from strategy.split_handler import apply_split, calc_adjustment, format_preview, parse_ratio
-from config.settings import SYMBOLS, google_sheets_issues
+from config.settings import SYMBOLS, google_sheets_issues, reload_settings
 from tg.home_formatter import format_home
 from tg.balance_formatter import format_balance
 from tg.plan_formatter import format_plans
@@ -194,7 +194,12 @@ class TelegramHandler:
             lines.append(f"⚠️ {prep['errors'][0]}")
         return "\n".join(lines)
 
+    def _refresh_env(self) -> None:
+        """장부 명령 시 .env 재로드 — VM에 .env 동기화 후 재시작 없이 반영."""
+        self.app.settings = reload_settings()
+
     async def _reply_ledger(self, target, *, sync: bool = True) -> None:
+        self._refresh_env()
         msg = format_ledger_redirect(self.app)
         if sync and self.app.settings.has_google_sheets:
             await target.reply_text("📗 Google Sheets 동기화 중...", parse_mode="HTML")
@@ -353,12 +358,14 @@ class TelegramHandler:
     async def cmd_sheets_sync(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
             return await self._deny(update)
+        self._refresh_env()
         if not self.app.settings.has_google_sheets:
+            issues = google_sheets_issues(self.app.settings)
+            detail = "\n".join(f"· {x}" for x in issues) if issues else ""
             return await update.message.reply_text(
                 "⚠️ Google Sheets 미설정\n"
-                "GOOGLE_SHEETS_ENABLED=true\n"
-                "GOOGLE_SPREADSHEET_ID\n"
-                "GOOGLE_SERVICE_ACCOUNT_JSON 경로를 .env에 설정하세요.",
+                f"{detail}\n\n"
+                "Cloud Shell: bash scripts/cloudshell_bot.sh restart",
             )
         await update.message.reply_text("📗 Google Sheets 동기화 중...")
         result = await self._sync_ledger(rebuild_broker=True)

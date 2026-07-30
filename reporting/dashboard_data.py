@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 import logging
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 from config.settings import DATA_DIR, SYMBOLS
 from tg.format_helpers import is_dry, resolve_price
@@ -14,6 +15,7 @@ if TYPE_CHECKING:
     from app import App
 
 logger = logging.getLogger(__name__)
+KST = ZoneInfo("Asia/Seoul")
 
 
 def _trade_row(symbol: str, tr: dict, *, cycle_no: int | None = None, cycle_status: str = "") -> dict:
@@ -215,6 +217,123 @@ def collect_all_trades(app: "App") -> list[dict]:
                     cycle_status="완료",
                 ))
     rows.sort(key=lambda r: r.get("datetime") or "")
+    return rows
+
+
+def _format_t_change(t_before, t_after) -> str:
+    try:
+        if t_before not in (None, "") and t_after not in (None, ""):
+            tb, ta = float(t_before), float(t_after)
+            if tb != ta:
+                return f"{tb:g} → {ta:g}"
+            return f"{ta:g}"
+        if t_after not in (None, ""):
+            return f"{float(t_after):g}"
+        if t_before not in (None, ""):
+            return f"{float(t_before):g}"
+    except (TypeError, ValueError):
+        pass
+    return "—"
+
+
+def _to_kst_date(when: str) -> str:
+    raw = str(when or "").strip()
+    if not raw:
+        return ""
+    try:
+        dt = datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        return dt.astimezone(KST).strftime("%Y-%m-%d")
+    except ValueError:
+        return raw[:10]
+
+
+def _enrich_sheet_trade_rows(rows: list[dict]) -> None:
+    """종목별 평단 추적 → 매도 건별 실현손익 + 연번."""
+    by_sym: dict[str, list[dict]] = {}
+    for r in rows:
+        by_sym.setdefault(r["symbol"], []).append(r)
+
+    for sym_rows in by_sym.values():
+        sym_rows.sort(key=lambda r: r.get("datetime") or "")
+        running_qty = 0
+        running_avg = 0.0
+        for r in sym_rows:
+            qty = int(r.get("qty") or 0)
+            price = float(r.get("price") or 0)
+            side = str(r.get("side") or "").upper()
+            r["amount_usd"] = round(price * qty, 2)
+            r["t_change"] = _format_t_change(r.get("t_before"), r.get("t_after"))
+            r["date"] = _to_kst_date(r.get("datetime") or "")
+
+            if side == "SELL" and running_qty > 0:
+                sell_qty = min(qty, running_qty)
+                r["pnl_usd"] = round((price - running_avg) * sell_qty, 2)
+                running_qty = max(0, running_qty - qty)
+                if running_qty == 0:
+                    running_avg = 0.0
+            elif side == "BUY":
+                r["pnl_usd"] = None
+                total_cost = running_avg * running_qty + price * qty
+                running_qty += qty
+                running_avg = total_cost / running_qty if running_qty else 0.0
+            else:
+                r["pnl_usd"] = None
+
+    rows.sort(key=lambda r: (r.get("datetime") or "", r.get("symbol") or ""))
+    for i, r in enumerate(rows, 1):
+        r["seq"] = i
+
+
+def collect_sheet_trades(app: "App") -> list[dict]:
+    """토스 체결 + T메타 — Sheets 매매내역 (연번·날짜·T·가격·수량·총액·손익)."""
+    from strategy.fill_reconciler import FillReconciler
+
+    rows: list[dict] = []
+    for symbol in SYMBOLS:
+        st = app.state.load(symbol)
+        fill_log = list(st.get("fill_log") or [])
+        sym = app.cycles.get_symbol_data(symbol)
+        qty = int(st.get("qty") or 0)
+        cur = sym.get("current")
+
+        current_trades: list[dict] = []
+        if not is_dry(app) and app.settings.has_toss:
+            try:
+                order_ids = FillReconciler.collect_known_order_ids(app, symbol, st=st)
+                broker_fills = app.broker.list_broker_fills(
+                    symbol, days=365, max_orders=500, extra_order_ids=order_ids,
+                )
+                if broker_fills and qty > 0:
+                    current_trades = app.cycles.display_trades_from_broker(
+                        symbol, broker_fills, sym, fill_log, qty,
+                    )
+            except Exception:
+                logger.exception("sheet broker trades %s", symbol)
+        if not current_trades:
+            current_trades = app.cycles._collect_trades(sym, symbol, fill_log)
+
+        cycle_no = (cur or {}).get("cycle_no", "")
+        for tr in current_trades:
+            rows.append(_trade_row(
+                symbol, tr,
+                cycle_no=cycle_no,
+                cycle_status="진행중" if cur else "",
+            ))
+
+        for c in sym.get("completed") or []:
+            c_trades = list(c.get("trades") or [])
+            if c_trades:
+                app.cycles._recompute_t_metadata(c_trades)
+            for tr in c_trades:
+                rows.append(_trade_row(
+                    symbol, tr,
+                    cycle_no=c.get("cycle_no"),
+                    cycle_status="완료",
+                ))
+
+    _enrich_sheet_trade_rows(rows)
     return rows
 
 

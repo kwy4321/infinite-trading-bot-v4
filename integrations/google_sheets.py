@@ -9,10 +9,10 @@ from zoneinfo import ZoneInfo
 
 from config.settings import resolve_service_account_path
 from reporting.dashboard_data import (
-    collect_all_trades,
     collect_completed_cycles,
     collect_monthly_rows,
     collect_portfolio_snapshot,
+    collect_sheet_trades,
     ledger_data_sources,
     prepare_ledger_for_export,
 )
@@ -55,23 +55,19 @@ STATUS_COLUMNS: list[Column] = [
 ]
 
 TRADES_COLUMNS: list[Column] = [
+    ("seq", "연번", None),
     ("date", "날짜", None),
-    ("datetime", "체결시각", "_fmt_when"),
     ("symbol", "종목", None),
+    ("t_change", "T값 변동", None),
     ("side", "매매", "_fmt_side"),
-    ("qty", "수량", None),
-    ("price", "단가($)", "_fmt_usd"),
-    ("amount_usd", "금액($)", "_fmt_usd"),
+    ("price", "체결가($)", "_fmt_usd"),
+    ("qty", "수량(주)", None),
+    ("amount_usd", "총금액($)", "_fmt_usd"),
+    ("pnl_usd", "손익($)", "_fmt_pnl"),
     ("cycle_no", "회차", None),
     ("cycle_status", "회차상태", None),
-    ("action", "액션", None),
-    ("t_before", "T(전)", "_fmt_num2"),
-    ("t_after", "T(후)", "_fmt_num2"),
-    ("avg_after", "평단(후)", "_fmt_usd"),
-    ("qty_after", "수량(후)", None),
-    ("source", "출처", None),
-    ("order_id", "주문ID", None),
-    ("note", "비고", None),
+    ("datetime", "체결시각", "_fmt_when"),
+    ("source", "출처", "_fmt_source"),
 ]
 
 CYCLES_COLUMNS: list[Column] = [
@@ -151,6 +147,17 @@ def _fmt_onoff(v: Any) -> str:
     return "ON" if v in (True, "true", "True", 1, "1") else "OFF"
 
 
+def _fmt_pnl(v: Any) -> str:
+    if v is None or v == "":
+        return "—"
+    return _fmt_usd_signed(v)
+
+
+def _fmt_source(v: Any) -> str:
+    s = str(v or "").lower()
+    return {"broker": "토스증권", "sync": "동기화", "fill_log": "체결로그"}.get(s, s or "—")
+
+
 def _fmt_when(v: Any) -> str:
     raw = str(v or "").strip()
     if not raw:
@@ -173,6 +180,8 @@ _FORMATTERS: dict[str, Callable[[Any], Any]] = {
     "_fmt_side": _fmt_side,
     "_fmt_yesno": _fmt_yesno,
     "_fmt_onoff": _fmt_onoff,
+    "_fmt_pnl": _fmt_pnl,
+    "_fmt_source": _fmt_source,
     "_fmt_when": _fmt_when,
 }
 
@@ -330,7 +339,7 @@ class GoogleSheetsLedger:
         try:
             prep = prepare_ledger_for_export(self.app, rebuild_broker=rebuild_broker)
             snapshot = collect_portfolio_snapshot(self.app, fetch_live_price=False)
-            trades = collect_all_trades(self.app)
+            trades = collect_sheet_trades(self.app)
             cycles = collect_completed_cycles(self.app)
             monthly = collect_monthly_rows(self.app)
             sources = ledger_data_sources(self.app)

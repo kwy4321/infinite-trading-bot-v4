@@ -200,8 +200,8 @@ def _build_sync(
     api_key = settings.summarizer_api_key
     if not api_key:
         return dim(
-            "💡 SUMMARIZER_API_KEY 또는 GOOGLE_API_KEY(Gemini) 설정 시 "
-            "나스닥·반도체 AI 시황 요약이 포함됩니다."
+            "💡 AI 시황: .env에 GOOGLE_API_KEY 또는 SUMMARIZER_API_KEY가 "
+            "있는데도 이 메시지면 /envcheck 로 봇 인식 여부 확인"
         )
 
     snapshot = fetch_index_snapshot(broker)

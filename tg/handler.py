@@ -16,7 +16,7 @@ from jobs.executor import JobExecutor
 from strategy.split_handler import apply_split, calc_adjustment, format_preview, parse_ratio
 from config.settings import SYMBOLS, google_sheets_issues
 from tg.build_info import git_rev
-from tg.home_formatter import format_home_status
+from tg.envcheck_formatter import format_env_check
 from tg.balance_formatter import format_balance
 from tg.plan_formatter import format_plans
 from tg.token_formatter import format_toss_token_brief, format_toss_token_detail
@@ -506,6 +506,12 @@ class TelegramHandler:
         chat_id = update.effective_chat.id
         await update.message.reply_text("⏳ 아침 브리핑 생성 중...")
         await self.executor.run_morning_briefing(scheduled=False, chat_id=chat_id)
+
+    async def cmd_envcheck(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self._allowed(update):
+            return await self._deny(update)
+        self._refresh_env()
+        await update.message.reply_text(format_env_check(), parse_mode="HTML")
 
     async def _run_job(self, chat_id: int, context: ContextTypes.DEFAULT_TYPE, name: str):
         label = JOB_LABELS.get(name, name)

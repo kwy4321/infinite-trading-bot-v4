@@ -27,12 +27,114 @@ def _clean_env(raw: str) -> str:
     return (raw or "").strip().strip('"').strip("'").strip()
 
 
+_ENV_FILE_CACHE: dict[str, str] = {}
+
+_SUMMARIZER_KEY_NAMES = (
+    "SUMMARIZER_API_KEY",
+    "GOOGLE_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_GENERATIVE_AI_API_KEY",
+    "GOOGLE_AI_API_KEY",
+)
+
+
+def _parse_env_line(line: str) -> tuple[str, str] | None:
+    line = line.strip()
+    if not line or line.startswith("#"):
+        return None
+    if line.startswith("export "):
+        line = line[7:].strip()
+    if "=" not in line:
+        return None
+    key, _, val = line.partition("=")
+    key = key.strip()
+    val = _clean_env(val)
+    if not key or not val:
+        return None
+    return key, val
+
+
+def _read_dotenv_pairs() -> dict[str, str]:
+    """.env 직접 파싱 — dotenv가 놓치는 export/공백 형식 보완."""
+    env_path = ROOT / ".env"
+    if not env_path.is_file():
+        return {}
+    pairs: dict[str, str] = {}
+    try:
+        for line in env_path.read_text(encoding="utf-8-sig").splitlines():
+            parsed = _parse_env_line(line)
+            if parsed:
+                pairs[parsed[0]] = parsed[1]
+    except OSError:
+        pass
+    try:
+        for key, val in dotenv_values(env_path, encoding="utf-8-sig").items():
+            if val is None:
+                continue
+            cleaned = _clean_env(str(val))
+            if cleaned:
+                pairs[key] = cleaned
+    except OSError:
+        pass
+    return pairs
+
+
+def _read_key_file(env_name: str) -> str:
+    """KEY_FILE=/path/to/secret.txt 형식."""
+    path_raw = _ENV_FILE_CACHE.get(f"{env_name}_FILE") or os.getenv(f"{env_name}_FILE", "")
+    path_raw = _clean_env(path_raw)
+    if not path_raw:
+        return ""
+    path = Path(path_raw)
+    if not path.is_file():
+        path = ROOT / path_raw
+    if not path.is_file():
+        return ""
+    try:
+        return _clean_env(path.read_text(encoding="utf-8-sig"))
+    except OSError:
+        return ""
+
+
 def _env_first(*names: str, default: str = "") -> str:
     for name in names:
         val = os.getenv(name)
         if val is not None and str(val).strip():
             return _clean_env(str(val))
+    for name in names:
+        val = _ENV_FILE_CACHE.get(name)
+        if val:
+            return val
+    for name in names:
+        from_file = _read_key_file(name)
+        if from_file:
+            return from_file
     return default
+
+
+def _env_first_with_source(*names: str) -> tuple[str, str]:
+    for name in names:
+        val = os.getenv(name)
+        if val is not None and str(val).strip():
+            return _clean_env(str(val)), name
+    for name in names:
+        val = _ENV_FILE_CACHE.get(name)
+        if val:
+            return val, f".env:{name}"
+    for name in names:
+        from_file = _read_key_file(name)
+        if from_file:
+            return from_file, f"{name}_FILE"
+    return "", ""
+
+
+def _apply_env_file() -> None:
+    """.env 재적용 — 빈 값은 기존 환경 변수를 지우지 않음 (systemd·VM 안전)."""
+    global _ENV_FILE_CACHE
+    _ENV_FILE_CACHE = _read_dotenv_pairs()
+    for key, val in _ENV_FILE_CACHE.items():
+        if val:
+            os.environ[key] = val
 
 
 def _env_bool(*names: str, default: bool = False) -> bool:
@@ -72,11 +174,7 @@ class Settings:
     dry_run: bool = field(default_factory=lambda: _env_bool("DRY_RUN", default=False))
     news_api_key: str = field(default_factory=lambda: _env_first("NEWS_API_KEY"))
     summarizer_api_key: str = field(
-        default_factory=lambda: _env_first(
-            "SUMMARIZER_API_KEY",
-            "GOOGLE_API_KEY",
-            "GEMINI_API_KEY",
-        ),
+        default_factory=lambda: _env_first(*_SUMMARIZER_KEY_NAMES),
     )
     # 뉴스 요약 LLM: gemini | openai (키가 있을 때만 동작). 모델은 비우면 기본값(gemini-2.5-flash) 사용.
     summarizer_provider: str = field(default_factory=lambda: os.getenv("SUMMARIZER_PROVIDER", "gemini").lower())
@@ -166,7 +264,7 @@ class Settings:
 
 
 def _parse_chat_ids() -> tuple:
-    raw = os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", os.getenv("CHAT_ID", ""))
+    raw = _env_first("TELEGRAM_ALLOWED_CHAT_IDS", "CHAT_ID")
     if not raw:
         return ()
     return tuple(int(x.strip()) for x in raw.split(",") if x.strip().lstrip("-").isdigit())
@@ -239,11 +337,13 @@ def google_sheets_issues(settings: "Settings") -> list[str]:
     """장부/Sheets 미동작 시 .env 에서 무엇이 빠졌는지."""
     issues: list[str] = []
     if not settings.resolved_spreadsheet_id:
-        issues.append("GOOGLE_SPREADSHEET_ID (또는 GOOGLE_SHEETS_URL에 전체 주소)")
+        issues.append("GOOGLE_SPREADSHEET_ID 또는 GOOGLE_SHEETS_URL(스프레드시트 주소)")
     if not resolve_service_account_path(settings.google_service_account_json):
-        if _env_first("GOOGLE_SHEETS_API_KEY", "GOOGLE_API_KEY"):
+        if _env_first(*_SUMMARIZER_KEY_NAMES):
             issues.append(
-                "API키만 설정됨 — Google Sheets 연동에는 서비스계정 JSON 파일이 필요합니다",
+                "Gemini API 키는 인식됨(브리핑용). "
+                "Sheets 장부는 서비스계정 JSON 파일이 추가로 필요 "
+                "(data/google-service-account.json)",
             )
         else:
             issues.append(
@@ -253,17 +353,37 @@ def google_sheets_issues(settings: "Settings") -> list[str]:
     return issues
 
 
-def _apply_env_file() -> None:
-    """.env 재적용 — 빈 값은 기존 환경 변수를 지우지 않음 (systemd·VM 안전)."""
-    env_path = ROOT / ".env"
-    if not env_path.is_file():
-        return
-    for key, val in dotenv_values(env_path, encoding="utf-8-sig").items():
-        if val is None:
-            continue
-        cleaned = _clean_env(str(val))
-        if cleaned:
-            os.environ[key] = cleaned
+def env_diagnostics(settings: "Settings | None" = None) -> dict:
+    """봇이 실제로 읽은 설정 (값 노출 없음)."""
+    if settings is None:
+        settings = reload_settings()
+    env_path = str(ROOT / ".env")
+    sa_path = resolve_service_account_path(settings.google_service_account_json)
+    _, summ_src = _env_first_with_source(*_SUMMARIZER_KEY_NAMES)
+    notes: list[str] = []
+    if _env_first(*_SUMMARIZER_KEY_NAMES) and not sa_path:
+        notes.append(
+            "GOOGLE_API_KEY = Gemini 브리핑용. Google Sheets 장부는 API키와 별개(JSON 필요)"
+        )
+    if settings.dry_run and settings.has_toss:
+        notes.append("DRY_RUN=true — 텔레그램 설정→💹 실거래 켜기 또는 DRY_RUN=false")
+    return {
+        "env_path": env_path,
+        "env_exists": (ROOT / ".env").is_file(),
+        "toss_client_id_set": bool(settings.toss_client_id),
+        "toss_client_secret_set": bool(settings.toss_client_secret),
+        "has_toss": settings.has_toss,
+        "dry_run": settings.dry_run,
+        "telegram_chat_ids_set": bool(settings.telegram_allowed_chat_ids),
+        "summarizer_key_set": bool(settings.summarizer_api_key),
+        "summarizer_key_from": summ_src,
+        "briefing_enabled": settings.briefing_enabled,
+        "spreadsheet_id_set": bool(settings.resolved_spreadsheet_id),
+        "service_account_set": sa_path is not None,
+        "service_account_path": str(sa_path) if sa_path else "",
+        "has_google_sheets": settings.has_google_sheets,
+        "notes": notes,
+    }
 
 
 def reload_settings() -> Settings:
@@ -276,3 +396,7 @@ def get_settings() -> Settings:
     load_dotenv(ROOT / ".env", encoding="utf-8-sig")
     _apply_env_file()
     return Settings()
+
+
+# 모듈 import 시 .env 캐시 초기화
+_apply_env_file()

@@ -10,12 +10,15 @@ from briefing.news_summarizer import summarize_market_analysis
 from briefing.strategy_briefing import format_strategy_briefing
 
 
+from config.settings import reload_settings
 from tg.format_helpers import is_dry
 
 
 async def build_briefing(app: App) -> str:
     kst = ZoneInfo("Asia/Seoul")
     now = datetime.datetime.now(kst).strftime("%Y-%m-%d %H:%M")
+    settings = reload_settings()
+    app.settings = settings
     broker = app.broker if not is_dry(app) else None
     ctx = get_briefing_market_context(broker)
     lines = [f"🌅 <b>아침 브리핑</b> ({now} KST)\n"]
@@ -26,7 +29,7 @@ async def build_briefing(app: App) -> str:
         )
     lines.append(await fetch_index_summary(broker))
     analysis = await summarize_market_analysis(
-        app.settings, broker, market_ctx=ctx,
+        settings, broker, market_ctx=ctx,
     )
     if analysis:
         lines.append("")

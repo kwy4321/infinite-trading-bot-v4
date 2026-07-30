@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import datetime
+import logging
 from typing import TYPE_CHECKING
 
-from config.settings import SYMBOLS
+from config.settings import DATA_DIR, SYMBOLS
 from tg.format_helpers import is_dry, resolve_price
 from tg.ui import mode_label
 
 if TYPE_CHECKING:
     from app import App
+
+logger = logging.getLogger(__name__)
 
 
 def _trade_row(symbol: str, tr: dict, *, cycle_no: int | None = None, cycle_status: str = "") -> dict:
@@ -100,17 +103,109 @@ def collect_portfolio_snapshot(app: "App", *, fetch_live_price: bool = False) ->
     }
 
 
+def prepare_ledger_for_export(
+    app: "App", *, rebuild_broker: bool = True, broker_timeout_sec: float = 25.0,
+) -> dict:
+    """fill_log·토스 체결 → cycles.current.trades 반영 (Sheets/대시보드 수집 전)."""
+    import concurrent.futures
+
+    result: dict = {
+        "synced_symbols": [],
+        "fill_log_entries": 0,
+        "broker_symbols": [],
+        "errors": [],
+    }
+    is_live = rebuild_broker and not is_dry(app) and app.settings.has_toss
+
+    def _rebuild_one(symbol: str, fill_log: list, qty: int) -> int:
+        from strategy.fill_reconciler import FillReconciler
+
+        st = app.state.load(symbol)
+        order_ids = FillReconciler.collect_known_order_ids(app, symbol, st=st)
+        broker_fills = app.broker.list_broker_fills(
+            symbol, days=365, max_orders=500, extra_order_ids=order_ids,
+        )
+        if not broker_fills:
+            return 0
+        return app.cycles.rebuild_trades_from_broker(symbol, broker_fills, fill_log, qty)
+
+    for symbol in SYMBOLS:
+        st = app.state.load(symbol)
+        fill_log = list(st.get("fill_log") or [])
+        principal = float(st.get("principal") or 0) or 10000.0
+        qty = int(st.get("qty") or 0)
+        sym = app.cycles.get_symbol_data(symbol)
+        has_trades = bool((sym.get("current") or {}).get("trades"))
+
+        if fill_log:
+            result["fill_log_entries"] += len(fill_log)
+
+        if fill_log or qty > 0 or has_trades:
+            app.cycles.ensure_current(symbol, principal)
+
+        if is_live and qty > 0:
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    fut = pool.submit(_rebuild_one, symbol, fill_log, qty)
+                    n = fut.result(timeout=broker_timeout_sec)
+                if n:
+                    result["broker_symbols"].append(symbol)
+            except concurrent.futures.TimeoutError:
+                logger.warning("broker rebuild timeout %s", symbol)
+                result["errors"].append(f"{symbol}: broker timeout")
+            except Exception as exc:
+                logger.exception("broker rebuild failed %s", symbol)
+                result["errors"].append(f"{symbol}: {exc}")
+
+        if fill_log:
+            app.cycles.sync_trades_from_fill_log(symbol, fill_log, principal)
+
+        app.cycles.backfill_trade_t_metadata(symbol)
+        app.cycles.dedupe_symbol_trades(symbol)
+
+        if fill_log or qty > 0 or has_trades:
+            result["synced_symbols"].append(symbol)
+
+    return result
+
+
+def ledger_data_sources(app: "App") -> dict:
+    """로컬 데이터 파일 존재·건수 — 0건일 때 원인 확인용."""
+    sources: dict = {
+        "data_dir": str(DATA_DIR),
+        "cycles_json": (DATA_DIR / "cycles.json").is_file(),
+        "symbols": {},
+    }
+    for symbol in SYMBOLS:
+        state_path = DATA_DIR / f"{symbol}.json"
+        st = app.state.load(symbol)
+        sym = app.cycles.get_symbol_data(symbol)
+        cur = sym.get("current") or {}
+        sources["symbols"][symbol] = {
+            "state_file": state_path.is_file(),
+            "fill_log": len(st.get("fill_log") or []),
+            "current_trades": len(cur.get("trades") or []),
+            "completed_cycles": len(sym.get("completed") or []),
+        }
+    return sources
+
+
 def collect_all_trades(app: "App") -> list[dict]:
     rows: list[dict] = []
     for symbol in SYMBOLS:
         sym = app.cycles.get_symbol_data(symbol)
+        st = app.state.load(symbol)
+        fill_log = st.get("fill_log") or []
         cur = sym.get("current")
-        if cur:
-            for tr in cur.get("trades") or []:
+        trades = app.cycles._collect_trades(sym, symbol, fill_log)
+        if trades:
+            cycle_no = (cur or {}).get("cycle_no", "")
+            cycle_status = "진행중" if cur else ""
+            for tr in trades:
                 rows.append(_trade_row(
                     symbol, tr,
-                    cycle_no=cur.get("cycle_no"),
-                    cycle_status="진행중",
+                    cycle_no=cycle_no,
+                    cycle_status=cycle_status,
                 ))
         for c in sym.get("completed") or []:
             for tr in c.get("trades") or []:

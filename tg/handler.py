@@ -13,7 +13,6 @@ from telegram.ext import ContextTypes
 from app import App
 from broker.toss_client import TossClient
 from jobs.executor import JobExecutor
-from strategy.fill_reconciler import FillReconciler
 from strategy.split_handler import apply_split, calc_adjustment, format_preview, parse_ratio
 from config.settings import SYMBOLS
 from tg.home_formatter import format_home
@@ -35,6 +34,7 @@ from tg.keyboards import (
     token_keyboard,
     trading_symbols_keyboard,
     main_menu_keyboard,
+    ledger_keyboard,
     MAIN_HOME,
     MAIN_PLAN,
     MAIN_SETTING,
@@ -162,32 +162,64 @@ class TelegramHandler:
             logger.exception("cmd_token failed")
             await update.message.reply_text(f"🚨 토큰 조회 실패: {e}")
 
-    async def _sync_ledger(self) -> str | None:
+    async def _sync_ledger(self, *, rebuild_broker: bool = True) -> dict | None:
         if not self.app.settings.has_google_sheets:
             return None
         try:
             from integrations.google_sheets import sync_ledger
-            result = await asyncio.to_thread(sync_ledger, self.app)
-            if result.get("ok"):
-                return result.get("message")
-            return result.get("message") or "Sheets 동기화 실패"
+            return await asyncio.wait_for(
+                asyncio.to_thread(sync_ledger, self.app, rebuild_broker=rebuild_broker),
+                timeout=120.0,
+            )
+        except asyncio.TimeoutError:
+            logger.exception("google sheets sync timeout")
+            return {"ok": False, "message": "Sheets 동기화 시간 초과 (120초)"}
         except Exception as exc:
             logger.exception("google sheets sync failed")
-            return f"Sheets 동기화 실패: {exc}"
+            return {"ok": False, "message": f"Sheets 동기화 실패: {exc}"}
 
-    async def cmd_dashboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    @staticmethod
+    def _format_sheets_result(result: dict | None) -> str:
+        if not result:
+            return "🚨 Google Sheets 동기화 실패 — 로그 확인"
+        msg = result.get("message") or "Sheets 동기화 실패"
+        prefix = "✅" if result.get("ok") else "🚨"
+        lines = [f"{prefix} {msg}"]
+        prep = result.get("prep") or {}
+        if prep.get("fill_log_entries"):
+            lines.append(f"fill_log {prep['fill_log_entries']}건 반영")
+        if prep.get("broker_symbols"):
+            lines.append(f"토스체결: {', '.join(prep['broker_symbols'])}")
+        if prep.get("errors"):
+            lines.append(f"⚠️ {prep['errors'][0]}")
+        return "\n".join(lines)
+
+    async def _reply_ledger(self, target, *, sync: bool = True) -> None:
+        msg = format_ledger_redirect(self.app)
+        if sync and self.app.settings.has_google_sheets:
+            await target.reply_text("📗 Google Sheets 동기화 중...", parse_mode="HTML")
+            result = await self._sync_ledger(rebuild_broker=True)
+            msg += f"\n\n{self._format_sheets_result(result)}"
+        markup = ledger_keyboard(self.app.settings)
+        if not markup:
+            msg += (
+                "\n\n⚠️ 링크 버튼 없음 — .env에 STREAMLIT_URL 또는 Google Sheets 설정 후 "
+                "봇을 재시작하세요. (python3 scripts/check_env.py 로 확인)"
+            )
+        await target.reply_text(msg, parse_mode="HTML", reply_markup=markup)
+
+    async def cmd_ledger(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """장부 — Streamlit / Google Sheets 바로가기."""
         if not self._allowed(update):
             return await self._deny(update)
         try:
-            msg = format_ledger_redirect(self.app, title="현황 대시보드")
-            sheet_msg = await self._sync_ledger()
-            if sheet_msg:
-                prefix = "✅" if "완료" in sheet_msg else "🚨"
-                msg += f"\n\n{prefix} {sheet_msg}"
-            await update.message.reply_text(msg, parse_mode="HTML")
+            await self._reply_ledger(update.message)
         except Exception as e:
-            logger.exception("dashboard failed")
-            await update.message.reply_text(f"🚨 조회 실패: {e}")
+            logger.exception("ledger menu failed")
+            await update.message.reply_text(f"🚨 장부 안내 실패: {e}")
+
+    async def cmd_dashboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        return await self.cmd_ledger(update, context)
 
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
@@ -229,6 +261,11 @@ class TelegramHandler:
     def _render_plans(self, symbols: list[str], premium: int) -> str:
         return format_plans(self.app, symbols, premium)
 
+    def _build_plan_reply(self, symbols: list[str], premium: int):
+        msg = self._render_plans(symbols, premium)
+        markup = plan_action_keyboard(symbols) if symbols else None
+        return msg, markup
+
     async def cmd_plan(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
             return await self._deny(update)
@@ -236,17 +273,22 @@ class TelegramHandler:
         symbols = self._plan_symbols(context, parts)
         premium = self.app.runtime.premium_default()
         context.user_data["plan_symbols"] = symbols
+        status = await update.message.reply_text("📋 주문계획 조회 중...")
         try:
-            msg = self._render_plans(symbols, premium)
-            markup = plan_action_keyboard(symbols) if symbols else None
-            await update.message.reply_text(
-                msg,
-                reply_markup=markup,
-                parse_mode="HTML",
+            msg, markup = await asyncio.wait_for(
+                asyncio.to_thread(self._build_plan_reply, symbols, premium),
+                timeout=45.0,
+            )
+            await status.edit_text(msg, reply_markup=markup, parse_mode="HTML")
+        except asyncio.TimeoutError:
+            logger.warning("plan query timeout symbols=%s", symbols)
+            await status.edit_text(
+                "🚨 주문계획 조회 시간 초과\n"
+                "Toss API 응답 지연 — 잠시 후 다시 시도하거나 /status 로 확인하세요.",
             )
         except Exception as e:
             logger.exception("plan failed")
-            await update.message.reply_text(f"🚨 조회 실패: {e}")
+            await status.edit_text(f"🚨 조회 실패: {e}")
 
     async def cmd_setting(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
@@ -267,21 +309,13 @@ class TelegramHandler:
         await target.reply_text(text, reply_markup=markup)
 
     async def cmd_cycles_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """하단 메뉴 — Streamlit / Google Sheets 장부 안내."""
-        if not self._allowed(update):
-            return await self._deny(update)
-        msg = format_ledger_redirect(self.app, title="회차·매매 장부")
-        sheet_msg = await self._sync_ledger()
-        if sheet_msg:
-            prefix = "✅" if "완료" in sheet_msg else "🚨"
-            msg += f"\n\n{prefix} {sheet_msg}"
-        await update.message.reply_text(msg, parse_mode="HTML")
+        return await self.cmd_ledger(update, context)
 
     async def cmd_cycles(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        return await self.cmd_cycles_menu(update, context)
+        return await self.cmd_ledger(update, context)
 
     async def cmd_monthly(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        return await self.cmd_cycles_menu(update, context)
+        return await self.cmd_ledger(update, context)
 
     async def cmd_run(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
@@ -311,7 +345,7 @@ class TelegramHandler:
         )
 
     async def cmd_history(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        return await self.cmd_cycles_menu(update, context)
+        return await self.cmd_ledger(update, context)
 
     async def cmd_sheets_sync(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
@@ -324,12 +358,13 @@ class TelegramHandler:
                 "GOOGLE_SERVICE_ACCOUNT_JSON 경로를 .env에 설정하세요.",
             )
         await update.message.reply_text("📗 Google Sheets 동기화 중...")
-        sheet_msg = await self._sync_ledger()
-        if sheet_msg:
-            prefix = "✅" if "완료" in sheet_msg else "🚨"
-            await update.message.reply_text(f"{prefix} {sheet_msg}")
-        else:
-            await update.message.reply_text("🚨 Google Sheets 동기화 실패 — 로그 확인")
+        result = await self._sync_ledger(rebuild_broker=True)
+        markup = ledger_keyboard(self.app.settings)
+        await update.message.reply_text(
+            self._format_sheets_result(result),
+            parse_mode="HTML",
+            reply_markup=markup,
+        )
 
     async def cmd_set_t(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
@@ -580,119 +615,23 @@ class TelegramHandler:
                 await query.edit_message_text(f"🚨 토큰 갱신 실패: {e}")
             return
 
-        if data.startswith("CYCLES:"):
-            msg = format_ledger_redirect(self.app, title="회차·매매 장부")
-            sheet_msg = await self._sync_ledger()
-            if sheet_msg:
-                msg += f"\n\n✅ {sheet_msg}"
-            await query.message.reply_text(msg, parse_mode="HTML")
+        if data == "LEDGER:sync":
+            if not self.app.settings.has_google_sheets:
+                await query.answer("Google Sheets 미설정", show_alert=True)
+                return
+            await query.answer("동기화 중…")
+            result = await self._sync_ledger(rebuild_broker=True)
+            markup = ledger_keyboard(self.app.settings)
+            await query.message.reply_text(
+                self._format_sheets_result(result),
+                parse_mode="HTML",
+                reply_markup=markup,
+            )
             return
 
-    async def _sync_then_send_cycles(self, target, symbol: str):
-        """실계좌 동기화(/sync) 후 회차 내역 표시."""
-        is_live = not (self.app.settings.dry_run or not self.app.settings.has_toss)
-        sync_symbols = self._cycle_symbol_list(symbol)
-        if is_live:
-            await target.reply_text("🔄 토스 체결·실계좌에서 T·회차 동기화 중...")
-            try:
-                await self.executor.run_cycle_sync(notify=False, symbols=sync_symbols)
-            except Exception:
-                logger.exception("cycle sync before report failed")
-        await self._send_cycles(target, symbol, already_synced=is_live)
-
-    @staticmethod
-    def _cycle_symbol_list(symbol: str) -> list[str]:
-        if symbol == "ALL":
-            return list(SYMBOLS)
-        if "," in symbol:
-            return [
-                s.strip().upper() for s in symbol.split(",")
-                if s.strip().upper() in SYMBOLS
-            ]
-        return [symbol.upper()]
-
-    async def _send_cycles(self, target, symbol: str, *, already_synced: bool = False):
-        try:
-            symbols = self._cycle_symbol_list(symbol)
-            is_live = not (self.app.settings.dry_run or not self.app.settings.has_toss)
-            premium = self.app.runtime.premium_default()
-            parts = []
-            for sym in symbols:
-                st = self.app.state.load(sym)
-                if is_live and already_synced:
-                    try:
-                        pos = self.app.broker.get_holdings_item(sym)
-                        price = float(pos.get("current_price") or st.get("avg_price") or 0)
-                        qty = int(st.get("qty", 0) or pos.get("qty", 0) or 0)
-                    except Exception:
-                        logger.exception("holdings fetch failed %s", sym)
-                        price = float(st.get("avg_price") or 0)
-                        qty = int(st.get("qty", 0) or 0)
-                    broker_fills = None
-                    if qty > 0:
-                        order_ids = FillReconciler.collect_known_order_ids(
-                            self.app, sym, st=st,
-                        )
-                        broker_fills = self.app.broker.list_broker_fills(
-                            sym, days=90, max_orders=200, extra_order_ids=order_ids,
-                        )
-                        if broker_fills:
-                            self.app.cycles.rebuild_trades_from_broker(
-                                sym, broker_fills, st.get("fill_log", []), qty,
-                            )
-                    parts.append(self.app.cycles.format_cycles_report(
-                        sym, st["qty"], st["avg_price"], price,
-                        fill_log=st.get("fill_log", []),
-                        broker_fills=broker_fills,
-                        principal=float(st.get("principal", 0.0)),
-                    ))
-                    continue
-                if is_live and not already_synced:
-                    try:
-                        await asyncio.to_thread(
-                            self.executor.sync_cycle_from_broker, sym, premium,
-                        )
-                    except Exception:
-                        logger.exception("cycle refresh failed %s", sym)
-                st = self.app.state.load(sym)
-                broker_fills = None
-                if is_live:
-                    pos = self.app.broker.get_holdings_item(sym)
-                    price = float(pos.get("current_price") or st.get("avg_price") or 0)
-                    qty = int(st.get("qty", 0) or pos.get("qty", 0) or 0)
-                    order_ids = FillReconciler.collect_known_order_ids(
-                        self.app, sym, st=st,
-                    )
-                    broker_fills = self.app.broker.list_broker_fills(
-                        sym, days=90, max_orders=200, extra_order_ids=order_ids,
-                    )
-                    if broker_fills and qty > 0:
-                        self.app.cycles.rebuild_trades_from_broker(
-                            sym, broker_fills, st.get("fill_log", []), qty,
-                        )
-                else:
-                    try:
-                        price = self._pos(sym)["current_price"]
-                    except Exception:
-                        logger.exception("holdings fetch failed %s", sym)
-                        price = float(st.get("avg_price") or 0)
-                if not is_live:
-                    self.app.cycles.ensure_current(sym, st["principal"])
-                    self.app.cycles.sync_trades_from_fill_log(
-                        sym, st.get("fill_log", []), float(st.get("principal", 0.0)),
-                    )
-                    self.app.cycles.dedupe_symbol_trades(sym)
-                    st = self.app.state.load(sym)
-                parts.append(self.app.cycles.format_cycles_report(
-                    sym, st["qty"], st["avg_price"], price,
-                    fill_log=st.get("fill_log", []),
-                    broker_fills=broker_fills,
-                    principal=float(st.get("principal", 0.0)),
-                ))
-            await target.reply_text("\n\n".join(parts), parse_mode="HTML")
-        except Exception as e:
-            logger.exception("cycles report failed")
-            await target.reply_text(f"🚨 회차 조회 실패: {e}")
+        if data.startswith("CYCLES:"):
+            await self._reply_ledger(query.message)
+            return
 
     async def _execute_manual(self, chat_id: int, symbol: str, premium: int, context: ContextTypes.DEFAULT_TYPE):
         st = self.app.state.load(symbol)
@@ -759,13 +698,14 @@ class TelegramHandler:
         menu_routes = {
             MAIN_HOME: self.cmd_start,
             MAIN_PLAN: self.cmd_plan,
+            "📋 주문 계획": self.cmd_plan,
             MAIN_SETTING: self.cmd_setting,
             MAIN_STATUS: self.cmd_status,
             "📈 현황": self.cmd_status,  # 구 하단 메뉴 (키보드 갱신 전)
             MAIN_BALANCE: self.cmd_balance,
-            MAIN_LEDGER: self.cmd_cycles_menu,
-            MAIN_CYCLES: self.cmd_cycles_menu,
-            "📒 회차내역": self.cmd_cycles_menu,
+            MAIN_LEDGER: self.cmd_ledger,
+            MAIN_CYCLES: self.cmd_ledger,
+            "📒 회차내역": self.cmd_ledger,
         }
         if text in menu_routes:
             context.user_data.pop("awaiting", None)

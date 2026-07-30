@@ -1,5 +1,7 @@
 """Inline keyboard builders."""
 
+from __future__ import annotations
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 from config.settings import PREMIUM_OPTIONS, SPLIT_OPTIONS, SYMBOLS, TAKE_PROFIT_OPTIONS
@@ -12,6 +14,22 @@ MAIN_STATUS = "♾️ 현황"
 MAIN_BALANCE = "💼 잔고"
 MAIN_LEDGER = "📊 장부"
 MAIN_CYCLES = MAIN_LEDGER  # 하위 호환
+
+
+def ledger_keyboard(settings) -> InlineKeyboardMarkup | None:
+    """Streamlit / Google Sheets 바로가기 + Sheets 동기화."""
+    rows: list[list[InlineKeyboardButton]] = []
+    streamlit = settings.streamlit_link
+    if streamlit:
+        rows.append([
+            InlineKeyboardButton("🖥️ Streamlit 대시보드", url=streamlit),
+        ])
+    if settings.has_google_sheets:
+        url = settings.google_sheets_link
+        if url:
+            rows.append([InlineKeyboardButton("📗 Google Sheets", url=url)])
+        rows.append([InlineKeyboardButton("🔄 Sheets 동기화", callback_data="LEDGER:sync")])
+    return InlineKeyboardMarkup(rows) if rows else None
 
 
 def main_menu_keyboard() -> ReplyKeyboardMarkup:

@@ -21,6 +21,7 @@ from reporting.dashboard_data import (
     collect_monthly_rows,
     collect_portfolio_snapshot,
     collect_symbol_status,
+    prepare_ledger_for_export,
 )
 
 
@@ -58,6 +59,7 @@ def main() -> None:
         st.stop()
 
     app = get_app()
+    prepare_ledger_for_export(app)
     st.title("♾️ 라오어 무한매수 4.0 — 현황 대시보드")
 
     if st.button("🔄 새로고침"):
@@ -79,10 +81,9 @@ def main() -> None:
     )
 
     if settings.has_google_sheets:
-        sheets_url = settings.google_sheets_url or (
-            f"https://docs.google.com/spreadsheets/d/{settings.google_spreadsheet_id}"
-        )
-        st.link_button("📗 Google Sheets 장부 열기", sheets_url)
+        sheets_url = settings.google_sheets_link
+        if sheets_url:
+            st.link_button("📗 Google Sheets 장부 열기", sheets_url)
 
     st.divider()
     st.subheader("종목 현황")

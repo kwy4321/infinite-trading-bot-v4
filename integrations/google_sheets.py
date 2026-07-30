@@ -12,6 +12,8 @@ from reporting.dashboard_data import (
     collect_completed_cycles,
     collect_monthly_rows,
     collect_portfolio_snapshot,
+    ledger_data_sources,
+    prepare_ledger_for_export,
 )
 
 if TYPE_CHECKING:
@@ -109,15 +111,17 @@ class GoogleSheetsLedger:
                 value_input_option="USER_ENTERED",
             )
 
-    def sync_all(self) -> dict:
+    def sync_all(self, *, rebuild_broker: bool = True) -> dict:
         if not self.enabled:
             return {"ok": False, "message": "Google Sheets 비활성 (GOOGLE_SHEETS_ENABLED/ID/JSON 확인)"}
 
         try:
+            prep = prepare_ledger_for_export(self.app, rebuild_broker=rebuild_broker)
             snapshot = collect_portfolio_snapshot(self.app, fetch_live_price=False)
             trades = collect_all_trades(self.app)
             cycles = collect_completed_cycles(self.app)
             monthly = collect_monthly_rows(self.app)
+            sources = ledger_data_sources(self.app)
 
             acc = snapshot["account"]
             dashboard_row = [{
@@ -159,12 +163,22 @@ class GoogleSheetsLedger:
             )
 
             msg = f"Sheets 동기화 완료 — 매매 {len(trades)}건 · 완료회차 {len(cycles)}건"
+            if len(trades) == 0 and len(cycles) == 0:
+                msg += (
+                    f" (장부 0건 — {sources['data_dir']} 확인 · "
+                    f"fill_log={sum(s['fill_log'] for s in sources['symbols'].values())} · "
+                    "봇 VM에서 /sync 후 /sheets_sync)"
+                )
+            elif prep.get("broker_symbols"):
+                msg += f" · 토스체결 {','.join(prep['broker_symbols'])} 반영"
             logger.info(msg)
             return {
                 "ok": True,
                 "message": msg,
                 "trades": len(trades),
                 "cycles": len(cycles),
+                "prep": prep,
+                "sources": sources,
             }
         except Exception as exc:
             logger.exception("google sheets sync failed")
@@ -179,5 +193,5 @@ class GoogleSheetsLedger:
         return ""
 
 
-def sync_ledger(app: "App") -> dict:
-    return GoogleSheetsLedger(app).sync_all()
+def sync_ledger(app: "App", *, rebuild_broker: bool = True) -> dict:
+    return GoogleSheetsLedger(app).sync_all(rebuild_broker=rebuild_broker)

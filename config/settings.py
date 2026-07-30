@@ -6,9 +6,9 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
-
 ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(ROOT / ".env")
+
 DATA_DIR = ROOT / "data" / "accounts" / "default"
 SYMBOLS = ("TQQQ", "SOXL")
 SPLIT_OPTIONS = (20, 30, 40, 50, 60)
@@ -56,6 +56,19 @@ class Settings:
         )
 
     @property
+    def streamlit_link(self) -> str:
+        """텔레그램 URL 버튼용 — 공백·따옴표 제거, http:// 자동 보정."""
+        return _normalize_http_url(self.streamlit_url)
+
+    @property
+    def google_sheets_link(self) -> str:
+        if self.google_sheets_url:
+            return _normalize_http_url(self.google_sheets_url)
+        if self.google_spreadsheet_id:
+            return f"https://docs.google.com/spreadsheets/d/{self.google_spreadsheet_id}"
+        return ""
+
+    @property
     def has_toss(self) -> bool:
         return bool(self.toss_client_id and self.toss_client_secret)
 
@@ -76,6 +89,15 @@ def _int_env(name: str, default: int) -> int:
         return int(os.getenv(name, str(default)))
     except ValueError:
         return default
+
+
+def _normalize_http_url(raw: str) -> str:
+    url = (raw or "").strip().strip('"').strip("'")
+    if not url:
+        return ""
+    if not url.startswith(("http://", "https://")):
+        url = f"http://{url}"
+    return url
 
 
 def get_settings() -> Settings:

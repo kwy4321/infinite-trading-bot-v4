@@ -1,11 +1,13 @@
 """Format /plan — today's order plan."""
 
+from __future__ import annotations
+
 import datetime
 from zoneinfo import ZoneInfo
 
 from app import App
 from broker.toss_client import TossClient
-from tg.format_helpers import is_dry, resolve_price
+from tg.format_helpers import is_dry, resolve_price, resolve_prices
 from tg.ui import (
     code,
     dim,
@@ -117,9 +119,12 @@ def _format_order_lines(orders: list[dict], plan: dict, side: str) -> list[str]:
     return lines
 
 
-def format_plan_block(app: App, symbol: str, premium: int) -> str:
+def format_plan_block(
+    app: App, symbol: str, premium: int, *, price: float | None = None,
+) -> str:
     st = app.state.load(symbol)
-    price = resolve_price(app, symbol)
+    if price is None:
+        price = resolve_price(app, symbol)
     plan = app.strategy.get_plan_from_state(symbol, price, st, premium)
     strat = mode_label(plan["mode"])
     star_pct = float(plan.get("star_pct", 0))
@@ -193,7 +198,11 @@ def format_plans(app: App, symbols: list[str], premium: int) -> str:
                 f"⏭️ {symbol_card(symbol)} — {us_close_date} 18:05 이전 LOC 이미 접수됨 "
                 f"(자동접수 스킵 · /run 으로 재시도 시에도 동일)"
             )
-    cards = [format_plan_block(app, symbol, premium) for symbol in symbols]
+    prices = resolve_prices(app, symbols)
+    cards = [
+        format_plan_block(app, symbol, premium, price=prices.get(symbol.upper(), 0.0))
+        for symbol in symbols
+    ]
     blocks.append("\n\n".join(cards))
     blocks.append("")
     blocks.append(dim("🌙 종가 LOC — 조건 충족 시에만 체결 (미충족 시 미체결 · 새벽 sync 확인)"))

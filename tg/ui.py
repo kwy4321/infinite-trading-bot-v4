@@ -183,12 +183,10 @@ def help_block() -> str:
             (f"{code('/set_t')}", "🎯 T 값 조정"),
             (f"{code('/token')}", "🔑 API 토큰 상태·갱신"),
         ]),
-        ("📒 기록", [
-            (f"{code('/dashboard')}", "📒 자산·손익 대시보드"),
-            (f"{code('/cycles')}", "📒 진행 회차 기록"),
-            (f"{code('/sync')}", "🔄 실계좌 회차 동기화"),
-            (f"{code('/history')}", "🎓 종료 기록"),
-            (f"{code('/monthly')}", "📅 수익현황"),
+        ("📊 장부", [
+            (f"{code('/dashboard')}", "Streamlit · Google Sheets (버튼 링크)"),
+            (f"{code('/sheets_sync')}", "Google Sheets 수동 동기화"),
+            (f"{code('/sync')}", "실계좌 T·체결 동기화"),
         ]),
         ("🔧 운영", [
             (f"{code('/pause')}", "⏸ 자동 실행 멈춤"),

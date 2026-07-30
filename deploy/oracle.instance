@@ -1,4 +1,5 @@
 # Oracle VM — Cloud Shell에서 scripts/cloudshell_bot.sh 가 읽음 (OCID는 비밀 아님)
 INSTANCE_OCID=ocid1.instance.oc1.ap-chuncheon-1.an4w4ljrbhtvjlacu4tveiqge2kspspa22epoamqsvpu7s6ysdrrh4wai2nq
 INSTALL_DIR=/home/ubuntu/infinite-trading-bot-v4
+REPO_URL=https://github.com/kwy4321/infinite-trading-bot-v4.git
 SSH_USER=ubuntu

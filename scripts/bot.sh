@@ -90,24 +90,27 @@ _stop_nohup() {
 }
 
 case "$ACTION" in
+  stop|kill)
+    bash "$ROOT/scripts/kill_all_bots.sh" || true
+    ;;
   start)
+    bash "$ROOT/scripts/kill_all_bots.sh"
+    sleep 1
     if _systemd_available; then
       _start_systemd
     else
       _start_nohup
     fi
     ;;
-  stop)
-    _stop_systemd
-    _stop_nohup
-    pkill -f "[p]ython.*main\.py" 2>/dev/null || true
-    pkill -f "[p]ython3.*main\.py" 2>/dev/null || true
-    ;;
   restart)
     find "$ROOT" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
-    "$0" stop
+    bash "$ROOT/scripts/kill_all_bots.sh"
     sleep 1
-    "$0" start
+    if _systemd_available; then
+      _start_systemd
+    else
+      _start_nohup
+    fi
     ;;
   status)
     if _systemd_available && systemctl is-active --quiet infinite-trading-bot 2>/dev/null; then
@@ -133,7 +136,7 @@ case "$ACTION" in
     fi
     ;;
   *)
-    echo "Usage: bash scripts/bot.sh {start|stop|restart|status|logs}"
+    echo "Usage: bash scripts/bot.sh {start|stop|kill|restart|status|logs}"
     exit 1
     ;;
 esac

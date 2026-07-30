@@ -724,6 +724,9 @@ class TelegramHandler:
             context.user_data.pop("awaiting_symbol", None)
             return await menu_routes[text](update, context)
 
+        if text in ("/version", "버전"):
+            return await self.cmd_version(update, context)
+
         if text.startswith("/set_t"):
             return await self.cmd_set_t(update, context)
 

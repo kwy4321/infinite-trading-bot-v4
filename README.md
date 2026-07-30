@@ -81,6 +81,16 @@ cat ~/.ssh/github_deploy   # → GitHub Secret SSH_PRIVATE_KEY 에 붙여넣기
 
 수동 배포 테스트: GitHub → Actions → **Deploy to Server** → **Run workflow**
 
+좀비 봇(예전 프로세스) 정리:
+
+```bash
+bash scripts/kill_all_bots.sh
+bash scripts/bot.sh start
+# 또는 Cloud Shell: bash scripts/cloudshell_bot.sh restart
+```
+
+텔레그램 `/version` — `봇 빌드: xxxxx` · `장부 UI: 신 UI` 이면 최신 코드.
+
 ## 4. 로컬 Windows (선택)
 
 보안 정책으로 Telegram API가 막힌 PC에서는 로컬 테스트 대신 **서버에서** `test_telegram.sh` 사용.

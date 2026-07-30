@@ -157,6 +157,7 @@ cd "$INSTALL_DIR"
 git fetch origin main
 git reset --hard origin/main
 find "$INSTALL_DIR" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+bash scripts/kill_all_bots.sh || true
 
 if [[ ! -f "$INSTALL_DIR/.env" ]]; then
   echo "⚠️ VM에 .env 없음 — SSH 접속 후 nano $INSTALL_DIR/.env 설정 필요"

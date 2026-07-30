@@ -34,11 +34,7 @@ pip install --no-cache-dir -r requirements.txt -q
 PYTHON="$ROOT/.venv/bin/python" bash scripts/check_python.sh
 
 echo "=== stop all bot processes ==="
-bash scripts/bot.sh stop || true
-sleep 1
-pkill -f "[p]ython.*main\.py" 2>/dev/null || true
-pkill -f "[p]ython3.*main\.py" 2>/dev/null || true
-sleep 1
+bash scripts/kill_all_bots.sh
 
 if grep -q "format_ledger_redirect" tg/handler.py 2>/dev/null; then
   echo "ERROR: handler.py still imports format_ledger_redirect"

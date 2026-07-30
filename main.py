@@ -12,6 +12,7 @@ from telegram.ext import ApplicationBuilder, CallbackQueryHandler, CommandHandle
 
 from app import App
 from jobs.executor import JobExecutor
+from tg.bot_lock import acquire_bot_lock
 from tg.handler import TelegramHandler
 from tg.sender import TelegramSender
 
@@ -62,6 +63,7 @@ def _register_jobs(app_tg, executor: JobExecutor):
 
 
 def main():
+    _lock = acquire_bot_lock()
     application_app = App.create()
     dry = application_app.settings.dry_run or not application_app.settings.has_toss
     default_level = "INFO" if not dry else application_app.settings.log_level

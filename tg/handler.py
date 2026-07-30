@@ -201,6 +201,21 @@ class TelegramHandler:
         """장부 명령 시 .env 재로드 — VM에 .env 동기화 후 재시작 없이 반영."""
         self.app.settings = reload_settings()
 
+    _LEDGER_SYNCING = "🔄 Google Sheets 동기화 중…"
+
+    async def _complete_ledger_sync_ui(self, msg, markup) -> None:
+        try:
+            result = await self._sync_ledger(rebuild_broker=True)
+            status = self._format_sheets_result(result, brief=True)
+        except Exception as exc:
+            logger.exception("ledger sync failed")
+            status = f"🚨 Google Sheets 동기화 실패: {exc}"
+        try:
+            await msg.edit_text(status, reply_markup=markup)
+        except Exception:
+            logger.debug("ledger status edit failed, send new message", exc_info=True)
+            await msg.reply_text(status, reply_markup=markup)
+
     async def _reply_ledger(self, target, *, sync: bool = True) -> None:
         self._refresh_env()
         markup = ledger_keyboard(self.app.settings)
@@ -209,11 +224,11 @@ class TelegramHandler:
             detail = " · ".join(issues) if issues else "Google Sheets 미설정"
             await target.reply_text(f"🚨 {detail}")
             return
-        status = ""
         if sync and self.app.settings.has_google_sheets:
-            result = await self._sync_ledger(rebuild_broker=True)
-            status = self._format_sheets_result(result, brief=True)
-        await target.reply_text(status or "✅", reply_markup=markup)
+            progress = await target.reply_text(self._LEDGER_SYNCING)
+            await self._complete_ledger_sync_ui(progress, markup)
+            return
+        await target.reply_text("📊", reply_markup=markup)
 
     async def cmd_myid(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """채팅 ID 확인 — .env TELEGRAM_ALLOWED_CHAT_IDS 설정용 (허용 검사 없음)."""
@@ -391,12 +406,9 @@ class TelegramHandler:
             if detail:
                 msg += "\n" + detail
             return await update.message.reply_text(msg)
-        result = await self._sync_ledger(rebuild_broker=True)
         markup = ledger_keyboard(self.app.settings)
-        await update.message.reply_text(
-            self._format_sheets_result(result, brief=True),
-            reply_markup=markup,
-        )
+        progress = await update.message.reply_text(self._LEDGER_SYNCING)
+        await self._complete_ledger_sync_ui(progress, markup)
 
     async def cmd_set_t(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
@@ -651,13 +663,10 @@ class TelegramHandler:
             if not self.app.settings.has_google_sheets:
                 await query.answer("Google Sheets 미설정", show_alert=True)
                 return
-            await query.answer("동기화 중…")
-            result = await self._sync_ledger(rebuild_broker=True)
+            await query.answer()
             markup = ledger_keyboard(self.app.settings)
-            await query.message.reply_text(
-                self._format_sheets_result(result, brief=True),
-                reply_markup=markup,
-            )
+            await query.edit_message_text(self._LEDGER_SYNCING, reply_markup=None)
+            await self._complete_ledger_sync_ui(query.message, markup)
             return
 
         if data.startswith("CYCLES:"):

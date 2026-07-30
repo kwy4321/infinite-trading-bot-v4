@@ -24,10 +24,28 @@ _SA_CACHE = ROOT / "data" / ".google-service-account.cache.json"
 
 
 def _clean_env(raw: str) -> str:
-    return (raw or "").strip().strip('"').strip("'").strip()
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in ('"', "'"):
+        return s[1:-1].strip()
+    # GOOGLE_API_KEY=AIza... # 주석
+    if " #" in s:
+        s = s.split(" #", 1)[0].rstrip()
+    return s.strip('"').strip("'").strip()
 
 
-_ENV_FILE_CACHE: dict[str, str] = {}
+_ENV_KEY_ALIASES: dict[str, str] = {
+    "GOOGLE_APIKEY": "GOOGLE_API_KEY",
+    "GEMINI_KEY": "GEMINI_API_KEY",
+    "SUMMARIZER_KEY": "SUMMARIZER_API_KEY",
+}
+
+
+def _normalize_env_key(key: str) -> str:
+    k = (key or "").strip()
+    return _ENV_KEY_ALIASES.get(k.upper(), k)
+
 
 _SUMMARIZER_KEY_NAMES = (
     "SUMMARIZER_API_KEY",
@@ -35,7 +53,11 @@ _SUMMARIZER_KEY_NAMES = (
     "GEMINI_API_KEY",
     "GOOGLE_GENERATIVE_AI_API_KEY",
     "GOOGLE_AI_API_KEY",
+    "GENAI_API_KEY",
+    "GOOGLE_GENAI_API_KEY",
 )
+
+_OPENAI_KEY_NAMES = ("OPENAI_API_KEY", "OPENAI_KEY")
 
 
 def _parse_env_line(line: str) -> tuple[str, str] | None:
@@ -47,7 +69,7 @@ def _parse_env_line(line: str) -> tuple[str, str] | None:
     if "=" not in line:
         return None
     key, _, val = line.partition("=")
-    key = key.strip()
+    key = _normalize_env_key(key.strip())
     val = _clean_env(val)
     if not key or not val:
         return None
@@ -73,10 +95,65 @@ def _read_dotenv_pairs() -> dict[str, str]:
                 continue
             cleaned = _clean_env(str(val))
             if cleaned:
-                pairs[key] = cleaned
+                pairs[_normalize_env_key(key)] = cleaned
     except OSError:
         pass
     return pairs
+
+
+_ENV_FILE_CACHE: dict[str, str] = {}
+
+
+def _env_lookup_ci(name: str) -> str:
+    """대소문자 무시 + 캐시 조회."""
+    if val := os.getenv(name):
+        cleaned = _clean_env(str(val))
+        if cleaned:
+            return cleaned
+    target = name.upper()
+    for k, v in _ENV_FILE_CACHE.items():
+        if k.upper() == target and v:
+            return v
+    return ""
+
+
+def _scan_fuzzy_llm_key() -> tuple[str, str]:
+    """SUMMARIZER / GEMINI / GOOGLE_API 등 이름 변형."""
+    for k, v in _ENV_FILE_CACHE.items():
+        if not v or len(v) < 10:
+            continue
+        ku = k.upper().replace("-", "_")
+        if "API" not in ku and "KEY" not in ku:
+            continue
+        if any(tag in ku for tag in ("SUMMARIZER", "GEMINI", "GENAI", "OPENAI")):
+            return v, k
+        if ku in ("GOOGLE_API_KEY", "GOOGLE_APIKEY"):
+            return v, k
+    return "", ""
+
+
+def resolve_summarizer_api_key(provider: str = "gemini") -> tuple[str, str]:
+    """브리핑 AI용 API 키 — 항상 .env 최신 반영."""
+    _apply_env_file()
+    prov = (provider or "gemini").lower()
+    if prov == "openai":
+        for name in _OPENAI_KEY_NAMES:
+            val = _env_lookup_ci(name)
+            if val:
+                return val, name
+    for name in _SUMMARIZER_KEY_NAMES:
+        val = _env_lookup_ci(name)
+        if val:
+            return val, name
+    val, src = _scan_fuzzy_llm_key()
+    if val:
+        return val, src
+    if prov == "gemini":
+        for name in _OPENAI_KEY_NAMES:
+            val = _env_lookup_ci(name)
+            if val:
+                return val, name
+    return "", ""
 
 
 def _read_key_file(env_name: str) -> str:
@@ -98,11 +175,7 @@ def _read_key_file(env_name: str) -> str:
 
 def _env_first(*names: str, default: str = "") -> str:
     for name in names:
-        val = os.getenv(name)
-        if val is not None and str(val).strip():
-            return _clean_env(str(val))
-    for name in names:
-        val = _ENV_FILE_CACHE.get(name)
+        val = _env_lookup_ci(name)
         if val:
             return val
     for name in names:
@@ -114,17 +187,17 @@ def _env_first(*names: str, default: str = "") -> str:
 
 def _env_first_with_source(*names: str) -> tuple[str, str]:
     for name in names:
-        val = os.getenv(name)
-        if val is not None and str(val).strip():
-            return _clean_env(str(val)), name
-    for name in names:
-        val = _ENV_FILE_CACHE.get(name)
+        val = _env_lookup_ci(name)
         if val:
-            return val, f".env:{name}"
+            src = name if os.getenv(name) else f".env:{name}"
+            return val, src
     for name in names:
         from_file = _read_key_file(name)
         if from_file:
             return from_file, f"{name}_FILE"
+    val, src = _scan_fuzzy_llm_key()
+    if val:
+        return val, src
     return "", ""
 
 
@@ -173,11 +246,10 @@ class Settings:
     telegram_allowed_chat_ids: tuple = field(default_factory=lambda: _parse_chat_ids())
     dry_run: bool = field(default_factory=lambda: _env_bool("DRY_RUN", default=False))
     news_api_key: str = field(default_factory=lambda: _env_first("NEWS_API_KEY"))
-    summarizer_api_key: str = field(
-        default_factory=lambda: _env_first(*_SUMMARIZER_KEY_NAMES),
+    # summarizer_api_key → @property (항상 .env 재조회)
+    summarizer_provider: str = field(
+        default_factory=lambda: (_env_first("SUMMARIZER_PROVIDER") or "gemini").lower(),
     )
-    # 뉴스 요약 LLM: gemini | openai (키가 있을 때만 동작). 모델은 비우면 기본값(gemini-2.5-flash) 사용.
-    summarizer_provider: str = field(default_factory=lambda: os.getenv("SUMMARIZER_PROVIDER", "gemini").lower())
     summarizer_model: str = field(default_factory=lambda: os.getenv("SUMMARIZER_MODEL", ""))
     # GCP e2-micro 등 소형 VM — 디스크·RAM 절약
     backup_enabled: bool = field(default_factory=lambda: os.getenv("BACKUP_ENABLED", "true").lower() == "true")
@@ -218,6 +290,11 @@ class Settings:
     )
     streamlit_url: str = field(default_factory=lambda: os.getenv("STREAMLIT_URL", ""))
     streamlit_password: str = field(default_factory=lambda: os.getenv("STREAMLIT_PASSWORD", ""))
+
+    @property
+    def summarizer_api_key(self) -> str:
+        key, _ = resolve_summarizer_api_key(self.summarizer_provider)
+        return key
 
     @property
     def resolved_spreadsheet_id(self) -> str:
@@ -339,7 +416,7 @@ def google_sheets_issues(settings: "Settings") -> list[str]:
     if not settings.resolved_spreadsheet_id:
         issues.append("GOOGLE_SPREADSHEET_ID 또는 GOOGLE_SHEETS_URL(스프레드시트 주소)")
     if not resolve_service_account_path(settings.google_service_account_json):
-        if _env_first(*_SUMMARIZER_KEY_NAMES):
+        if resolve_summarizer_api_key(settings.summarizer_provider)[0]:
             issues.append(
                 "Gemini API 키는 인식됨(브리핑용). "
                 "Sheets 장부는 서비스계정 JSON 파일이 추가로 필요 "
@@ -359,9 +436,9 @@ def env_diagnostics(settings: "Settings | None" = None) -> dict:
         settings = reload_settings()
     env_path = str(ROOT / ".env")
     sa_path = resolve_service_account_path(settings.google_service_account_json)
-    _, summ_src = _env_first_with_source(*_SUMMARIZER_KEY_NAMES)
+    summ_key, summ_src = resolve_summarizer_api_key(settings.summarizer_provider)
     notes: list[str] = []
-    if _env_first(*_SUMMARIZER_KEY_NAMES) and not sa_path:
+    if summ_key and not sa_path:
         notes.append(
             "GOOGLE_API_KEY = Gemini 브리핑용. Google Sheets 장부는 API키와 별개(JSON 필요)"
         )
@@ -375,7 +452,7 @@ def env_diagnostics(settings: "Settings | None" = None) -> dict:
         "has_toss": settings.has_toss,
         "dry_run": settings.dry_run,
         "telegram_chat_ids_set": bool(settings.telegram_allowed_chat_ids),
-        "summarizer_key_set": bool(settings.summarizer_api_key),
+        "summarizer_key_set": bool(summ_key),
         "summarizer_key_from": summ_src,
         "briefing_enabled": settings.briefing_enabled,
         "spreadsheet_id_set": bool(settings.resolved_spreadsheet_id),

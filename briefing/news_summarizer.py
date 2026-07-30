@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 import requests
 
 from briefing.index_fetcher import fetch_index_snapshot
-from config.settings import Settings
+from config.settings import ROOT, Settings, resolve_summarizer_api_key
 from tg.ui import dim, quote, section
 
 if TYPE_CHECKING:
@@ -197,12 +197,16 @@ def _build_sync(
     broker: "TossClient | None" = None,
     market_ctx: dict | None = None,
 ) -> str:
-    api_key = settings.summarizer_api_key
+    provider = (settings.summarizer_provider or "gemini").lower()
+    api_key, key_src = resolve_summarizer_api_key(provider)
     if not api_key:
+        env_hint = str(ROOT / ".env")
         return dim(
-            "💡 AI 시황: .env에 GOOGLE_API_KEY 또는 SUMMARIZER_API_KEY가 "
-            "있는데도 이 메시지면 /envcheck 로 봇 인식 여부 확인"
+            f"💡 AI 시황 API 키 없음 — VM .env ({env_hint})에 "
+            "GOOGLE_API_KEY= 또는 SUMMARIZER_API_KEY= 확인 · /envcheck"
         )
+    if key_src.upper().startswith("OPENAI"):
+        provider = "openai"
 
     snapshot = fetch_index_snapshot(broker)
     ctx = market_ctx or snapshot
@@ -224,7 +228,6 @@ def _build_sync(
             headline_block=headline_block,
         )
 
-    provider = (settings.summarizer_provider or "gemini").lower()
     if provider == "gemini":
         summary = _summarize_gemini(api_key, settings.summarizer_model, prompt)
     else:

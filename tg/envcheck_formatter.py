@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import html
 
-from config.settings import ROOT, env_diagnostics, reload_settings
+from config.settings import ROOT, env_diagnostics, reload_settings, resolve_summarizer_api_key
 from tg.build_info import git_rev
 from tg.ui import code, quote, row, section
 
@@ -14,7 +14,8 @@ def format_env_check() -> str:
     diag = env_diagnostics(settings)
     env_path = html.escape(diag["env_path"])
     sa_path = html.escape(diag.get("service_account_path") or "")
-    summ_src = html.escape(diag.get("summarizer_key_from") or "")
+    summ_key, summ_src = resolve_summarizer_api_key(settings.summarizer_provider)
+    summ_src = html.escape(summ_src)
     lines = [
         section("환경 설정 인식", "🔍"),
         quote(
@@ -33,7 +34,7 @@ def format_env_check() -> str:
         "",
         section("아침 브리핑 AI", "🌅"),
         quote(
-            row("🤖", "API 키", _mark(diag["summarizer_key_set"], summ_src)),
+            row("🤖", "API 키", _mark(bool(summ_key), summ_src)),
             row("⏰", "BRIEFING", code("on" if diag["briefing_enabled"] else "off")),
         ),
         "",

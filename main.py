@@ -9,6 +9,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from telegram.ext import ApplicationBuilder, CallbackQueryHandler, CommandHandler, MessageHandler, filters
+from telegram import BotCommand
 
 from app import App
 from jobs.executor import JobExecutor
@@ -101,6 +102,17 @@ def main():
             await app.bot.delete_webhook(drop_pending_updates=True)
             logger.info("webhook deleted — polling mode")
         rev = git_rev()
+        try:
+            await app.bot.set_my_commands([
+                BotCommand("start", "메인·현황"),
+                BotCommand("envcheck", "환경설정 확인 (.env)"),
+                BotCommand("briefing", "아침 브리핑"),
+                BotCommand("plan", "주문계획"),
+                BotCommand("setting", "설정"),
+                BotCommand("version", "빌드 버전"),
+            ])
+        except Exception as exc:
+            logger.warning("set_my_commands failed: %s", exc)
         for cid in chat_ids:
             try:
                 await app.bot.send_message(
@@ -141,6 +153,8 @@ def main():
     tg.add_handler(CommandHandler("run", handler.cmd_run))
     tg.add_handler(CommandHandler("briefing", handler.cmd_briefing))
     tg.add_handler(CommandHandler("envcheck", handler.cmd_envcheck))
+    tg.add_handler(CommandHandler("check_env", handler.cmd_envcheck))
+    tg.add_handler(CommandHandler("env", handler.cmd_envcheck))
     tg.add_handler(CommandHandler("token", handler.cmd_token))
     tg.add_handler(CallbackQueryHandler(handler.handle_callback))
     tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handler.handle_message))

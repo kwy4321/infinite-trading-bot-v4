@@ -88,6 +88,7 @@ def setting_keyboard(force_one: bool = False, *, dry: bool = True) -> InlineKeyb
         [InlineKeyboardButton("🎯 목표수익률", callback_data="set_takeprofit")],
         [InlineKeyboardButton("🔑 API 토큰", callback_data="set_token")],
         [InlineKeyboardButton(live_label, callback_data="toggle_force_live")],
+        [InlineKeyboardButton("🔍 환경확인", callback_data="ENV:check")],
         [InlineKeyboardButton(force_label, callback_data="toggle_force_one")],
     ])
 

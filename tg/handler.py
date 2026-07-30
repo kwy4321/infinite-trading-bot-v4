@@ -17,6 +17,7 @@ from strategy.split_handler import apply_split, calc_adjustment, format_preview,
 from config.settings import SYMBOLS, google_sheets_issues
 from tg.build_info import git_rev
 from tg.envcheck_formatter import format_env_check
+from tg.home_formatter import format_home_status
 from tg.balance_formatter import format_balance
 from tg.plan_formatter import format_plans
 from tg.token_formatter import format_toss_token_brief, format_toss_token_detail
@@ -307,7 +308,7 @@ class TelegramHandler:
             return await self._deny(update)
         from tg.build_info import ledger_ui_label
         await update.message.reply_text(
-            f"봇 빌드: {git_rev()}\n장부 UI: {ledger_ui_label()}",
+            f"봇 빌드: {git_rev()}\n장부 UI: {ledger_ui_label()}\n명령: /envcheck 환경설정 확인",
         )
 
     async def cmd_ledger(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -510,8 +511,12 @@ class TelegramHandler:
     async def cmd_envcheck(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
             return await self._deny(update)
-        self._refresh_env()
-        await update.message.reply_text(format_env_check(), parse_mode="HTML")
+        try:
+            self._refresh_env()
+            await update.message.reply_text(format_env_check(), parse_mode="HTML")
+        except Exception as e:
+            logger.exception("envcheck failed")
+            await update.message.reply_text(f"🚨 환경 확인 실패: {e}")
 
     async def _run_job(self, chat_id: int, context: ContextTypes.DEFAULT_TYPE, name: str):
         label = JOB_LABELS.get(name, name)
@@ -581,6 +586,21 @@ class TelegramHandler:
             self.app.state.set_take_profit(sym, pct)
             await query.edit_message_text(
                 self._setting_text(sym),
+                reply_markup=self._setting_keyboard(sym),
+                parse_mode="HTML",
+            )
+            return
+
+        if data == "ENV:check":
+            sym = self._symbol(context)
+            try:
+                self._refresh_env()
+                text = format_env_check()
+            except Exception as e:
+                logger.exception("envcheck callback failed")
+                text = f"🚨 환경 확인 실패: {e}"
+            await query.edit_message_text(
+                text,
                 reply_markup=self._setting_keyboard(sym),
                 parse_mode="HTML",
             )
@@ -834,6 +854,12 @@ class TelegramHandler:
             context.user_data.pop("awaiting_symbol", None)
             await self._refresh_main_menu(update)
             return await menu_routes[text](update, context)
+
+        if text.lower() in (
+            "/envcheck", "envcheck", "/check_env", "check_env",
+            "/env", "환경확인", "환경체크",
+        ):
+            return await self.cmd_envcheck(update, context)
 
         if text in ("/version", "버전"):
             return await self.cmd_version(update, context)

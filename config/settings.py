@@ -49,11 +49,7 @@ class Settings:
 
     @property
     def has_google_sheets(self) -> bool:
-        return bool(
-            self.google_sheets_enabled
-            and self.google_spreadsheet_id
-            and self.google_service_account_json
-        )
+        return not google_sheets_issues(self)
 
     @property
     def streamlit_link(self) -> str:
@@ -98,6 +94,34 @@ def _normalize_http_url(raw: str) -> str:
     if not url.startswith(("http://", "https://")):
         url = f"http://{url}"
     return url
+
+
+def resolve_service_account_path(raw: str) -> Path | None:
+    """GOOGLE_SERVICE_ACCOUNT_JSON — 절대/상대 경로 모두 확인."""
+    if not raw:
+        return None
+    path = Path(raw.strip().strip('"').strip("'"))
+    if path.is_file():
+        return path
+    candidate = ROOT / path
+    if candidate.is_file():
+        return candidate
+    return None
+
+
+def google_sheets_issues(settings: "Settings") -> list[str]:
+    """장부/Sheets 미동작 시 .env 에서 무엇이 빠졌는지."""
+    issues: list[str] = []
+    if not settings.google_sheets_enabled:
+        issues.append("GOOGLE_SHEETS_ENABLED=true")
+    if not settings.google_spreadsheet_id.strip():
+        issues.append("GOOGLE_SPREADSHEET_ID")
+    raw_json = settings.google_service_account_json.strip()
+    if not raw_json:
+        issues.append("GOOGLE_SERVICE_ACCOUNT_JSON")
+    elif resolve_service_account_path(raw_json) is None:
+        issues.append(f"JSON 파일 없음 ({raw_json})")
+    return issues
 
 
 def get_settings() -> Settings:

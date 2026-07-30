@@ -14,7 +14,7 @@ from app import App
 from broker.toss_client import TossClient
 from jobs.executor import JobExecutor
 from strategy.split_handler import apply_split, calc_adjustment, format_preview, parse_ratio
-from config.settings import SYMBOLS
+from config.settings import SYMBOLS, google_sheets_issues
 from tg.home_formatter import format_home
 from tg.balance_formatter import format_balance
 from tg.plan_formatter import format_plans
@@ -44,7 +44,7 @@ from tg.keyboards import (
     MAIN_CYCLES,
 )
 from tg.sender import TelegramSender
-from tg.ui import DIVIDER, badge_on, code, quote, row, section, usd
+from tg.ui import DIVIDER, badge_on, code, dim, quote, row, section, usd
 
 logger = logging.getLogger(__name__)
 
@@ -201,10 +201,13 @@ class TelegramHandler:
             result = await self._sync_ledger(rebuild_broker=True)
             msg += f"\n\n{self._format_sheets_result(result)}"
         markup = ledger_keyboard(self.app.settings)
-        if not markup:
+        issues = google_sheets_issues(self.app.settings)
+        if issues and not markup:
+            msg += "\n\n⚠️ " + " · ".join(issues)
+            msg += "\n" + dim("Cloud Shell에서 .env 설정 후: bash scripts/cloudshell_bot.sh restart")
+        elif not markup:
             msg += (
-                "\n\n⚠️ 링크 버튼 없음 — .env에 Google Sheets 설정 후 "
-                "봇을 재시작하세요. (python3 scripts/check_env.py 로 확인)"
+                "\n\n⚠️ Google Sheets 미설정 — python3 scripts/check_env.py 로 확인"
             )
         await target.reply_text(msg, parse_mode="HTML", reply_markup=markup)
 

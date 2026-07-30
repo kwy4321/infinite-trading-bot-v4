@@ -108,6 +108,25 @@ _connect() {
   return 1
 }
 
+_sync_secrets() {
+  echo "=== Cloud Shell → VM .env / Sheets JSON 동기화 ==="
+  ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "${SSH_USER}@${IP}" "mkdir -p '$INSTALL_DIR/data'"
+  if [[ -f "$ROOT/.env" ]]; then
+    scp -o StrictHostKeyChecking=no -i "$SSH_KEY" "$ROOT/.env" "${SSH_USER}@${IP}:${INSTALL_DIR}/.env"
+    echo "  .env 업로드"
+  else
+    echo "  .env 없음 (Cloud Shell $ROOT/.env)"
+  fi
+  local json="$ROOT/data/google-service-account.json"
+  if [[ -f "$json" ]]; then
+    scp -o StrictHostKeyChecking=no -i "$SSH_KEY" "$json" \
+      "${SSH_USER}@${IP}:${INSTALL_DIR}/data/google-service-account.json"
+    echo "  google-service-account.json 업로드"
+  else
+    echo "  google-service-account.json 없음 ($json)"
+  fi
+}
+
 _run_remote() {
   ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -i "$SSH_KEY" "${SSH_USER}@${IP}" bash -s -- "$ACTION" "$INSTALL_DIR" "$REPO_URL" <<'REMOTE'
 set -euo pipefail
@@ -150,6 +169,7 @@ if ! _connect; then
 fi
 
 echo "=== bot.sh $ACTION (VM) ==="
+_sync_secrets
 _run_remote
 
 echo ""

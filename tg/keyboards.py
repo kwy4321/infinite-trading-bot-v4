@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
-from config.settings import PREMIUM_OPTIONS, SPLIT_OPTIONS, SYMBOLS, TAKE_PROFIT_OPTIONS
-
 # 하단 고정 메뉴 (Reply Keyboard) — 탭하면 명령어 입력 없이 실행
 MAIN_HOME = "🏠 메인"
 MAIN_PLAN = "📋 주문계획"
@@ -23,6 +21,9 @@ def ledger_keyboard(settings) -> InlineKeyboardMarkup | None:
         url = settings.google_sheets_link
         if url:
             rows.append([InlineKeyboardButton("📗 Google Sheets", url=url)])
+        rows.append([InlineKeyboardButton("🔄 Sheets 동기화", callback_data="LEDGER:sync")])
+    elif settings.google_sheets_enabled or settings.google_spreadsheet_id:
+        # URL 없어도 동기화 버튼은 표시 (설정 일부만 된 경우)
         rows.append([InlineKeyboardButton("🔄 Sheets 동기화", callback_data="LEDGER:sync")])
     return InlineKeyboardMarkup(rows) if rows else None
 

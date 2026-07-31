@@ -142,7 +142,7 @@ def main():
     tg.add_handler(CommandHandler("status", handler.cmd_status))
     tg.add_handler(CommandHandler("balance", handler.cmd_balance))
     tg.add_handler(CommandHandler("plan", handler.cmd_plan))
-    tg.add_handler(CommandHandler(["setting", "settings", "설정"], handler.cmd_setting))
+    tg.add_handler(CommandHandler(["setting", "settings"], handler.cmd_setting))
     tg.add_handler(CommandHandler("set_t", handler.cmd_set_t))
     tg.add_handler(CommandHandler("history", handler.cmd_history))
     tg.add_handler(CommandHandler("split", handler.cmd_split))
@@ -155,10 +155,7 @@ def main():
     tg.add_handler(CommandHandler("resume", handler.cmd_resume))
     tg.add_handler(CommandHandler("run", handler.cmd_run))
     tg.add_handler(CommandHandler("briefing", handler.cmd_briefing))
-    tg.add_handler(CommandHandler(
-        ["envcheck", "check_env", "env", "환경확인", "환경체크"],
-        handler.cmd_envcheck,
-    ))
+    tg.add_handler(CommandHandler(["envcheck", "check_env", "env"], handler.cmd_envcheck))
     tg.add_handler(CommandHandler("token", handler.cmd_token))
     tg.add_handler(CallbackQueryHandler(handler.handle_callback))
     tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handler.handle_message))
@@ -180,4 +177,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception:
+        logging.basicConfig(level=logging.ERROR)
+        logging.exception("봇 시작 실패 — VM: bash scripts/bot.sh logs")
+        raise SystemExit(1)

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Oracle Cloud Shell — IP 입력 없이 VM에 봇 백그라운드 시작
 # Cloud Shell을 꺼도 VM에서 계속 실행됨
-# 사용: bash scripts/cloudshell_bot.sh start | stop | restart | status | logs
+# 사용: bash scripts/cloudshell_bot.sh start | stop | restart | status | logs | doctor
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -182,6 +182,14 @@ case "$ACTION" in
     bash scripts/bot.sh "$ACTION"
     exit 0
     ;;
+  status|logs)
+    bash scripts/bot.sh "$ACTION"
+    exit 0
+    ;;
+  doctor)
+    bash scripts/vm_doctor.sh
+    exit 0
+    ;;
 esac
 
 if [[ ! -f "$INSTALL_DIR/.env" ]]; then
@@ -218,4 +226,5 @@ if [[ "$ACTION" == "start" || "$ACTION" == "restart" ]]; then
   echo ""
   echo "완료 — Cloud Shell을 꺼도 VM에서 봇이 계속 실행됩니다."
   echo "상태 확인: bash scripts/cloudshell_bot.sh status"
+  echo "무반응: bash scripts/cloudshell_bot.sh doctor"
 fi

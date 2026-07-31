@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import datetime
 import logging
-import subprocess
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from telegram.ext import ApplicationBuilder, CallbackQueryHandler, CommandHandler, MessageHandler, filters
@@ -14,6 +12,7 @@ from telegram import BotCommand
 from app import App
 from jobs.executor import JobExecutor
 from tg.bot_lock import acquire_bot_lock
+from tg.build_info import git_rev
 from tg.handler import TelegramHandler
 from tg.keyboards import main_menu_keyboard
 from tg.sender import TelegramSender
@@ -88,8 +87,6 @@ def main():
     handler = TelegramHandler(application_app, executor, sender)
 
     async def _post_init(app):
-        from tg.build_info import git_rev
-
         me = await app.bot.get_me()
         wh = await app.bot.get_webhook_info()
         logger.info(
@@ -163,15 +160,7 @@ def main():
     _register_jobs(tg, executor)
 
     mode = "DRY_RUN" if dry else "LIVE"
-    try:
-        rev = subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd=str(Path(__file__).resolve().parent),
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
-    except Exception:
-        rev = "?"
+    rev = git_rev()
     logger.info("🚀 라오어 무한매수 4.0 v1.0 시작 (%s, %s)", mode, rev)
     tg.run_polling(drop_pending_updates=True)
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from broker.toss_client import _money, _pct
+from broker.toss_client import _money, _pct, cash_krw, cash_usd
 from app import App
 from config.settings import SYMBOLS
 from tg.format_helpers import is_dry, resolve_price
@@ -22,19 +22,6 @@ from tg.ui import (
     usd,
 )
 
-
-def _cash_amount(buying: dict) -> float:
-    if not buying:
-        return 0.0
-    raw = buying.get("cashBuyingPower", buying.get("cash", buying))
-    return _money(raw, "usd") if isinstance(raw, dict) else float(raw or 0)
-
-
-def _cash_krw(buying: dict) -> float:
-    if not buying:
-        return 0.0
-    raw = buying.get("cashBuyingPower", buying.get("cash", buying))
-    return _money(raw, "krw")
 
 
 def _item_unrealized(item: dict) -> tuple[float, float | None]:
@@ -68,8 +55,8 @@ def _fetch_account(app: App) -> dict:
 
     buying_usd = broker.get_buying_power("USD")
     buying_krw = broker.get_buying_power("KRW")
-    cash_usd = _cash_amount(buying_usd)
-    cash_krw = _cash_krw(buying_krw)
+    cash_usd_val = cash_usd(buying_usd)
+    cash_krw_val = cash_krw(buying_krw)
 
     stock_usd = sum(_money(i.get("marketValue"), "usd") for i in display)
     unreal_usd = 0.0
@@ -87,16 +74,16 @@ def _fetch_account(app: App) -> dict:
     total_usd = _money(overview.get("totalEvaluationAmount"), "usd")
     total_krw = _money(overview.get("totalEvaluationAmount"), "krw")
     if total_usd <= 0:
-        total_usd = cash_usd + stock_usd
-    if total_krw <= 0 and cash_krw > 0:
-        total_krw = cash_krw + sum(_money(i.get("marketValue"), "krw") for i in display)
+        total_usd = cash_usd_val + stock_usd
+    if total_krw <= 0 and cash_krw_val > 0:
+        total_krw = cash_krw_val + sum(_money(i.get("marketValue"), "krw") for i in display)
 
     fx = broker.get_exchange_rate("USD", "KRW")
     fx_rate = float(fx.get("rate") or fx.get("midRate") or 0)
     unreal_pct = round(unreal_usd / cost_usd * 100, 2) if cost_usd > 0 else None
 
     return {
-        "cash_usd": cash_usd,
+        "cash_usd": cash_usd_val,
         "total_usd": total_usd,
         "total_krw": total_krw,
         "unreal_usd": round(unreal_usd, 2),

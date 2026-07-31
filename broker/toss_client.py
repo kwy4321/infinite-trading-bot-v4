@@ -48,6 +48,21 @@ def _money(val, currency: str = "usd") -> float:
     return 0.0
 
 
+def cash_usd(buying: dict | None) -> float:
+    """Toss buyingPower 응답 → USD 현금."""
+    if not buying:
+        return 0.0
+    raw = buying.get("cashBuyingPower", buying.get("cash", buying))
+    return _money(raw, "usd") if isinstance(raw, dict) else float(raw or 0)
+
+
+def cash_krw(buying: dict | None) -> float:
+    if not buying:
+        return 0.0
+    raw = buying.get("cashBuyingPower", buying.get("cash", buying))
+    return _money(raw, "krw")
+
+
 def _pct(val) -> float | None:
     if val is None:
         return None

@@ -36,6 +36,13 @@ def _mock_app(*, dry: bool = True, symbols: list[str] | None = None) -> MagicMoc
 
 def main() -> None:
     from tg.balance_formatter import _holding_rows, format_balance
+    from tg.keyboards import (
+        premium_keyboard,
+        setting_keyboard,
+        split_count_keyboard,
+        take_profit_keyboard,
+        trading_symbols_keyboard,
+    )
     from tg.status_formatter import format_status
 
     rows = _holding_rows({
@@ -70,6 +77,12 @@ def main() -> None:
     assert "계좌현황" in balance, balance[:200]
     assert "TQQQ" in balance, balance[:200]
     assert "📊" in balance, balance[:200]
+
+    setting_keyboard(force_one=False, dry=True)
+    premium_keyboard()
+    take_profit_keyboard()
+    split_count_keyboard("TQQQ")
+    trading_symbols_keyboard(["TQQQ"], "TQQQ")
 
     print("smoke_formatters OK")
 

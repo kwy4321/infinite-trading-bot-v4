@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import html
 
-from config.settings import ROOT, env_diagnostics, probe_llm_key_in_env_file, reload_settings, resolve_summarizer_api_key
+from config.settings import ROOT, Settings, env_diagnostics, probe_llm_key_in_env_file, resolve_summarizer_api_key
 from tg.build_info import git_rev
 from tg.ui import code, quote, row, section
 
 
-def format_env_check() -> str:
-    settings = reload_settings()
+def format_env_check(settings: Settings) -> str:
     diag = env_diagnostics(settings)
     env_path = html.escape(diag["env_path"])
     sa_path = html.escape(diag.get("service_account_path") or "")

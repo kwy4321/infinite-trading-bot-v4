@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from config.settings import PREMIUM_OPTIONS, SPLIT_OPTIONS, SYMBOLS, TAKE_PROFIT_OPTIONS
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 # 하단 고정 메뉴 (Reply Keyboard) — 탭하면 명령어 입력 없이 실행
@@ -110,11 +111,6 @@ def trading_symbols_keyboard(active: list[str], editing: str) -> InlineKeyboardM
     ])
 
 
-def active_symbols_keyboard(active: list[str]) -> InlineKeyboardMarkup:
-    """@deprecated — trading_symbols_keyboard 사용."""
-    return trading_symbols_keyboard(active, active[0] if active else SYMBOLS[0])
-
-
 def token_keyboard(from_settings: bool = False) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton("🔄 갱신하기", callback_data="TOKEN:refresh")]]
     if from_settings:
@@ -125,10 +121,9 @@ def token_keyboard(from_settings: bool = False) -> InlineKeyboardMarkup:
 def run_job_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📈 익절", callback_data="RUN:job1"),
-         InlineKeyboardButton("🔄 체결정리", callback_data="RUN:job2")],
-        [InlineKeyboardButton("🌙 프리장 LOC", callback_data="RUN:job3"),
-         InlineKeyboardButton("📊 일일리포트", callback_data="RUN:job4")],
-        [InlineKeyboardButton("🌅 아침브리핑", callback_data="RUN:briefing")],
+         InlineKeyboardButton("🌙 프리장 LOC", callback_data="RUN:job3")],
+        [InlineKeyboardButton("📊 일일리포트", callback_data="RUN:job4"),
+         InlineKeyboardButton("🌅 아침브리핑", callback_data="RUN:briefing")],
     ])
 
 

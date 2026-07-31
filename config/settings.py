@@ -314,6 +314,7 @@ def probe_llm_key_in_env_file() -> dict:
 
 
 _ENV_FILE_CACHE: dict[str, str] = {}
+_ENV_MTIMES: dict[str, float] = {}
 
 
 def _env_lookup_ci(name: str) -> str:
@@ -423,9 +424,14 @@ def _env_first_with_source(*names: str) -> tuple[str, str]:
     return "", ""
 
 
-def _apply_env_file() -> None:
+def _apply_env_file(*, force: bool = False) -> None:
     """.env 재적용 — 빈 값은 기존 환경 변수를 지우지 않음 (systemd·VM 안전)."""
-    global _ENV_FILE_CACHE
+    global _ENV_FILE_CACHE, _ENV_MTIMES
+    paths = [p for p in env_file_paths() if p.is_file()]
+    mtimes = {str(p): p.stat().st_mtime for p in paths}
+    if not force and mtimes == _ENV_MTIMES and _ENV_FILE_CACHE:
+        return
+    _ENV_MTIMES = dict(mtimes)
     _ENV_FILE_CACHE = _read_dotenv_pairs()
     for key, val in _ENV_FILE_CACHE.items():
         if val:
@@ -467,7 +473,6 @@ class Settings:
     telegram_bot_token: str = field(default_factory=lambda: _env_first("TELEGRAM_BOT_TOKEN"))
     telegram_allowed_chat_ids: tuple = field(default_factory=lambda: _parse_chat_ids())
     dry_run: bool = field(default_factory=lambda: _env_bool("DRY_RUN", default=False))
-    news_api_key: str = field(default_factory=lambda: _env_first("NEWS_API_KEY"))
     # summarizer_api_key → @property (항상 .env 재조회)
     summarizer_provider: str = field(
         default_factory=lambda: (_env_first("SUMMARIZER_PROVIDER") or "gemini").lower(),
@@ -702,9 +707,9 @@ def env_diagnostics(settings: "Settings | None" = None) -> dict:
     }
 
 
-def reload_settings() -> Settings:
+def reload_settings(*, force: bool = True) -> Settings:
     """런타임 .env 재로드 (봇 재시작 없이 설정 반영)."""
-    _apply_env_file()
+    _apply_env_file(force=force)
     return Settings()
 
 
@@ -712,7 +717,7 @@ def get_settings() -> Settings:
     for p in env_file_paths():
         if p.is_file() and p.name != "gemini_api_key.txt":
             load_dotenv(p, encoding="utf-8-sig", override=True)
-    _apply_env_file()
+    _apply_env_file(force=True)
     return Settings()
 
 

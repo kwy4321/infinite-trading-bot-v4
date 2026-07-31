@@ -192,18 +192,7 @@ class TelegramHandler:
             await update.message.reply_text(f"🚨 조회 실패: {e}")
 
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not self._allowed(update):
-            return await self._deny(update)
-        try:
-            token_line = await self._resolve_token_line()
-            await update.message.reply_text(
-                format_home_status(self.app, token_line),
-                reply_markup=self._main_menu_markup(),
-                parse_mode="HTML",
-            )
-        except Exception as e:
-            logger.exception("cmd_start failed")
-            await update.message.reply_text(f"🚨 /start 실패: {e}")
+        return await self.cmd_home(update, context)
 
     async def cmd_token(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
@@ -428,9 +417,6 @@ class TelegramHandler:
         target = update.callback_query.message if update.callback_query else update.message
         await target.reply_text(text, reply_markup=markup)
 
-    async def cmd_cycles_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        return await self.cmd_ledger(update, context)
-
     async def cmd_cycles(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await self.cmd_ledger(update, context)
 
@@ -530,7 +516,9 @@ class TelegramHandler:
             return await self._deny(update)
         try:
             self._refresh_env()
-            await update.message.reply_text(format_env_check(), parse_mode="HTML")
+            await update.message.reply_text(
+                format_env_check(self.app.settings), parse_mode="HTML",
+            )
         except Exception as e:
             logger.exception("envcheck failed")
             await update.message.reply_text(f"🚨 환경 확인 실패: {e}")
@@ -612,7 +600,7 @@ class TelegramHandler:
             sym = self._symbol(context)
             try:
                 self._refresh_env()
-                text = format_env_check()
+                text = format_env_check(self.app.settings)
             except Exception as e:
                 logger.exception("envcheck callback failed")
                 text = f"🚨 환경 확인 실패: {html.escape(str(e))}"

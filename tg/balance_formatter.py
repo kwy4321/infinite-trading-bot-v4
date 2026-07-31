@@ -2,24 +2,10 @@
 
 from __future__ import annotations
 
-from broker.toss_client import _money
+from broker.toss_client import _money, cash_krw, cash_usd
 from app import App
 from config.settings import SYMBOLS
 from tg.ui import THIN, code, empty, krw, quote, row, section, subsection, symbol_card, usd
-
-
-def _cash_usd(buying: dict) -> float:
-    if not buying:
-        return 0.0
-    raw = buying.get("cashBuyingPower", buying.get("cash", buying))
-    return _money(raw, "usd") if isinstance(raw, dict) else float(raw or 0)
-
-
-def _cash_krw(buying: dict) -> float:
-    if not buying:
-        return 0.0
-    raw = buying.get("cashBuyingPower", buying.get("cash", buying))
-    return _money(raw, "krw")
 
 
 def format_balance(app: App) -> str:
@@ -28,8 +14,8 @@ def format_balance(app: App) -> str:
 
     buying_usd = broker.get_buying_power("USD")
     buying_krw = broker.get_buying_power("KRW")
-    cash_usd = _cash_usd(buying_usd)
-    cash_krw = _cash_krw(buying_krw)
+    cash_usd_val = cash_usd(buying_usd)
+    cash_krw_val = cash_krw(buying_krw)
 
     overview = broker.get_holdings_overview() or {}
     items = overview.get("items", [])
@@ -42,9 +28,9 @@ def format_balance(app: App) -> str:
     total_usd = _money(overview.get("totalEvaluationAmount"), "usd")
     total_krw = _money(overview.get("totalEvaluationAmount"), "krw")
     if total_usd <= 0:
-        total_usd = cash_usd + stock_usd
+        total_usd = cash_usd_val + stock_usd
     if total_krw <= 0:
-        total_krw = cash_krw + stock_krw
+        total_krw = cash_krw_val + stock_krw
 
     fx = broker.get_exchange_rate("USD", "KRW")
     fx_rate = float(fx.get("rate") or fx.get("midRate") or 0)
@@ -56,12 +42,12 @@ def format_balance(app: App) -> str:
     ]
     if total_krw > 0:
         summary.append(row("🇰🇷", "총 자산", krw(total_krw)))
-    if cash_krw > 0:
+    if cash_krw_val > 0:
         summary.append(
-            row("💵", "예수금", f"{usd(cash_usd)}  ·  {krw(cash_krw)}"),
+            row("💵", "예수금", f"{usd(cash_usd_val)}  ·  {krw(cash_krw_val)}"),
         )
     else:
-        summary.append(row("💵", "예수금", usd(cash_usd)))
+        summary.append(row("💵", "예수금", usd(cash_usd_val)))
     if fx_rate > 0:
         summary.append(row("💱", "환율", code(f"$1 = ₩{fx_rate:,.2f}")))
 

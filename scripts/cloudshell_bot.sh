@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Oracle Cloud Shell — IP 입력 없이 VM에 봇 백그라운드 시작
 # Cloud Shell을 꺼도 VM에서 계속 실행됨
-# 사용: bash scripts/cloudshell_bot.sh start | stop | restart | status | logs | doctor
+# 사용: bash scripts/cloudshell_bot.sh start | stop | restart | status | logs | doctor | streamlit
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -190,6 +190,12 @@ case "$ACTION" in
     bash scripts/vm_doctor.sh
     exit 0
     ;;
+  streamlit)
+    git fetch origin main
+    git reset --hard origin/main
+    bash scripts/setup_streamlit.sh
+    exit 0
+    ;;
 esac
 
 if [[ ! -f "$INSTALL_DIR/.env" ]]; then
@@ -221,6 +227,15 @@ fi
 echo "=== bot.sh $ACTION (VM) ==="
 _sync_secrets
 _run_remote
+
+if [[ "$ACTION" == "streamlit" ]]; then
+  echo ""
+  echo "=== Streamlit ==="
+  echo "브라우저: http://${IP}:8501"
+  echo "VM .env 에 추가: STREAMLIT_URL=http://${IP}:8501"
+  echo "봇 반영: bash scripts/cloudshell_bot.sh restart"
+  echo "Oracle 방화벽: VCN Security List → TCP 8501 허용"
+fi
 
 if [[ "$ACTION" == "start" || "$ACTION" == "restart" ]]; then
   echo ""

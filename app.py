@@ -61,8 +61,13 @@ class App:
         return app
 
     def reload_settings(self) -> None:
-        """.env 재로드 + broker DRY/LIVE 동기화."""
+        """.env 재로드 + broker DRY/LIVE·토큰 자격 동기화."""
         from tg.format_helpers import sync_broker_dry_run
 
         self.settings = reload_settings()
+        self.broker.auth.sync_credentials(
+            self.settings.toss_client_id,
+            self.settings.toss_client_secret,
+        )
+        self.broker.account_seq = str(self.settings.toss_account_seq or "1")
         sync_broker_dry_run(self)

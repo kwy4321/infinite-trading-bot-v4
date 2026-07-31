@@ -160,7 +160,12 @@ class TelegramHandler:
         return self.app.broker.get_holdings_item(symbol)
 
     async def _fetch_token_status(self, refresh: bool = False) -> dict:
+        self._refresh_env()
         auth = self.app.broker.auth
+        auth.sync_credentials(
+            self.app.settings.toss_client_id,
+            self.app.settings.toss_client_secret,
+        )
         if refresh:
             return await asyncio.to_thread(auth.force_refresh)
         return await asyncio.to_thread(auth.ensure_token_status)
@@ -197,11 +202,10 @@ class TelegramHandler:
     async def cmd_token(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
             return await self._deny(update)
-        dry = is_dry(self.app)
         try:
-            status = None if dry or not self.app.settings.has_toss else await self._fetch_token_status()
+            status = None if not self.app.settings.has_toss else await self._fetch_token_status()
             text = format_toss_token_detail(self.app, status)
-            markup = token_keyboard() if not dry and self.app.settings.has_toss else None
+            markup = token_keyboard() if self.app.settings.has_toss else None
             await update.message.reply_text(text, reply_markup=markup, parse_mode="HTML")
         except Exception as e:
             logger.exception("cmd_token failed")
@@ -626,6 +630,7 @@ class TelegramHandler:
                     show_alert=True,
                 )
                 return
+            self._refresh_env()
             enable = is_dry(self.app)
             self.app.runtime.set_force_live(enable)
             sync_broker_dry_run(self.app)
@@ -670,11 +675,10 @@ class TelegramHandler:
             return
 
         if data == "set_token":
-            dry = is_dry(self.app)
             try:
-                status = None if dry or not self.app.settings.has_toss else await self._fetch_token_status()
+                status = None if not self.app.settings.has_toss else await self._fetch_token_status()
                 text = format_toss_token_detail(self.app, status)
-                markup = token_keyboard(from_settings=True) if not dry and self.app.settings.has_toss else InlineKeyboardMarkup([
+                markup = token_keyboard(from_settings=True) if self.app.settings.has_toss else InlineKeyboardMarkup([
                     [InlineKeyboardButton("⬅️ 설정으로", callback_data="back_setting")],
                 ])
                 await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
@@ -753,8 +757,8 @@ class TelegramHandler:
             return
 
         if data == "TOKEN:refresh":
-            if is_dry(self.app) or not self.app.settings.has_toss:
-                await query.edit_message_text("⚠️ LIVE 모드에서만 토큰 갱신이 됩니다.")
+            if not self.app.settings.has_toss:
+                await query.edit_message_text("⚠️ TOSS_CLIENT_ID / TOSS_CLIENT_SECRET 이 .env 에 없습니다.")
                 return
             await query.edit_message_text("⏳ 토큰 갱신 중…")
             try:

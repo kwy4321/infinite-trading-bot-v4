@@ -7,8 +7,8 @@ import datetime
 from zoneinfo import ZoneInfo
 
 from app import App
-from tg.format_helpers import is_dry
-from tg.ui import quote, section
+from tg.format_helpers import dry_mode_reason, is_dry
+from tg.ui import dim, quote, section
 
 
 def _format_remaining(seconds: int) -> str:
@@ -37,10 +37,10 @@ def _is_usable(status: dict) -> bool:
 def format_toss_token_brief(app: App, status: dict | None = None) -> str:
     """/start용 — 사용 가능 여부만 (plain text)."""
     settings = app.settings
-    if is_dry(app):
-        return "🔑 토스 토큰  🧪 DRY_RUN"
     if not settings.has_toss:
         return "🔑 토스 토큰  🔴 키 없음"
+    if is_dry(app):
+        return "🔑 토스 토큰  🧪 DRY_RUN"
 
     status = status or {}
     if _is_usable(status):
@@ -51,8 +51,6 @@ def format_toss_token_brief(app: App, status: dict | None = None) -> str:
 def format_toss_token_detail(app: App, status: dict | None = None) -> str:
     """/token용 — 남은 시간·만료 시각 (blockquote 안은 plain text)."""
     settings = app.settings
-    if is_dry(app):
-        return f"{section('토스 API 토큰', '🔑')}\n{quote('🧪 DRY_RUN — 토큰 미사용')}"
     if not settings.has_toss:
         return f"{section('토스 API 토큰', '🔑')}\n{quote('🔴 API 키 없음 · .env 확인')}"
 
@@ -68,6 +66,8 @@ def format_toss_token_detail(app: App, status: dict | None = None) -> str:
         avail = "🔴 만료됨"
     elif reason == "missing":
         avail = "⚪ 토큰 없음"
+    elif reason == "no_credentials":
+        avail = "🔴 API 키 없음 · .env TOSS_CLIENT_ID/SECRET"
     elif reason == "refresh_failed":
         err = html.escape(str(status.get("error", "재발급 실패"))[:120])
         if "허용 IP" in err:
@@ -81,6 +81,10 @@ def format_toss_token_detail(app: App, status: dict | None = None) -> str:
 
     left = _format_remaining(remaining)
     expiry_line = expires_str if expires_str else "—"
+    dry_note = ""
+    if is_dry(app):
+        hint = dry_mode_reason(app) or "DRY_RUN"
+        dry_note = f"\n{dim(f'🧪 {hint} — 토큰 갱신·검증은 가능, 주문은 시뮬')}"
 
     return (
         f"{section('토스 API 토큰', '🔑')}\n"
@@ -89,4 +93,5 @@ def format_toss_token_detail(app: App, status: dict | None = None) -> str:
             f"남은 시간  {left}",
             f"만료 예정  {expiry_line} KST",
         )
+        + dry_note
     )

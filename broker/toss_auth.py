@@ -153,8 +153,11 @@ class TossAuth:
 
     def ensure_token_status(self) -> dict:
         """만료·없음이면 재발급 시도 후 최종 상태."""
+        self._drop_expired_memory()
         status = self.get_status()
         if status["ok"]:
+            return status
+        if not self.client_id or not self.client_secret:
             return status
         if status["reason"] in ("expired", "missing", "expiring_soon"):
             try:
@@ -187,27 +190,87 @@ class TossAuth:
         except OSError:
             logger.exception("failed to delete token cache %s", self.cache_path)
 
+    def sync_credentials(self, client_id: str, client_secret: str) -> None:
+        """Settings 재로드 후 client_id/secret 반영."""
+        with self._lock:
+            self.client_id = (client_id or "").strip()
+            self.client_secret = (client_secret or "").strip()
+
+    def _drop_expired_memory(self) -> None:
+        with self._lock:
+            if self._token and self._expires_at and self._expires_at <= self._now():
+                self._token = None
+                self._expires_at = None
+
+    def _parse_token_response(self, res: requests.Response) -> tuple[str, datetime.datetime]:
+        try:
+            body = res.json()
+        except ValueError as exc:
+            snippet = (res.text or "").strip().replace("\n", " ")[:160]
+            raise requests.HTTPError(
+                f"Toss token response is not JSON ({res.status_code}): {snippet}",
+            ) from exc
+
+        if not isinstance(body, dict):
+            raise requests.HTTPError(f"Toss token response invalid: {body!r}")
+
+        token = body.get("access_token")
+        if not token and isinstance(body.get("result"), dict):
+            nested = body["result"]
+            token = nested.get("access_token")
+            expires_raw = nested.get("expires_in", body.get("expires_in", 3600))
+        else:
+            expires_raw = body.get("expires_in", 3600)
+
+        if not token:
+            raise requests.HTTPError(
+                f"Toss token response missing access_token: {json.dumps(body)[:200]}",
+            )
+        expires_at = _expires_at_from_ttl(int(expires_raw))
+        return str(token), expires_at
+
+    def _post_token_request(self, *, use_basic: bool) -> requests.Response:
+        payload = {"grant_type": "client_credentials"}
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        kwargs: dict = {
+            "url": f"{BASE_URL}/oauth2/token",
+            "data": payload,
+            "headers": headers,
+            "timeout": 15,
+        }
+        if use_basic:
+            kwargs["auth"] = (self.client_id, self.client_secret)
+        else:
+            payload["client_id"] = self.client_id
+            payload["client_secret"] = self.client_secret
+        return requests.post(**kwargs)
+
     def _request_token(self) -> tuple[str, datetime.datetime]:
+        if not self.client_id or not self.client_secret:
+            raise ValueError("TOSS_CLIENT_ID/SECRET 없음 — .env 확인")
+
         last_err: Exception | None = None
         for attempt in range(3):
             self.limiter.acquire("AUTH")
             try:
-                res = requests.post(
-                    f"{BASE_URL}/oauth2/token",
-                    data={
-                        "grant_type": "client_credentials",
-                        "client_id": self.client_id,
-                        "client_secret": self.client_secret,
-                    },
-                    headers={"Content-Type": "application/x-www-form-urlencoded"},
-                    timeout=15,
-                )
+                res = self._post_token_request(use_basic=False)
             except requests.RequestException as exc:
                 last_err = exc
                 if attempt >= 2:
                     raise
                 time.sleep(1 + attempt)
                 continue
+
+            if res.status_code == 401:
+                logger.info("Toss token form auth 401 — retry with HTTP Basic")
+                try:
+                    res = self._post_token_request(use_basic=True)
+                except requests.RequestException as exc:
+                    last_err = exc
+                    if attempt >= 2:
+                        raise
+                    time.sleep(1 + attempt)
+                    continue
 
             if res.status_code == 429:
                 retry = max(int(res.headers.get("Retry-After", "2") or 2), 1)
@@ -220,20 +283,14 @@ class TossAuth:
             if not res.ok:
                 raise requests.HTTPError(_format_token_error(res), response=res)
 
-            body = res.json()
-            token = body.get("access_token")
-            if not token:
-                raise requests.HTTPError(
-                    f"Toss token response missing access_token: {json.dumps(body)[:200]}",
-                )
-            expires_at = _expires_at_from_ttl(int(body.get("expires_in", 3600)))
-            return str(token), expires_at
+            return self._parse_token_response(res)
 
         if last_err:
             raise last_err
         raise RuntimeError("Toss token request failed")
 
     def get_token(self) -> str:
+        self._drop_expired_memory()
         with self._lock:
             if self._valid_cached():
                 return self._token  # type: ignore[return-value]
@@ -246,8 +303,29 @@ class TossAuth:
             self._token = token
             self._expires_at = expires_at
             self._save_cache(token, expires_at)
-            logger.info("Toss access token refreshed (expires %s KST)", expires_at.strftime("%Y-%m-%d %H:%M"))
+            logger.info(
+                "Toss access token refreshed (expires %s KST)",
+                expires_at.strftime("%Y-%m-%d %H:%M"),
+            )
             return token
+
+    def verify_token(self) -> None:
+        """발급된 토큰으로 시세 API 1회 호출 — 유효성 확인."""
+        token = self.get_token()
+        self.limiter.acquire("MARKET_DATA")
+        res = requests.get(
+            f"{BASE_URL}/api/v1/prices",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"symbol": "TQQQ"},
+            timeout=15,
+        )
+        if res.status_code == 401:
+            self.invalidate()
+            raise requests.HTTPError("토큰 발급 후 API 검증 실패(401) — 키·IP 확인")
+        if not res.ok:
+            raise requests.HTTPError(
+                f"토큰 검증 API 실패 ({res.status_code}): {(res.text or '')[:160]}",
+            )
 
     def invalidate(self) -> None:
         with self._lock:
@@ -256,10 +334,18 @@ class TossAuth:
 
     def force_refresh(self) -> dict:
         """캐시 무효화 후 새 토큰 발급."""
+        if not self.client_id or not self.client_secret:
+            return {
+                "ok": False,
+                "reason": "no_credentials",
+                "remaining_seconds": 0,
+                "expires_at": None,
+                "error": "TOSS_CLIENT_ID/SECRET 없음",
+            }
         self.invalidate()
         self._delete_cache_file()
         try:
-            self.get_token()
+            self.verify_token()
         except Exception as exc:
             logger.warning("Toss force_refresh failed: %s", exc)
             return {

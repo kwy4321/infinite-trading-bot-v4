@@ -44,11 +44,21 @@ def test_cache_roundtrip() -> None:
         assert abs((loaded_exp - exp).total_seconds()) < 2
 
 
+def test_sync_credentials() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        cache = Path(tmp) / "token_cache.json"
+        auth = TossAuth("", "", cache, RateLimiter())
+        auth.sync_credentials("  cid  ", " sec ")
+        assert auth.client_id == "cid"
+        assert auth.client_secret == "sec"
+
+
 def main() -> int:
     test_parse_iso_z_suffix()
     test_expires_at_minimum_one_second()
     test_expires_at_respects_early_refresh()
     test_cache_roundtrip()
+    test_sync_credentials()
     print("test_toss_auth_helpers: OK")
     return 0
 

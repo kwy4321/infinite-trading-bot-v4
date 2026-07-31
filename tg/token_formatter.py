@@ -65,7 +65,7 @@ def format_toss_token_detail(app: App, status: dict | None = None) -> str:
     elif reason == "expired":
         avail = "🔴 만료됨"
     elif reason == "missing":
-        avail = "⚪ 토큰 없음"
+        avail = "⚪ 캐시 없음 — 상태 확인 시 자동 발급"
     elif reason == "no_credentials":
         avail = "🔴 API 키 없음 · .env TOSS_CLIENT_ID/SECRET"
     elif reason == "refresh_failed":

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from account.account import AccountPaths
@@ -15,6 +16,8 @@ from state.state import StateStore
 from strategy.fill_processor import FillProcessor
 from strategy.fill_reconciler import FillReconciler
 from strategy.strategy_v40 import InfiniteStrategyV40
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -45,6 +48,18 @@ class App:
             paths.token_cache,
             limiter,
         )
+        if settings.has_toss and not dry:
+            try:
+                status = auth.ensure_token_status()
+                if status.get("ok"):
+                    logger.info(
+                        "Toss token ready (remaining %ss)",
+                        int(status.get("remaining_seconds") or 0),
+                    )
+                elif status.get("reason") == "refresh_failed":
+                    logger.warning("Toss token not ready: %s", status.get("error"))
+            except Exception:
+                logger.exception("startup token warm failed")
         broker = TossClient(auth, settings.toss_account_seq, limiter, dry_run=dry)
         app = cls(
             settings=settings,

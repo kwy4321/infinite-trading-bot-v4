@@ -57,8 +57,8 @@ def test_force_refresh_keeps_cache_on_failure() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         cache = Path(tmp) / "token_cache.json"
         auth = TossAuth("id", "secret", cache, RateLimiter())
-        exp = _expires_at_from_ttl(7200)
-        auth._apply_token("keep-me", exp)
+        auth.invalidate()
+        auth._delete_cache_file()
 
         def _boom():
             raise ValueError("network down")
@@ -66,8 +66,7 @@ def test_force_refresh_keeps_cache_on_failure() -> None:
         auth._request_token = _boom  # type: ignore[method-assign]
         result = auth.force_refresh()
         assert result["reason"] == "refresh_failed"
-        assert result.get("remaining_seconds", 0) > 0
-        assert auth.get_token() == "keep-me"
+        assert "network down" in str(result.get("error", ""))
 
 
 def test_sync_credentials_clears_cache_on_change() -> None:
@@ -82,6 +81,31 @@ def test_sync_credentials_clears_cache_on_change() -> None:
         assert auth.get_status()["reason"] == "missing"
 
 
+def test_tssk_live_secret_format() -> None:
+    d = diagnose_toss_credentials(
+        "tsck_live_abc123def456ghi789",
+        "tssk_live_xyz987uvw654rst321abcdefghijklmnop",
+    )
+    assert d["id_format_ok"]
+    assert d["secret_format_ok"]
+
+
+def test_force_refresh_skips_valid_cache() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        cache = Path(tmp) / "token_cache.json"
+        auth = TossAuth("tsck_live_abc123456789012", "tssk_live_xyz98765432109876543210", cache, RateLimiter())
+        exp = _expires_at_from_ttl(7200)
+        auth._apply_token("valid-token", exp)
+
+        def _boom():
+            raise RuntimeError("should not call oauth")
+
+        auth._request_token = _boom  # type: ignore[method-assign]
+        result = auth.force_refresh()
+        assert result["ok"]
+        assert result["reason"] == "valid"
+
+
 def main() -> int:
     test_parse_iso_z_suffix()
     test_expires_at_minimum_one_second()
@@ -90,6 +114,7 @@ def main() -> int:
     test_sync_credentials()
     test_sync_credentials_clears_cache_on_change()
     test_force_refresh_keeps_cache_on_failure()
+    test_force_refresh_skips_valid_cache()
     print("test_toss_auth_helpers: OK")
     return 0
 

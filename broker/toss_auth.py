@@ -389,7 +389,11 @@ class TossAuth:
             self._expires_at = None
 
     def force_refresh(self) -> dict:
-        """새 토큰 발급 — 실패 시 기존 캐시 유지."""
+        """새 토큰 발급 — 이미 유효하면 재발급 생략."""
+        status = self.get_status()
+        if status["ok"] or status.get("reason") == "expiring_soon":
+            return status
+
         if not self.client_id or not self.client_secret:
             return {
                 "ok": False,

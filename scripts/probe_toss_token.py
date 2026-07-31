@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Toss OAuth token probe — run on VM: python scripts/probe_toss_token.py
 
-토스가 실제로 돌려준 status/code/message 를 그대로 출력한다 (키 값은 마스킹).
+토스가 실제로 돌려준 status/code/message + 캐시 저장까지 확인.
 """
 
 from __future__ import annotations
@@ -16,13 +16,13 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from account.account import AccountPaths
-from broker.toss_auth import BASE_URL
+from broker.rate_limiter import RateLimiter
+from broker.toss_auth import BASE_URL, TossAuth
 from config.settings import reload_settings
 from config.toss_credentials import diagnose_toss_credentials
 
 
 def _public_ip() -> str:
-    """WTS 허용 IP 와 비교할 서버 공인 IP."""
     for url in ("https://api.ipify.org", "https://ifconfig.me/ip"):
         try:
             res = requests.get(url, timeout=5)
@@ -34,7 +34,6 @@ def _public_ip() -> str:
 
 
 def _raw_token_request(client_id: str, client_secret: str) -> dict:
-    """마스킹 없이 토스 응답 본문을 그대로 수집."""
     try:
         res = requests.post(
             f"{BASE_URL}/oauth2/token",
@@ -79,6 +78,12 @@ def main() -> int:
     settings = reload_settings()
     cred = diagnose_toss_credentials(settings.toss_client_id, settings.toss_client_secret)
     paths = AccountPaths()
+    auth = TossAuth(
+        settings.toss_client_id,
+        settings.toss_client_secret,
+        paths.token_cache,
+        RateLimiter(),
+    )
 
     out = {
         "public_ip": _public_ip(),
@@ -93,7 +98,7 @@ def main() -> int:
         ),
         "credential_notes": cred["notes"],
         "cache_path": str(paths.token_cache),
-        "cache_exists": paths.token_cache.is_file(),
+        "cache_exists_before": paths.token_cache.is_file(),
     }
 
     if settings.has_toss:
@@ -101,17 +106,30 @@ def main() -> int:
             settings.toss_client_id,
             settings.toss_client_secret,
         )
+        try:
+            auth.ensure_token_status()
+            token_status = auth.get_status()
+            out["cache_saved"] = paths.token_cache.is_file()
+            out["status_after"] = token_status
+        except Exception as exc:
+            out["cache_error"] = str(exc)
 
     print(json.dumps(out, ensure_ascii=False, indent=2, default=str))
 
     resp = out.get("toss_response") or {}
-    if resp.get("status") == 200:
-        print("\n✅ 토큰 발급 성공 — 봇 재시작하면 반영됩니다.")
+    ok = resp.get("status") == 200 and out.get("cache_saved")
+
+    if ok:
+        print("\n✅ 토큰 발급·캐시 저장 성공")
+        print(f"   이 서버 IP({out['public_ip']})가 WTS 허용 IP에 등록돼 있어야 봇도 동작합니다.")
+        print("   Cloud Shell에서 실행했다면 VM 반영: bash scripts/cloudshell_bot.sh restart")
         return 0
 
-    print("\n❌ 토큰 발급 실패")
-    print("   위 toss_response.body 의 code/message 가 토스가 준 실제 사유입니다.")
-    print(f"   허용 IP 확인: WTS 설정 > Open API > 허용 IP 관리 에 {out['public_ip']} 등록 필요")
+    print("\n❌ 토큰 발급/캐시 실패")
+    if resp.get("body"):
+        print("   toss_response.body = 토스가 준 실제 사유")
+    print(f"   WTS 허용 IP에 이 서버 IP 등록: {out['public_ip']}")
+    print("   Cloud Shell 성공 + VM 실패 → VM IP도 따로 등록 + cloudshell_bot.sh restart")
     return 1
 
 

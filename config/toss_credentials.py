@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import re
 
-# 2026+ WTS: ID·Secret 모두 tsck_live_… 로 시작하는 경우가 많음 (구형: c_ + s_)
-_TOSS_KEY_PREFIXES = ("tsck_live_", "tsck_", "c_")
+# 2026+ WTS: ID=tsck_live_… / Secret=tssk_live_… (또는 tsck_live_…)
+_TOSS_KEY_PREFIXES = ("tsck_live_", "tsck_", "tssk_live_", "tssk_", "c_")
 _LEGACY_SECRET_PREFIX = "s_"
 
 
@@ -74,7 +74,7 @@ def normalize_toss_credentials(
         if len(sec) < 20:
             notes.append("CLIENT_SECRET 이 너무 짧습니다")
         else:
-            notes.append("CLIENT_SECRET 형식 확인 (tsck_live_… 또는 s_… 로 시작)")
+            notes.append("CLIENT_SECRET 형식 확인 (tssk_live_… / tsck_live_… / s_… 로 시작)")
 
     return cid, sec, notes
 
@@ -98,7 +98,7 @@ def diagnose_toss_credentials(client_id: str, client_secret: str) -> dict:
 def format_toss_credential_help(*, auth_401: bool = False) -> list[str]:
     lines = [
         "WTS → 설정 → Open API → Client ID / Secret 재확인",
-        "둘 다 tsck_live_… 로 시작할 수 있음 (값은 서로 다름)",
+        "둘 다 tsck_live_… / Secret은 tssk_live_… 도 가능 (값은 서로 다름)",
         "TOSS_CLIENT_ID=… / TOSS_CLIENT_SECRET=… (따옴표·공백 없이)",
         "VM .env 수정 후: sudo systemctl restart infinite-trading-bot",
     ]

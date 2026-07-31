@@ -178,15 +178,14 @@ class TelegramHandler:
                 plain = plain.replace(tag, "")
             await query.edit_message_text(plain[:4000], reply_markup=markup)
 
-    async def _fetch_token_status(self, refresh: bool = False) -> dict:
+    async def _fetch_token_status(self) -> dict:
+        """캐시 확인 → 없거나 만료면 1회 발급 (유효하면 재발급 안 함)."""
         self._refresh_env()
         auth = self.app.broker.auth
         auth.sync_credentials(
             self.app.settings.toss_client_id,
             self.app.settings.toss_client_secret,
         )
-        if refresh:
-            return await asyncio.to_thread(auth.force_refresh)
         return await asyncio.to_thread(auth.ensure_token_status)
 
     async def _resolve_token_line(self) -> str:
@@ -194,7 +193,7 @@ class TelegramHandler:
         token_line = format_toss_token_brief(self.app)
         if not dry and self.app.settings.has_toss:
             try:
-                status = await self._fetch_token_status(refresh=False)
+                status = await self._fetch_token_status()
                 token_line = format_toss_token_brief(self.app, status)
             except Exception:
                 logger.exception("token brief check failed")
@@ -776,13 +775,13 @@ class TelegramHandler:
             if not self.app.settings.has_toss:
                 await query.edit_message_text("⚠️ TOSS_CLIENT_ID / TOSS_CLIENT_SECRET 이 .env 에 없습니다.")
                 return
-            await query.edit_message_text("⏳ 토큰 갱신 중…")
+            await query.edit_message_text("⏳ 토큰 확인 중…")
             try:
-                status = await self._fetch_token_status(refresh=True)
+                status = await self._fetch_token_status()
                 await self._show_token_detail(query, status, from_settings=True)
             except Exception as e:
-                logger.exception("token refresh failed")
-                await query.edit_message_text(f"🚨 토큰 갱신 실패: {e}")
+                logger.exception("token check failed")
+                await query.edit_message_text(f"🚨 토큰 확인 실패: {e}")
             return
 
         if data == "LEDGER:sync":

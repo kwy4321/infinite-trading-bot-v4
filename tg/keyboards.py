@@ -112,7 +112,7 @@ def trading_symbols_keyboard(active: list[str], editing: str) -> InlineKeyboardM
 
 
 def token_keyboard(from_settings: bool = False) -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton("🔄 갱신하기", callback_data="TOKEN:refresh")]]
+    rows = [[InlineKeyboardButton("🔄 상태 확인", callback_data="TOKEN:refresh")]]
     if from_settings:
         rows.append([InlineKeyboardButton("⬅️ 설정으로", callback_data="back_setting")])
     return InlineKeyboardMarkup(rows)

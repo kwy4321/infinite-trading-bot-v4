@@ -15,8 +15,8 @@ fi
 echo "=== Toss Open API 키 입력 ==="
 echo "WTS → 설정 → Open API 에서 복사 (따옴표·콤마 없이)"
 echo ""
-read -r -p "TOSS_CLIENT_ID (c_… 또는 tsck_…): " CLIENT_ID
-read -r -s -p "TOSS_CLIENT_SECRET (s_…): " CLIENT_SECRET
+read -r -p "TOSS_CLIENT_ID (tsck_live_…): " CLIENT_ID
+read -r -s -p "TOSS_CLIENT_SECRET (tsck_live_…, ID와 다른 값): " CLIENT_SECRET
 echo ""
 
 CLIENT_ID="$(printf '%s' "$CLIENT_ID" | tr -d '\r\n ')"

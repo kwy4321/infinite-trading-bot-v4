@@ -57,7 +57,7 @@ def _format_token_error(res: requests.Response) -> str:
         if status == 401 or err == "invalid_client":
             return (
                 "401 client_id/secret 오류 — WTS Open API 키 재확인 "
-                "(ID=c_/tsck_, SECRET=s_, 뒤바뀜·재발급 여부)"
+                "(ID·Secret 모두 tsck_live_… 가능, 값은 서로 달라야 함)"
             )
         if err or desc:
             return f"{status} {err or 'error'}{': ' + desc if desc else ''}"

@@ -54,6 +54,21 @@ def test_alias_conflict_detected() -> None:
     assert notes
 
 
+def test_tsck_live_format() -> None:
+    cid = "tsck_live_abc123def456ghi789jkl012"
+    sec = "tsck_live_xyz987uvw654rst321mno098"
+    d = diagnose_toss_credentials(cid, sec)
+    assert d["id_format_ok"]
+    assert d["secret_format_ok"]
+    assert d["has_toss"]
+
+
+def test_same_tsck_values_warned() -> None:
+    key = "tsck_live_abc123def456ghi789jkl012"
+    _, _, notes = normalize_toss_credentials(key, key)
+    assert any("동일" in n for n in notes)
+
+
 def main() -> int:
     test_normalize_strips_quotes()
     test_swap_detected()
@@ -61,6 +76,8 @@ def main() -> int:
     test_diagnose_wrong_slot()
     test_strip_trailing_comma()
     test_alias_conflict_detected()
+    test_tsck_live_format()
+    test_same_tsck_values_warned()
     print("test_toss_credentials: OK")
     return 0
 

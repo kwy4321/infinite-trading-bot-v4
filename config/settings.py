@@ -718,7 +718,7 @@ def env_diagnostics(settings: "Settings | None" = None) -> dict:
     if settings.has_toss and toss_diag["id_format_ok"] and toss_diag["secret_format_ok"]:
         pass
     elif settings.has_toss:
-        notes.append("Toss 키 형식 이상 — WTS Open API에서 Client ID(c_/tsck_)·Secret(s_) 재복사")
+        notes.append("Toss 키 형식 이상 — WTS Open API에서 Client ID·Secret(tsck_live_…) 재복사")
     return {
         "env_path": env_path,
         "env_exists": (ROOT / ".env").is_file(),

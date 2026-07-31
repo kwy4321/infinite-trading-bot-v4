@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import re
 
-_ID_PREFIXES = ("c_", "tsck_")
-_SECRET_PREFIX = "s_"
+# 2026+ WTS: ID·Secret 모두 tsck_live_… 로 시작하는 경우가 많음 (구형: c_ + s_)
+_TOSS_KEY_PREFIXES = ("tsck_live_", "tsck_", "c_")
+_LEGACY_SECRET_PREFIX = "s_"
 
 
 def mask_credential(value: str) -> str:
@@ -17,13 +18,27 @@ def mask_credential(value: str) -> str:
     return f"{text[:4]}…{text[-4:]}"
 
 
-def _looks_like_client_id(value: str) -> bool:
+def _looks_like_toss_key(value: str) -> bool:
     text = (value or "").strip()
-    return any(text.startswith(p) for p in _ID_PREFIXES)
+    if any(text.startswith(p) for p in _TOSS_KEY_PREFIXES):
+        return True
+    return text.startswith(_LEGACY_SECRET_PREFIX)
+
+
+def _looks_like_client_id(value: str) -> bool:
+    return _looks_like_toss_key(value)
 
 
 def _looks_like_client_secret(value: str) -> bool:
-    return (value or "").strip().startswith(_SECRET_PREFIX)
+    return _looks_like_toss_key(value)
+
+
+def _is_legacy_secret_only(value: str) -> bool:
+    """구형 Secret (s_…) — tsck_/c_ 와 구분."""
+    text = (value or "").strip()
+    return text.startswith(_LEGACY_SECRET_PREFIX) and not any(
+        text.startswith(p) for p in _TOSS_KEY_PREFIXES
+    )
 
 
 def _strip_credential(value: str) -> str:
@@ -36,30 +51,30 @@ def normalize_toss_credentials(
     client_id: str,
     client_secret: str,
 ) -> tuple[str, str, list[str]]:
-    """공백 제거·ID/Secret 뒤바뀴 자동 교정."""
+    """공백 제거·구형(s_) 키 뒤바뀜 자동 교정."""
     cid = _strip_credential(client_id)
     sec = _strip_credential(client_secret)
     notes: list[str] = []
 
-    if cid and sec and _looks_like_client_secret(cid) and _looks_like_client_id(sec):
+    # tsck_live_ 둘 다인 경우는 접두사로 구분 불가 — s_ 구형만 자동 교환
+    if cid and sec and _is_legacy_secret_only(cid) and _looks_like_toss_key(sec) and not _is_legacy_secret_only(sec):
         cid, sec = sec, cid
         notes.append("CLIENT_ID ↔ SECRET 뒤바뀜 감지 — 자동 교정했습니다")
 
+    if cid and sec and cid == sec:
+        notes.append("ID와 SECRET이 동일 — WTS에서 Client ID·Secret 각각 다른 값을 넣으세요")
+
     if cid and not _looks_like_client_id(cid):
-        if _looks_like_client_secret(cid):
-            notes.append("CLIENT_ID 자리에 Secret(s_…) 값이 들어있습니다")
-        elif len(cid) < 12:
+        if len(cid) < 12:
             notes.append("CLIENT_ID 가 너무 짧습니다")
         else:
-            notes.append("CLIENT_ID 형식 확인 (c_… 또는 tsck_… 로 시작)")
+            notes.append("CLIENT_ID 형식 확인 (tsck_live_… 또는 c_… 로 시작)")
 
     if sec and not _looks_like_client_secret(sec):
-        if _looks_like_client_id(sec):
-            notes.append("SECRET 자리에 Client ID(c_/tsck_) 값이 들어있습니다")
-        elif len(sec) < 20:
+        if len(sec) < 20:
             notes.append("CLIENT_SECRET 이 너무 짧습니다")
         else:
-            notes.append("CLIENT_SECRET 형식 확인 (s_… 로 시작)")
+            notes.append("CLIENT_SECRET 형식 확인 (tsck_live_… 또는 s_… 로 시작)")
 
     return cid, sec, notes
 
@@ -83,9 +98,8 @@ def diagnose_toss_credentials(client_id: str, client_secret: str) -> dict:
 def format_toss_credential_help(*, auth_401: bool = False) -> list[str]:
     lines = [
         "WTS → 설정 → Open API → Client ID / Secret 재확인",
-        "CLIENT_ID = c_… 또는 tsck_… (API Key)",
-        "CLIENT_SECRET = s_… (Secret Key)",
-        "한 줄씩: TOSS_CLIENT_ID=… / TOSS_CLIENT_SECRET=… (따옴표·공백 없이)",
+        "둘 다 tsck_live_… 로 시작할 수 있음 (값은 서로 다름)",
+        "TOSS_CLIENT_ID=… / TOSS_CLIENT_SECRET=… (따옴표·공백 없이)",
         "VM .env 수정 후: sudo systemctl restart infinite-trading-bot",
     ]
     if auth_401:

@@ -200,8 +200,13 @@ class TossAuth:
         for note in notes:
             logger.warning("Toss credentials: %s", note)
         with self._lock:
+            changed = cid != self.client_id or sec != self.client_secret
             self.client_id = cid
             self.client_secret = sec
+        if changed and cid and sec:
+            self.invalidate()
+            self._delete_cache_file()
+            logger.info("Toss credentials changed — token cache cleared")
 
     def _drop_expired_memory(self) -> None:
         with self._lock:

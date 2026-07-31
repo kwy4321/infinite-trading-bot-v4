@@ -26,13 +26,19 @@ def _looks_like_client_secret(value: str) -> bool:
     return (value or "").strip().startswith(_SECRET_PREFIX)
 
 
+def _strip_credential(value: str) -> str:
+    """복사·붙여넣기 잔여 문자 제거 (콤마·세미콜론·따옴표·CR)."""
+    s = (value or "").strip().strip("\r").strip('"').strip("'")
+    return s.rstrip(",;")
+
+
 def normalize_toss_credentials(
     client_id: str,
     client_secret: str,
 ) -> tuple[str, str, list[str]]:
     """공백 제거·ID/Secret 뒤바뀴 자동 교정."""
-    cid = (client_id or "").strip().strip('"').strip("'")
-    sec = (client_secret or "").strip().strip('"').strip("'")
+    cid = _strip_credential(client_id)
+    sec = _strip_credential(client_secret)
     notes: list[str] = []
 
     if cid and sec and _looks_like_client_secret(cid) and _looks_like_client_id(sec):
@@ -92,3 +98,31 @@ _TOSS_INLINE_RE = re.compile(
     r"TOSS_API_SECRET)\s*=\s*([^\s#]+)",
     re.IGNORECASE,
 )
+
+_TOSS_ID_ALIASES = ("TOSS_CLIENT_ID", "TOSS_API_KEY", "TOSS_API_ID", "TOSS_KEY")
+_TOSS_SECRET_ALIASES = ("TOSS_CLIENT_SECRET", "TOSS_SECRET_KEY", "TOSS_API_SECRET", "TOSS_SECRET")
+
+
+def toss_env_alias_conflicts(pairs: dict[str, str]) -> list[str]:
+    """동일 역할 변수가 .env 에 중복·상충할 때 경고."""
+    notes: list[str] = []
+
+    def _vals(names: tuple[str, ...]) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for name in names:
+            for k, v in pairs.items():
+                if k.upper() == name and v:
+                    out[name] = _strip_credential(v)
+        return out
+
+    id_vals = _vals(_TOSS_ID_ALIASES)
+    if len(set(id_vals.values())) > 1:
+        keys = ", ".join(sorted(id_vals))
+        notes.append(f"Toss ID 변수 충돌 ({keys}) — TOSS_CLIENT_ID 만 남기고 정리")
+
+    sec_vals = _vals(_TOSS_SECRET_ALIASES)
+    if len(set(sec_vals.values())) > 1:
+        keys = ", ".join(sorted(sec_vals))
+        notes.append(f"Toss SECRET 변수 충돌 ({keys}) — TOSS_CLIENT_SECRET 만 남기고 정리")
+
+    return notes

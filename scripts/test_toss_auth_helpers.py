@@ -70,12 +70,25 @@ def test_force_refresh_keeps_cache_on_failure() -> None:
         assert auth.get_token() == "keep-me"
 
 
+def test_sync_credentials_clears_cache_on_change() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        cache = Path(tmp) / "token_cache.json"
+        auth = TossAuth("c_old", "s_old", cache, RateLimiter())
+        exp = _expires_at_from_ttl(7200)
+        auth._apply_token("old-token", exp)
+        auth.sync_credentials("c_new123456", "s_newsecret1234567890")
+        assert auth.client_id == "c_new123456"
+        assert not cache.exists()
+        assert auth.get_status()["reason"] == "missing"
+
+
 def main() -> int:
     test_parse_iso_z_suffix()
     test_expires_at_minimum_one_second()
     test_expires_at_respects_early_refresh()
     test_cache_roundtrip()
     test_sync_credentials()
+    test_sync_credentials_clears_cache_on_change()
     test_force_refresh_keeps_cache_on_failure()
     print("test_toss_auth_helpers: OK")
     return 0

@@ -681,7 +681,7 @@ def google_sheets_issues(settings: "Settings") -> list[str]:
 
 def env_diagnostics(settings: "Settings | None" = None) -> dict:
     """봇이 실제로 읽은 설정 (값 노출 없음)."""
-    from config.toss_credentials import diagnose_toss_credentials
+    from config.toss_credentials import diagnose_toss_credentials, toss_env_alias_conflicts
 
     if settings is None:
         settings = reload_settings()
@@ -710,6 +710,9 @@ def env_diagnostics(settings: "Settings | None" = None) -> dict:
     if settings.dry_run and settings.has_toss:
         notes.append("DRY_RUN=true — 텔레그램 설정→💹 실거래 켜기 또는 DRY_RUN=false")
     toss_diag = diagnose_toss_credentials(settings.toss_client_id, settings.toss_client_secret)
+    alias_conflicts = toss_env_alias_conflicts(_read_dotenv_pairs())
+    if alias_conflicts:
+        notes.extend(alias_conflicts)
     if settings.has_toss and not (toss_diag["id_format_ok"] and toss_diag["secret_format_ok"]):
         notes.extend(toss_diag.get("notes") or [])
     if settings.has_toss and toss_diag["id_format_ok"] and toss_diag["secret_format_ok"]:

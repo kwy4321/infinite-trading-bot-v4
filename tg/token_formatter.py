@@ -6,7 +6,7 @@ import html
 import datetime
 from zoneinfo import ZoneInfo
 
-from config.toss_credentials import format_toss_credential_help
+from config.toss_credentials import format_toss_credential_help, mask_credential
 from tg.format_helpers import dry_mode_reason, is_dry
 from tg.ui import dim, quote, section
 
@@ -91,6 +91,11 @@ def format_toss_token_detail(app: App, status: dict | None = None) -> str:
         hint = dry_mode_reason(app) or "DRY_RUN"
         dry_note = f"\n{dim(f'🧪 {hint} — 토큰 갱신·검증은 가능, 주문은 시뮬')}"
 
+    cred_hint = ""
+    if reason == "refresh_failed" and settings.has_toss:
+        cid = mask_credential(settings.toss_client_id)
+        cred_hint = f"\n{dim(f'로드된 ID: {cid} — WTS 재발급 키와 앞 4자·길이 비교')}"
+
     return (
         f"{section('토스 API 토큰', '🔑')}\n"
         + quote(
@@ -98,5 +103,6 @@ def format_toss_token_detail(app: App, status: dict | None = None) -> str:
             f"남은 시간  {left}",
             f"만료 예정  {expiry_line} KST",
         )
+        + cred_hint
         + dry_note
     )

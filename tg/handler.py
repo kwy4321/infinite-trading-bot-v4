@@ -772,6 +772,7 @@ class TelegramHandler:
             return
 
         if data == "TOKEN:refresh":
+            self._refresh_env()
             if not self.app.settings.has_toss:
                 await query.edit_message_text("⚠️ TOSS_CLIENT_ID / TOSS_CLIENT_SECRET 이 .env 에 없습니다.")
                 return

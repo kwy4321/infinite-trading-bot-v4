@@ -155,11 +155,11 @@ class TossAuth:
         """만료·없음이면 재발급 시도 후 최종 상태."""
         self._drop_expired_memory()
         status = self.get_status()
-        if status["ok"]:
+        if status["ok"] or status.get("reason") == "expiring_soon":
             return status
         if not self.client_id or not self.client_secret:
             return status
-        if status["reason"] in ("expired", "missing", "expiring_soon"):
+        if status["reason"] in ("expired", "missing"):
             try:
                 self.get_token()
             except Exception as exc:
@@ -289,6 +289,16 @@ class TossAuth:
             raise last_err
         raise RuntimeError("Toss token request failed")
 
+    def _apply_token(self, token: str, expires_at: datetime.datetime) -> None:
+        with self._lock:
+            self._token = token
+            self._expires_at = expires_at
+            self._save_cache(token, expires_at)
+        logger.info(
+            "Toss access token refreshed (expires %s KST)",
+            expires_at.strftime("%Y-%m-%d %H:%M"),
+        )
+
     def get_token(self) -> str:
         self._drop_expired_memory()
         with self._lock:
@@ -296,36 +306,8 @@ class TossAuth:
                 return self._token  # type: ignore[return-value]
 
         token, expires_at = self._request_token()
-
-        with self._lock:
-            if self._valid_cached():
-                return self._token  # type: ignore[return-value]
-            self._token = token
-            self._expires_at = expires_at
-            self._save_cache(token, expires_at)
-            logger.info(
-                "Toss access token refreshed (expires %s KST)",
-                expires_at.strftime("%Y-%m-%d %H:%M"),
-            )
-            return token
-
-    def verify_token(self) -> None:
-        """발급된 토큰으로 시세 API 1회 호출 — 유효성 확인."""
-        token = self.get_token()
-        self.limiter.acquire("MARKET_DATA")
-        res = requests.get(
-            f"{BASE_URL}/api/v1/prices",
-            headers={"Authorization": f"Bearer {token}"},
-            params={"symbol": "TQQQ"},
-            timeout=15,
-        )
-        if res.status_code == 401:
-            self.invalidate()
-            raise requests.HTTPError("토큰 발급 후 API 검증 실패(401) — 키·IP 확인")
-        if not res.ok:
-            raise requests.HTTPError(
-                f"토큰 검증 API 실패 ({res.status_code}): {(res.text or '')[:160]}",
-            )
+        self._apply_token(token, expires_at)
+        return token
 
     def invalidate(self) -> None:
         with self._lock:
@@ -333,7 +315,7 @@ class TossAuth:
             self._expires_at = None
 
     def force_refresh(self) -> dict:
-        """캐시 무효화 후 새 토큰 발급."""
+        """새 토큰 발급 — 실패 시 기존 캐시 유지."""
         if not self.client_id or not self.client_secret:
             return {
                 "ok": False,
@@ -342,17 +324,32 @@ class TossAuth:
                 "expires_at": None,
                 "error": "TOSS_CLIENT_ID/SECRET 없음",
             }
-        self.invalidate()
-        self._delete_cache_file()
         try:
-            self.verify_token()
+            token, expires_at = self._request_token()
         except Exception as exc:
             logger.warning("Toss force_refresh failed: %s", exc)
+            stale = self.get_status()
             return {
                 "ok": False,
                 "reason": "refresh_failed",
-                "remaining_seconds": 0,
-                "expires_at": None,
+                "remaining_seconds": int(stale.get("remaining_seconds") or 0),
+                "expires_at": stale.get("expires_at"),
                 "error": str(exc),
             }
+        self._apply_token(token, expires_at)
         return self.get_status()
+
+    def probe_refresh(self) -> dict:
+        """진단 — 발급 시도만 (캐시 교체 없음)."""
+        if not self.client_id or not self.client_secret:
+            return {"ok": False, "step": "credentials", "error": "TOSS_CLIENT_ID/SECRET 없음"}
+        try:
+            token, expires_at = self._request_token()
+        except Exception as exc:
+            return {"ok": False, "step": "oauth2/token", "error": str(exc)}
+        return {
+            "ok": True,
+            "step": "oauth2/token",
+            "expires_at": expires_at.isoformat(),
+            "token_len": len(token),
+        }

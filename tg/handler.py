@@ -159,6 +159,25 @@ class TelegramHandler:
     def _pos(self, symbol: str) -> dict:
         return self.app.broker.get_holdings_item(symbol)
 
+    async def _show_token_detail(self, query, status: dict | None, *, from_settings: bool = False) -> None:
+        text = format_toss_token_detail(self.app, status)
+        if self.app.settings.has_toss:
+            markup = token_keyboard(from_settings=from_settings)
+        elif from_settings:
+            markup = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ 설정으로", callback_data="back_setting")],
+            ])
+        else:
+            markup = None
+        try:
+            await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+        except Exception:
+            logger.exception("token detail HTML edit failed")
+            plain = html.unescape(text.replace("<blockquote>", "").replace("</blockquote>", ""))
+            for tag in ("<b>", "</b>", "<i>", "</i>", "<code>", "</code>"):
+                plain = plain.replace(tag, "")
+            await query.edit_message_text(plain[:4000], reply_markup=markup)
+
     async def _fetch_token_status(self, refresh: bool = False) -> dict:
         self._refresh_env()
         auth = self.app.broker.auth
@@ -677,11 +696,7 @@ class TelegramHandler:
         if data == "set_token":
             try:
                 status = None if not self.app.settings.has_toss else await self._fetch_token_status()
-                text = format_toss_token_detail(self.app, status)
-                markup = token_keyboard(from_settings=True) if self.app.settings.has_toss else InlineKeyboardMarkup([
-                    [InlineKeyboardButton("⬅️ 설정으로", callback_data="back_setting")],
-                ])
-                await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+                await self._show_token_detail(query, status, from_settings=True)
             except Exception as e:
                 logger.exception("set_token failed")
                 await query.edit_message_text(f"🚨 토큰 조회 실패: {e}")
@@ -763,12 +778,7 @@ class TelegramHandler:
             await query.edit_message_text("⏳ 토큰 갱신 중…")
             try:
                 status = await self._fetch_token_status(refresh=True)
-                text = format_toss_token_detail(self.app, status)
-                await query.edit_message_text(
-                    text,
-                    reply_markup=token_keyboard(from_settings=True),
-                    parse_mode="HTML",
-                )
+                await self._show_token_detail(query, status, from_settings=True)
             except Exception as e:
                 logger.exception("token refresh failed")
                 await query.edit_message_text(f"🚨 토큰 갱신 실패: {e}")

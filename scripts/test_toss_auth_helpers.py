@@ -53,12 +53,30 @@ def test_sync_credentials() -> None:
         assert auth.client_secret == "sec"
 
 
+def test_force_refresh_keeps_cache_on_failure() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        cache = Path(tmp) / "token_cache.json"
+        auth = TossAuth("id", "secret", cache, RateLimiter())
+        exp = _expires_at_from_ttl(7200)
+        auth._apply_token("keep-me", exp)
+
+        def _boom():
+            raise ValueError("network down")
+
+        auth._request_token = _boom  # type: ignore[method-assign]
+        result = auth.force_refresh()
+        assert result["reason"] == "refresh_failed"
+        assert result.get("remaining_seconds", 0) > 0
+        assert auth.get_token() == "keep-me"
+
+
 def main() -> int:
     test_parse_iso_z_suffix()
     test_expires_at_minimum_one_second()
     test_expires_at_respects_early_refresh()
     test_cache_roundtrip()
     test_sync_credentials()
+    test_force_refresh_keeps_cache_on_failure()
     print("test_toss_auth_helpers: OK")
     return 0
 

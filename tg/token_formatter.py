@@ -70,12 +70,16 @@ def format_toss_token_detail(app: App, status: dict | None = None) -> str:
         avail = "🔴 API 키 없음 · .env TOSS_CLIENT_ID/SECRET"
     elif reason == "refresh_failed":
         err = html.escape(str(status.get("error", "재발급 실패"))[:120])
-        if "허용 IP" in err:
-            avail = f"🔴 IP 미등록 · {err}"
-        elif "401" in err or "client" in err.lower():
-            avail = f"🔴 API 키 오류 · {err}"
+        if remaining > 0:
+            prefix = "⚠️ 갱신 실패(기존 토큰 유지)"
         else:
-            avail = f"🔴 갱신 실패 · {err}"
+            prefix = "🔴 갱신 실패"
+        if "허용 IP" in err:
+            avail = f"{prefix} · IP 미등록 · {err}"
+        elif "401" in err or "client" in err.lower():
+            avail = f"{prefix} · API 키 오류 · {err}"
+        else:
+            avail = f"{prefix} · {err}"
     else:
         avail = "🔴 사용 불가"
 

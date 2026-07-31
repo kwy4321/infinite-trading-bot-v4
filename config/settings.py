@@ -191,69 +191,79 @@ def _scan_raw_env_for_api_key() -> tuple[str, str]:
     return "", ""
 
 
-def _read_gemini_key_file() -> tuple[str, str]:
-    """data/gemini_api_key.txt — .env 파싱 실패 시 최후 fallback."""
+def _read_llm_key_raw_from_env() -> tuple[str, str]:
+    """형식 검증 없이 .env / gemini.txt 에서 LLM 키 후보 추출."""
+    env_path = ROOT / ".env"
+    if env_path.is_file():
+        try:
+            text = _read_text_multi_encoding(env_path)
+        except OSError:
+            text = ""
+        if text:
+            for name in _SUMMARIZER_KEY_NAMES:
+                pat = rf"(?m)^[ \t]*{re.escape(name)}[ \t]*=[ \t]*([^\s#]+)"
+                m = re.search(pat, text, re.IGNORECASE)
+                if m:
+                    val = _clean_env(m.group(1))
+                    if val:
+                        return val, f"file:{name}"
+            for key, val in _parse_inline_env_pairs(text.replace("\n", " ")):
+                if key in _SUMMARIZER_KEY_NAMES or key == "GOOGLE_API_KEY":
+                    return val, f"inline:{key}"
     path = ROOT / "data" / "gemini_api_key.txt"
-    if not path.is_file():
-        return "", ""
-    try:
-        val = _clean_env(_read_text_multi_encoding(path))
-        if val:
-            return val, "data/gemini_api_key.txt"
-    except OSError:
-        pass
-    return "", ""
-
-
-def _scan_environ_for_llm_key() -> tuple[str, str]:
-    """systemd·수동 export — 값이 AIza/sk- 로 시작하는 환경변수."""
-    for k, v in os.environ.items():
-        cleaned = _clean_env(str(v))
-        if not cleaned or len(cleaned) < 20:
-            continue
-        if cleaned.startswith("AIza") and len(cleaned) >= 30:
-            return cleaned, f"env:{k}"
-        if cleaned.startswith("sk-") and len(cleaned) >= 20:
-            return cleaned, f"env:{k}"
+    if path.is_file():
+        try:
+            val = _clean_env(_read_text_multi_encoding(path))
+            if val:
+                return val, "data/gemini_api_key.txt"
+        except OSError:
+            pass
     return "", ""
 
 
 def _read_llm_key_direct_from_env() -> tuple[str, str]:
-    """systemd/os.environ 우회 — .env 파일에서 LLM 키 직접 추출."""
-    val, src = _read_gemini_key_file()
-    if val:
+    """유효한 Gemini/OpenAI 키만 반환."""
+    val, src = _read_llm_key_raw_from_env()
+    if val and _accept_llm_key(val, "gemini"):
         return val, src
-    env_path = ROOT / ".env"
-    if not env_path.is_file():
-        return "", ""
-    try:
-        text = _read_text_multi_encoding(env_path)
-    except OSError:
-        return "", ""
-    for name in _SUMMARIZER_KEY_NAMES:
-        pat = rf"(?m)^[ \t]*{re.escape(name)}[ \t]*=[ \t]*([^\s#]+)"
-        m = re.search(pat, text, re.IGNORECASE)
-        if m:
-            val = _clean_env(m.group(1))
-            if val:
-                return val, f"file:{name}"
-    for key, val in _parse_inline_env_pairs(text.replace("\n", " ")):
-        if key in _SUMMARIZER_KEY_NAMES or key == "GOOGLE_API_KEY":
-            return val, f"inline:{key}"
-    return _scan_raw_env_for_api_key()
+    val2, src2 = _scan_raw_env_for_api_key()
+    if val2:
+        return val2, src2
+    if val and _accept_llm_key(val, "openai"):
+        return val, src
+    return "", ""
+
+
+def _scan_environ_for_llm_key() -> tuple[str, str]:
+    """systemd·os.environ — AIza/sk- 형식만."""
+    for k, v in os.environ.items():
+        cleaned = _clean_env(str(v))
+        if _accept_llm_key(cleaned, "gemini"):
+            return cleaned, f"env:{k}"
+        if _accept_llm_key(cleaned, "openai"):
+            return cleaned, f"env:{k}"
+    return "", ""
 
 
 def probe_llm_key_in_env_file() -> dict:
     """진단 — 파일에 키 줄/AIza 패턴 있는지 (값 노출 없음)."""
     env_path = ROOT / ".env"
     txt_path = ROOT / "data" / "gemini_api_key.txt"
+    raw, raw_src = _read_llm_key_raw_from_env()
+    valid, valid_src = resolve_summarizer_api_key("gemini")
     out = {
         "env_path": str(env_path),
         "exists": env_path.is_file(),
         "line_found": False,
         "aiza_in_file": False,
         "gemini_txt": txt_path.is_file(),
-        "gemini_txt_ok": bool(_read_gemini_key_file()[0]),
+        "gemini_txt_ok": False,
+        "raw_set": bool(raw),
+        "raw_src": raw_src,
+        "key_format": _key_format_hint(raw),
+        "wrong_format": bool(raw) and not _accept_llm_key(raw, "gemini"),
+        "valid_set": bool(valid),
+        "valid_src": valid_src,
     }
     if not env_path.is_file():
         return out
@@ -266,16 +276,16 @@ def probe_llm_key_in_env_file() -> dict:
         if re.search(rf"(?m)^[ \t]*{re.escape(name)}[ \t]*=", text, re.IGNORECASE):
             out["line_found"] = True
             out["line_name"] = name
-            val, _ = _read_llm_key_direct_from_env()
-            out["parsed_ok"] = bool(val)
-            out["parsed_len"] = len(val) if val else 0
+            out["parsed_ok"] = bool(raw)
+            out["parsed_len"] = len(raw) if raw else 0
+            out["gemini_txt_ok"] = bool(valid)
             return out
     if out["aiza_in_file"]:
         out["line_found"] = True
         out["line_name"] = "regex:AIza"
-        val, _ = _read_llm_key_direct_from_env()
-        out["parsed_ok"] = bool(val)
-        out["parsed_len"] = len(val) if val else 0
+        out["parsed_ok"] = bool(raw)
+        out["parsed_len"] = len(raw) if raw else 0
+    out["gemini_txt_ok"] = bool(valid)
     return out
 
 
@@ -321,17 +331,17 @@ def resolve_summarizer_api_key(provider: str = "gemini") -> tuple[str, str]:
     if prov == "openai":
         for name in _OPENAI_KEY_NAMES:
             val = _env_lookup_ci(name)
-            if val:
+            if val and _accept_llm_key(val, "openai"):
                 return val, name
     for name in _SUMMARIZER_KEY_NAMES:
         val = _env_lookup_ci(name)
-        if val:
+        if val and _accept_llm_key(val, prov):
             return val, name
         from_file = _read_key_file(name)
-        if from_file:
+        if from_file and _accept_llm_key(from_file, prov):
             return from_file, f"{name}_FILE"
     val, src = _scan_fuzzy_llm_key()
-    if val:
+    if val and _accept_llm_key(val, prov):
         return val, src
     val, src = _scan_environ_for_llm_key()
     if val:

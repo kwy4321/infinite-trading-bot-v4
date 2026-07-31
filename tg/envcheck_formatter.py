@@ -38,7 +38,7 @@ def format_env_check() -> str:
             row("🤖", "API 키", _mark(bool(summ_key), summ_src)),
             row("📄", ".env AI줄", _mark(probe.get("line_found", False), probe.get("line_name", ""))),
             row("📁", "gemini.txt", _mark(probe.get("gemini_txt_ok", False))),
-            row("🔤", "AIza 패턴", _mark(probe.get("aiza_in_file", False))),
+            row("🔤", "키 형식", code(_format_mark(probe))),
             row("⏰", "BRIEFING", code("on" if diag["briefing_enabled"] else "off")),
         ),
         "",
@@ -61,7 +61,13 @@ def format_env_check() -> str:
     if not summ_key:
         lines.append("")
         lines.append(section("AI 키 해결", "🛠"))
-        if probe.get("gemini_txt_ok"):
+        if probe.get("wrong_format"):
+            lines.append(quote(
+                "· 지금 키는 Gemini API 키가 아닙니다 (AQ.Ab… = OAuth/토큰)",
+                "· https://aistudio.google.com/app/apikey 에서 AIza… 키 발급",
+                "· Cloud Shell: bash scripts/set_vm_api_key.sh",
+            ))
+        elif probe.get("gemini_txt_ok"):
             lines.append(quote("· gemini.txt 있음 — restart 후에도 ❌면 빌드 e728275+ 확인"))
         elif not probe.get("line_found") and not probe.get("aiza_in_file"):
             lines.append(quote(
@@ -100,3 +106,15 @@ def _mark(ok: bool, detail: str = "") -> str:
     if detail:
         return code(f"{badge} {detail}")
     return code(badge)
+
+
+def _format_mark(probe: dict) -> str:
+    if probe.get("valid_set"):
+        return "✅ AIza…"
+    if probe.get("wrong_format"):
+        return f"❌ {probe.get('key_format', '형식 오류')}"
+    if probe.get("raw_set"):
+        return f"❌ {probe.get('key_format', '형식 오류')}"
+    if probe.get("aiza_in_file"):
+        return "⚠️ AIza 있으나 파싱 실패"
+    return "❌ AIza… 없음"

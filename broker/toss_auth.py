@@ -376,6 +376,8 @@ class TossAuth:
     def get_token(self) -> str:
         self._drop_expired_memory()
         with self._lock:
+            if not self._valid_cached():
+                self._load_cache()
             if self._valid_cached():
                 return self._token  # type: ignore[return-value]
 
@@ -384,9 +386,11 @@ class TossAuth:
         return token
 
     def invalidate(self) -> None:
+        """메모리·파일 캐시 삭제 — 401·다른 곳 재발급 후 stale 토큰 방지."""
         with self._lock:
             self._token = None
             self._expires_at = None
+        self._delete_cache_file()
 
     def force_refresh(self) -> dict:
         """새 토큰 발급 — 이미 유효하면 재발급 생략."""

@@ -189,9 +189,8 @@ class TelegramHandler:
         return await asyncio.to_thread(auth.ensure_token_status)
 
     async def _resolve_token_line(self) -> str:
-        dry = is_dry(self.app)
         token_line = format_toss_token_brief(self.app)
-        if not dry and self.app.settings.has_toss:
+        if self.app.settings.has_toss:
             try:
                 status = await self._fetch_token_status()
                 token_line = format_toss_token_brief(self.app, status)

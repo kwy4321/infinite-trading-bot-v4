@@ -25,6 +25,7 @@ def format_env_check(settings: Settings) -> str:
         "",
         section("거래·알림", "💹"),
         quote(
+            row("🌐", "서버 IP", code(diag.get("public_ip") or "—")),
             row("🔑", "Toss ID", _toss_mark(diag)),
             row("🔑", "Toss SECRET", _toss_secret_mark(diag)),
             row("💹", "LIVE 가능", _mark(diag["has_toss"])),

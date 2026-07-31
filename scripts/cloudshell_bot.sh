@@ -224,6 +224,10 @@ _run_remote
 
 if [[ "$ACTION" == "start" || "$ACTION" == "restart" ]]; then
   echo ""
+  echo "=== VM Toss probe ==="
+  ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "${SSH_USER}@${IP}" \
+    "cd '$INSTALL_DIR' && (test -x .venv/bin/python && .venv/bin/python || python3) scripts/probe_toss_token.py" || true
+  echo ""
   echo "완료 — Cloud Shell을 꺼도 VM에서 봇이 계속 실행됩니다."
   echo "상태 확인: bash scripts/cloudshell_bot.sh status"
   echo "무반응: bash scripts/cloudshell_bot.sh doctor"

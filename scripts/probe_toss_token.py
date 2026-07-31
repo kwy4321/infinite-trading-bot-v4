@@ -18,19 +18,13 @@ sys.path.insert(0, str(ROOT))
 from account.account import AccountPaths
 from broker.rate_limiter import RateLimiter
 from broker.toss_auth import BASE_URL, TossAuth
+from config.network import fetch_public_ip
 from config.settings import reload_settings
 from config.toss_credentials import diagnose_toss_credentials
 
 
 def _public_ip() -> str:
-    for url in ("https://api.ipify.org", "https://ifconfig.me/ip"):
-        try:
-            res = requests.get(url, timeout=5)
-            if res.ok:
-                return res.text.strip()
-        except requests.RequestException:
-            continue
-    return "(확인 실패)"
+    return fetch_public_ip() or "(확인 실패)"
 
 
 def _raw_token_request(client_id: str, client_secret: str) -> dict:

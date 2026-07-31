@@ -41,14 +41,19 @@ class App:
         runtime = RuntimeSettings()
         if settings.has_toss and not settings.dry_run:
             runtime.set_force_live(True)
-        dry = is_dry_mode(settings, force_live=runtime.force_live())
         auth = TossAuth(
             settings.toss_client_id,
             settings.toss_client_secret,
             paths.token_cache,
             limiter,
         )
-        if settings.has_toss and not dry:
+        auth.sync_credentials(settings.toss_client_id, settings.toss_client_secret)
+        if settings.has_toss:
+            from config.network import fetch_public_ip
+
+            pub_ip = fetch_public_ip()
+            if pub_ip:
+                logger.info("Server public IP: %s (WTS 허용 IP 등록 확인)", pub_ip)
             try:
                 status = auth.ensure_token_status()
                 if status.get("ok"):
@@ -60,6 +65,7 @@ class App:
                     logger.warning("Toss token not ready: %s", status.get("error"))
             except Exception:
                 logger.exception("startup token warm failed")
+        dry = is_dry_mode(settings, force_live=runtime.force_live())
         broker = TossClient(auth, settings.toss_account_seq, limiter, dry_run=dry)
         app = cls(
             settings=settings,

@@ -102,8 +102,13 @@ class TossClient:
         headers.update(kwargs.pop("headers", {}))
         res = requests.request(method, url, headers=headers, timeout=20, **kwargs)
         if res.status_code == 401:
+            logger.warning("Toss API 401 on %s — token re-issue", path)
             self.auth.invalidate()
-            headers = self._headers(with_account=account)
+            try:
+                headers = self._headers(with_account=account)
+            except Exception:
+                logger.exception("Toss token re-issue failed after 401")
+                raise
             res = requests.request(method, url, headers=headers, timeout=20, **kwargs)
         if res.status_code == 429:
             retry = int(res.headers.get("Retry-After", "2"))

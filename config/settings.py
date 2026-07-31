@@ -683,6 +683,8 @@ def env_diagnostics(settings: "Settings | None" = None) -> dict:
     """봇이 실제로 읽은 설정 (값 노출 없음)."""
     from config.toss_credentials import diagnose_toss_credentials, toss_env_alias_conflicts
 
+    from config.network import fetch_public_ip
+
     if settings is None:
         settings = reload_settings()
     env_path = str(ROOT / ".env")
@@ -719,10 +721,14 @@ def env_diagnostics(settings: "Settings | None" = None) -> dict:
         pass
     elif settings.has_toss:
         notes.append("Toss 키 형식 이상 — WTS Open API에서 Client ID·Secret(tsck_live_…) 재복사")
+    pub_ip = fetch_public_ip()
+    if pub_ip:
+        notes.append(f"서버 공인 IP: {pub_ip} — WTS 허용 IP와 일치해야 Toss API 동작")
     return {
         "env_path": env_path,
         "env_exists": (ROOT / ".env").is_file(),
         "env_files_found": env_files,
+        "public_ip": pub_ip or "",
         "toss_client_id_set": bool(settings.toss_client_id),
         "toss_client_secret_set": bool(settings.toss_client_secret),
         "toss_id_format_ok": toss_diag["id_format_ok"],

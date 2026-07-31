@@ -7,6 +7,7 @@ import datetime
 from zoneinfo import ZoneInfo
 
 from config.toss_credentials import format_toss_credential_help, mask_credential
+from config.network import fetch_public_ip
 from tg.format_helpers import dry_mode_reason, is_dry
 from tg.ui import dim, quote, section
 
@@ -39,13 +40,20 @@ def format_toss_token_brief(app: App, status: dict | None = None) -> str:
     settings = app.settings
     if not settings.has_toss:
         return "🔑 토스 토큰  🔴 키 없음"
-    if is_dry(app):
-        return "🔑 토스 토큰  🧪 DRY_RUN"
 
     status = status or {}
     if _is_usable(status):
-        return "🔑 토스 토큰  🟢 사용 가능"
-    return "🔑 토스 토큰  🔴 사용 불가"
+        tag = "🟢 사용 가능"
+    elif status.get("reason") == "refresh_failed":
+        tag = "🔴 발급 실패"
+    elif is_dry(app):
+        return "🔑 토스 토큰  🧪 DRY (토큰 미확인)"
+    else:
+        tag = "🔴 사용 불가"
+
+    if is_dry(app):
+        return f"🔑 토스 토큰  {tag} · DRY"
+    return f"🔑 토스 토큰  {tag}"
 
 
 def format_toss_token_detail(app: App, status: dict | None = None) -> str:
@@ -89,9 +97,13 @@ def format_toss_token_detail(app: App, status: dict | None = None) -> str:
         dry_note = f"\n{dim(f'🧪 {hint} — 토큰 갱신·검증은 가능, 주문은 시뮬')}"
 
     cred_hint = ""
+    if settings.has_toss:
+        pub_ip = fetch_public_ip()
+        if pub_ip:
+            cred_hint = f"\n{dim(f'서버 IP: {pub_ip} — WTS 허용 IP와 일치해야 함')}"
     if reason == "refresh_failed" and settings.has_toss:
         cid = mask_credential(settings.toss_client_id)
-        cred_hint = f"\n{dim(f'로드된 ID: {cid} — WTS 재발급 키와 앞 4자·길이 비교')}"
+        cred_hint += f"\n{dim(f'로드된 ID: {cid}')}"
 
     return (
         f"{section('토스 API 토큰', '🔑')}\n"

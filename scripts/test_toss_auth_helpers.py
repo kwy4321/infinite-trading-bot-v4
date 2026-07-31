@@ -106,6 +106,17 @@ def test_force_refresh_skips_valid_cache() -> None:
         assert result["reason"] == "valid"
 
 
+def test_invalidate_deletes_cache_file() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        cache = Path(tmp) / "token_cache.json"
+        auth = TossAuth("id", "secret", cache, RateLimiter())
+        exp = _expires_at_from_ttl(7200)
+        auth._apply_token("tok", exp)
+        assert cache.is_file()
+        auth.invalidate()
+        assert not cache.exists()
+
+
 def main() -> int:
     test_parse_iso_z_suffix()
     test_expires_at_minimum_one_second()
@@ -115,6 +126,7 @@ def main() -> int:
     test_sync_credentials_clears_cache_on_change()
     test_force_refresh_keeps_cache_on_failure()
     test_force_refresh_skips_valid_cache()
+    test_invalidate_deletes_cache_file()
     print("test_toss_auth_helpers: OK")
     return 0
 

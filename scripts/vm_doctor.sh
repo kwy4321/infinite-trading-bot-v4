@@ -32,6 +32,14 @@ echo ""
 echo "=== [4] 최근 로그 ==="
 bash scripts/bot.sh logs 2>/dev/null | tail -n 40 || true
 
+echo ""
+echo "=== [5] Toss token probe ==="
+if [[ -f .env ]] && grep -qE '^TOSS_CLIENT_ID=' .env 2>/dev/null; then
+  python scripts/probe_toss_token.py || true
+else
+  echo "⚠️ TOSS_CLIENT_ID 없음 — probe 생략"
+fi
+
 if [[ "$DO_RESTART" == "restart" ]]; then
   echo ""
   echo "=== restart ==="

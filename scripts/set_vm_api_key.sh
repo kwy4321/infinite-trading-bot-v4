@@ -35,7 +35,10 @@ grep -vE '^(SUMMARIZER_API_KEY|GOOGLE_API_KEY)=' "$ROOT/.env" > "$TMP" || true
 printf '\nSUMMARIZER_API_KEY=%s\n' "$KEY" >> "$TMP"
 mv "$TMP" "$ROOT/.env"
 chmod 600 "$ROOT/.env"
-echo "✅ Cloud Shell .env 에 SUMMARIZER_API_KEY 저장됨"
+mkdir -p "$ROOT/data"
+printf '%s\n' "$KEY" > "$ROOT/data/gemini_api_key.txt"
+chmod 600 "$ROOT/data/gemini_api_key.txt"
+echo "✅ Cloud Shell .env + data/gemini_api_key.txt 저장됨"
 
 echo "=== VM 반영 (restart) ==="
 exec bash "$ROOT/scripts/cloudshell_bot.sh" restart

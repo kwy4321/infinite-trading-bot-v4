@@ -37,6 +37,7 @@ def format_env_check() -> str:
         quote(
             row("🤖", "API 키", _mark(bool(summ_key), summ_src)),
             row("📄", ".env AI줄", _mark(probe.get("line_found", False), probe.get("line_name", ""))),
+            row("📁", "gemini.txt", _mark(probe.get("gemini_txt_ok", False))),
             row("🔤", "AIza 패턴", _mark(probe.get("aiza_in_file", False))),
             row("⏰", "BRIEFING", code("on" if diag["briefing_enabled"] else "off")),
         ),
@@ -57,6 +58,25 @@ def format_env_check() -> str:
             3,
             quote(row("📂", "env 파일", code(found))),
         )
+    if not summ_key:
+        lines.append("")
+        lines.append(section("AI 키 해결", "🛠"))
+        if probe.get("gemini_txt_ok"):
+            lines.append(quote("· gemini.txt 있음 — restart 후에도 ❌면 빌드 e728275+ 확인"))
+        elif not probe.get("line_found") and not probe.get("aiza_in_file"):
+            lines.append(quote(
+                "· VM .env에 SUMMARIZER_API_KEY 없음",
+                "· Cloud Shell: bash scripts/set_vm_api_key.sh",
+            ))
+        elif probe.get("line_found") and not probe.get("parsed_ok"):
+            lines.append(quote(
+                "· 줄은 있으나 값 비어있음 — set_vm_api_key.sh 로 다시 입력",
+            ))
+        else:
+            lines.append(quote(
+                "· bash scripts/cloudshell_bot.sh restart",
+                "· 또는 data/gemini_api_key.txt 에 AIza키 한 줄",
+            ))
     if diag.get("env_key_names"):
         names = ", ".join(html.escape(k) for k in diag["env_key_names"][:12])
         extra = len(diag["env_key_names"]) - 12

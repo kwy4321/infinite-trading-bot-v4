@@ -44,4 +44,8 @@ fi
 echo "=== restart bot ==="
 bash scripts/bot.sh restart
 
+echo "=== restart streamlit ==="
+sudo systemctl stop infinite-trading-dashboard 2>/dev/null || true
+bash scripts/run_streamlit.sh restart || true
+
 echo "Deploy done: $(git rev-parse --short HEAD)"

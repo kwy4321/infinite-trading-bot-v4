@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import html
 import logging
 from zoneinfo import ZoneInfo
 
@@ -396,11 +397,27 @@ class TelegramHandler:
     async def cmd_setting(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
             return await self._deny(update)
-        symbol = self._symbol(context)
+        context.user_data.pop("awaiting", None)
+        context.user_data.pop("awaiting_symbol", None)
+        try:
+            symbol = self._symbol(context)
+            await update.message.reply_text(
+                self._setting_text(symbol),
+                reply_markup=self._setting_keyboard(symbol),
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.exception("cmd_setting failed")
+            await update.message.reply_text(f"🚨 설정 화면 실패: {e}")
+
+    async def cmd_cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self._allowed(update):
+            return await self._deny(update)
+        context.user_data.pop("awaiting", None)
+        context.user_data.pop("awaiting_symbol", None)
         await update.message.reply_text(
-            self._setting_text(symbol),
-            reply_markup=self._setting_keyboard(symbol),
-            parse_mode="HTML",
+            "✅ 입력 취소됨 — ⚙️ 설정 또는 /setting",
+            reply_markup=self._main_menu_markup(),
         )
 
     async def cmd_split(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -598,12 +615,20 @@ class TelegramHandler:
                 text = format_env_check()
             except Exception as e:
                 logger.exception("envcheck callback failed")
-                text = f"🚨 환경 확인 실패: {e}"
-            await query.edit_message_text(
-                text,
-                reply_markup=self._setting_keyboard(sym),
-                parse_mode="HTML",
-            )
+                text = f"🚨 환경 확인 실패: {html.escape(str(e))}"
+            try:
+                await query.edit_message_text(
+                    text,
+                    reply_markup=self._setting_keyboard(sym),
+                    parse_mode="HTML",
+                )
+            except Exception:
+                logger.exception("envcheck edit failed — send new message")
+                await query.message.reply_text(
+                    text,
+                    reply_markup=self._setting_keyboard(sym),
+                    parse_mode="HTML",
+                )
             return
 
         if data == "toggle_force_live":
@@ -842,6 +867,7 @@ class TelegramHandler:
             MAIN_PLAN: self.cmd_plan,
             "📋 주문 계획": self.cmd_plan,
             MAIN_SETTING: self.cmd_setting,
+            "설정": self.cmd_setting,
             MAIN_STATUS: self.cmd_home,
             "📈 현황": self.cmd_home,
             MAIN_BALANCE: self.cmd_balance,
@@ -849,17 +875,23 @@ class TelegramHandler:
             MAIN_CYCLES: self.cmd_ledger,
             "📒 회차내역": self.cmd_ledger,
         }
-        if text in menu_routes:
+        low = text.lower()
+        if text in menu_routes or low in ("setting", "settings"):
             context.user_data.pop("awaiting", None)
             context.user_data.pop("awaiting_symbol", None)
             await self._refresh_main_menu(update)
+            if low in ("setting", "settings"):
+                return await self.cmd_setting(update, context)
             return await menu_routes[text](update, context)
 
-        if text.lower() in (
+        if low in (
             "/envcheck", "envcheck", "/check_env", "check_env",
-            "/env", "환경확인", "환경체크",
+            "/env", "환경확인", "환경체크", "/환경확인", "/환경체크",
         ):
             return await self.cmd_envcheck(update, context)
+
+        if low in ("/setting", "/settings", "/설정") or text == "설정":
+            return await self.cmd_setting(update, context)
 
         if text in ("/version", "버전"):
             return await self.cmd_version(update, context)
@@ -869,6 +901,13 @@ class TelegramHandler:
 
         awaiting = context.user_data.get("awaiting")
         if not awaiting:
+            if text.startswith("/"):
+                await update.message.reply_text(
+                    "알 수 없는 명령입니다.\n"
+                    "· /start — 메인\n"
+                    "· /setting 또는 ⚙️ 설정\n"
+                    "· /envcheck — 환경 확인"
+                )
             return
 
         symbol = context.user_data.get("awaiting_symbol", self._symbol(context))

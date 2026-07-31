@@ -105,11 +105,13 @@ def main():
         try:
             await app.bot.set_my_commands([
                 BotCommand("start", "메인·현황"),
-                BotCommand("envcheck", "환경설정 확인 (.env)"),
+                BotCommand("setting", "설정"),
+                BotCommand("envcheck", "환경설정 확인"),
                 BotCommand("briefing", "아침 브리핑"),
                 BotCommand("plan", "주문계획"),
-                BotCommand("setting", "설정"),
                 BotCommand("version", "빌드 버전"),
+                BotCommand("myid", "내 chat ID"),
+                BotCommand("cancel", "입력 취소"),
             ])
         except Exception as exc:
             logger.warning("set_my_commands failed: %s", exc)
@@ -134,12 +136,13 @@ def main():
     tg.add_handler(CommandHandler("myid", handler.cmd_myid))
     tg.add_handler(CommandHandler("start", handler.cmd_start))
     tg.add_handler(CommandHandler("help", handler.cmd_start))
+    tg.add_handler(CommandHandler("cancel", handler.cmd_cancel))
     tg.add_handler(CommandHandler("version", handler.cmd_version))
     tg.add_handler(CommandHandler("dashboard", handler.cmd_dashboard))
     tg.add_handler(CommandHandler("status", handler.cmd_status))
     tg.add_handler(CommandHandler("balance", handler.cmd_balance))
     tg.add_handler(CommandHandler("plan", handler.cmd_plan))
-    tg.add_handler(CommandHandler("setting", handler.cmd_setting))
+    tg.add_handler(CommandHandler(["setting", "settings", "설정"], handler.cmd_setting))
     tg.add_handler(CommandHandler("set_t", handler.cmd_set_t))
     tg.add_handler(CommandHandler("history", handler.cmd_history))
     tg.add_handler(CommandHandler("split", handler.cmd_split))
@@ -152,9 +155,10 @@ def main():
     tg.add_handler(CommandHandler("resume", handler.cmd_resume))
     tg.add_handler(CommandHandler("run", handler.cmd_run))
     tg.add_handler(CommandHandler("briefing", handler.cmd_briefing))
-    tg.add_handler(CommandHandler("envcheck", handler.cmd_envcheck))
-    tg.add_handler(CommandHandler("check_env", handler.cmd_envcheck))
-    tg.add_handler(CommandHandler("env", handler.cmd_envcheck))
+    tg.add_handler(CommandHandler(
+        ["envcheck", "check_env", "env", "환경확인", "환경체크"],
+        handler.cmd_envcheck,
+    ))
     tg.add_handler(CommandHandler("token", handler.cmd_token))
     tg.add_handler(CallbackQueryHandler(handler.handle_callback))
     tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handler.handle_message))

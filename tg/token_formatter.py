@@ -69,8 +69,13 @@ def format_toss_token_detail(app: App, status: dict | None = None) -> str:
     elif reason == "missing":
         avail = "⚪ 토큰 없음"
     elif reason == "refresh_failed":
-        err = html.escape(str(status.get("error", "재발급 실패"))[:80])
-        avail = f"🔴 사용 불가 · {err}"
+        err = html.escape(str(status.get("error", "재발급 실패"))[:120])
+        if "허용 IP" in err:
+            avail = f"🔴 IP 미등록 · {err}"
+        elif "401" in err or "client" in err.lower():
+            avail = f"🔴 API 키 오류 · {err}"
+        else:
+            avail = f"🔴 갱신 실패 · {err}"
     else:
         avail = "🔴 사용 불가"
 

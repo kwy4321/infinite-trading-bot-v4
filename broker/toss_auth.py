@@ -2,23 +2,70 @@
 
 from __future__ import annotations
 
-import json
-import threading
 import datetime
+import json
+import logging
+import threading
+import time
 from pathlib import Path
 
 import requests
 
 from broker.rate_limiter import RateLimiter
+from config.json_io import load_json, save_json
+
+logger = logging.getLogger(__name__)
 
 BASE_URL = "https://openapi.tossinvest.com"
 REFRESH_BUFFER = datetime.timedelta(minutes=5)
+EARLY_REFRESH_SECS = 60
+
+
+def _parse_iso_datetime(raw: str) -> datetime.datetime:
+    """Parse cache expires_at — Py3.10 Z suffix and naive values included."""
+    text = str(raw).strip()
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    dt = datetime.datetime.fromisoformat(text)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    return dt.astimezone()
+
+
+def _expires_at_from_ttl(expires_in: int) -> datetime.datetime:
+    """Map OAuth expires_in to local cache expiry (early refresh margin, min 1s)."""
+    ttl = max(int(expires_in), 0)
+    cache_secs = max(ttl - EARLY_REFRESH_SECS, 1)
+    return datetime.datetime.now().astimezone() + datetime.timedelta(seconds=cache_secs)
+
+
+def _format_token_error(res: requests.Response) -> str:
+    status = res.status_code
+    try:
+        body = res.json()
+    except ValueError:
+        body = None
+
+    if isinstance(body, dict):
+        err = str(body.get("error") or "")
+        desc = str(body.get("error_description") or body.get("message") or "")
+        if status == 403 or err == "access_denied":
+            if "ip" in desc.lower():
+                return "403 허용 IP 아님 — WTS Open API > 허용 IP 관리 확인"
+            return f"403 접근 거부{': ' + desc if desc else ''}"
+        if status == 401 or err == "invalid_client":
+            return "401 client_id/secret 오류 — WTS Open API 키 재확인"
+        if err or desc:
+            return f"{status} {err or 'error'}{': ' + desc if desc else ''}"
+
+    snippet = (res.text or "").strip().replace("\n", " ")[:160]
+    return f"Toss token failed ({status}){': ' + snippet if snippet else ''}"
 
 
 class TossAuth:
     def __init__(self, client_id: str, client_secret: str, cache_path: Path, limiter: RateLimiter):
-        self.client_id = client_id
-        self.client_secret = client_secret
+        self.client_id = (client_id or "").strip()
+        self.client_secret = (client_secret or "").strip()
         self.cache_path = cache_path
         self.limiter = limiter
         self._lock = threading.Lock()
@@ -27,26 +74,36 @@ class TossAuth:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         self._load_cache()
 
+    def _now(self) -> datetime.datetime:
+        return datetime.datetime.now().astimezone()
+
+    def _valid_cached(self) -> bool:
+        return bool(
+            self._token
+            and self._expires_at
+            and self._expires_at > self._now() + REFRESH_BUFFER
+        )
+
     def _load_cache(self) -> None:
         token, exp = self._read_cache_file()
-        if token and exp and exp > datetime.datetime.now().astimezone() + REFRESH_BUFFER:
+        if token and exp and exp > self._now() + REFRESH_BUFFER:
             self._token = token
             self._expires_at = exp
 
     def _read_cache_file(self) -> tuple[str | None, datetime.datetime | None]:
         if not self.cache_path.exists():
             return None, None
+        data = load_json(self.cache_path, None)
+        if not isinstance(data, dict):
+            return None, None
         try:
-            with open(self.cache_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            exp = datetime.datetime.fromisoformat(data["expires_at"])
             token = data.get("access_token")
-            if not token:
+            exp_raw = data.get("expires_at")
+            if not token or not exp_raw:
                 return None, None
-            if exp.tzinfo is None:
-                exp = exp.astimezone()
-            return token, exp
-        except (json.JSONDecodeError, OSError, KeyError, ValueError):
+            exp = _parse_iso_datetime(exp_raw)
+            return str(token), exp
+        except (TypeError, ValueError):
             return None, None
 
     def _cached_token(self) -> tuple[str | None, datetime.datetime | None]:
@@ -67,7 +124,7 @@ class TossAuth:
                 }
 
             token, expires_at = self._cached_token()
-            now = datetime.datetime.now().astimezone()
+            now = self._now()
             if not token or not expires_at:
                 return {
                     "ok": False,
@@ -103,6 +160,7 @@ class TossAuth:
             try:
                 self.get_token()
             except Exception as exc:
+                logger.warning("Toss token refresh failed: %s", exc)
                 return {
                     "ok": False,
                     "reason": "refresh_failed",
@@ -114,44 +172,82 @@ class TossAuth:
         return status
 
     def _save_cache(self, token: str, expires_at: datetime.datetime) -> None:
-        with open(self.cache_path, "w", encoding="utf-8") as f:
-            json.dump({
+        save_json(
+            self.cache_path,
+            {
                 "access_token": token,
                 "expires_at": expires_at.isoformat(),
-            }, f, indent=2)
+            },
+            compact=False,
+        )
+
+    def _delete_cache_file(self) -> None:
+        try:
+            self.cache_path.unlink(missing_ok=True)
+        except OSError:
+            logger.exception("failed to delete token cache %s", self.cache_path)
+
+    def _request_token(self) -> tuple[str, datetime.datetime]:
+        last_err: Exception | None = None
+        for attempt in range(3):
+            self.limiter.acquire("AUTH")
+            try:
+                res = requests.post(
+                    f"{BASE_URL}/oauth2/token",
+                    data={
+                        "grant_type": "client_credentials",
+                        "client_id": self.client_id,
+                        "client_secret": self.client_secret,
+                    },
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    timeout=15,
+                )
+            except requests.RequestException as exc:
+                last_err = exc
+                if attempt >= 2:
+                    raise
+                time.sleep(1 + attempt)
+                continue
+
+            if res.status_code == 429:
+                retry = max(int(res.headers.get("Retry-After", "2") or 2), 1)
+                logger.warning("Toss AUTH rate limited — retry in %ss", retry)
+                if attempt >= 2:
+                    raise requests.HTTPError(_format_token_error(res), response=res)
+                time.sleep(retry)
+                continue
+
+            if not res.ok:
+                raise requests.HTTPError(_format_token_error(res), response=res)
+
+            body = res.json()
+            token = body.get("access_token")
+            if not token:
+                raise requests.HTTPError(
+                    f"Toss token response missing access_token: {json.dumps(body)[:200]}",
+                )
+            expires_at = _expires_at_from_ttl(int(body.get("expires_in", 3600)))
+            return str(token), expires_at
+
+        if last_err:
+            raise last_err
+        raise RuntimeError("Toss token request failed")
 
     def get_token(self) -> str:
         with self._lock:
-            now = datetime.datetime.now().astimezone()
-            if self._token and self._expires_at and self._expires_at > now + REFRESH_BUFFER:
-                return self._token
-            return self._refresh()
+            if self._valid_cached():
+                return self._token  # type: ignore[return-value]
 
-    def _refresh(self) -> str:
-        self.limiter.acquire("AUTH")
-        res = requests.post(
-            f"{BASE_URL}/oauth2/token",
-            data={
-                "grant_type": "client_credentials",
-                "client_id": self.client_id,
-                "client_secret": self.client_secret,
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            timeout=15,
-        )
-        if not res.ok:
-            raise requests.HTTPError(
-                f"Toss token failed ({res.status_code}): {res.text[:500]}",
-                response=res,
-            )
-        body = res.json()
-        token = body["access_token"]
-        expires_in = int(body.get("expires_in", 3600))
-        expires_at = datetime.datetime.now().astimezone() + datetime.timedelta(seconds=expires_in - 60)
-        self._token = token
-        self._expires_at = expires_at
-        self._save_cache(token, expires_at)
-        return token
+        token, expires_at = self._request_token()
+
+        with self._lock:
+            if self._valid_cached():
+                return self._token  # type: ignore[return-value]
+            self._token = token
+            self._expires_at = expires_at
+            self._save_cache(token, expires_at)
+            logger.info("Toss access token refreshed (expires %s KST)", expires_at.strftime("%Y-%m-%d %H:%M"))
+            return token
 
     def invalidate(self) -> None:
         with self._lock:
@@ -161,9 +257,11 @@ class TossAuth:
     def force_refresh(self) -> dict:
         """캐시 무효화 후 새 토큰 발급."""
         self.invalidate()
+        self._delete_cache_file()
         try:
             self.get_token()
         except Exception as exc:
+            logger.warning("Toss force_refresh failed: %s", exc)
             return {
                 "ok": False,
                 "reason": "refresh_failed",

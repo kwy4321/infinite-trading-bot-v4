@@ -163,7 +163,7 @@ class TelegramHandler:
         auth = self.app.broker.auth
         if refresh:
             return await asyncio.to_thread(auth.force_refresh)
-        return await asyncio.to_thread(auth.get_status)
+        return await asyncio.to_thread(auth.ensure_token_status)
 
     async def _resolve_token_line(self) -> str:
         dry = is_dry(self.app)

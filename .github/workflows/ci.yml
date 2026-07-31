@@ -45,3 +45,6 @@ jobs:
 
       - name: News summarizer test
         run: python scripts/test_news_summarizer.py
+
+      - name: Toss auth helper test
+        run: python scripts/test_toss_auth_helpers.py

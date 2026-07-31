@@ -40,30 +40,73 @@ def _expires_at_from_ttl(expires_in: int) -> datetime.datetime:
     return datetime.datetime.now().astimezone() + datetime.timedelta(seconds=cache_secs)
 
 
-def _format_token_error(res: requests.Response) -> str:
-    status = res.status_code
+def _extract_token_error(res: requests.Response) -> dict:
+    """토스는 두 가지 오류 형태를 사용한다.
+
+    OAuth2 표준   {"error": "invalid_client", "error_description": "..."}
+    BFF envelope {"error": {"code": "edge-blocked", "message": "...", "requestId": "..."}}
+    """
     try:
         body = res.json()
     except ValueError:
         body = None
 
-    if isinstance(body, dict):
-        err = str(body.get("error") or "")
-        desc = str(body.get("error_description") or body.get("message") or "")
-        if status == 403 or err == "access_denied":
-            if "ip" in desc.lower():
-                return "403 허용 IP 아님 — WTS Open API > 허용 IP 관리 확인"
-            return f"403 접근 거부{': ' + desc if desc else ''}"
-        if status == 401 or err == "invalid_client":
-            return (
-                "401 client_id/secret 오류 — WTS Open API 키 재확인 "
-                "(ID·Secret 모두 tsck_live_… 가능, 값은 서로 달라야 함)"
-            )
-        if err or desc:
-            return f"{status} {err or 'error'}{': ' + desc if desc else ''}"
+    code = ""
+    message = ""
+    request_id = res.headers.get("X-Request-Id", "") or res.headers.get("referenceId", "")
 
-    snippet = (res.text or "").strip().replace("\n", " ")[:160]
-    return f"Toss token failed ({status}){': ' + snippet if snippet else ''}"
+    if isinstance(body, dict):
+        err = body.get("error")
+        if isinstance(err, dict):
+            code = str(err.get("code") or "")
+            message = str(err.get("message") or "")
+            request_id = str(err.get("requestId") or err.get("referenceId") or request_id)
+        elif err:
+            code = str(err)
+            message = str(body.get("error_description") or "")
+        if not code:
+            code = str(body.get("code") or "")
+        if not message:
+            message = str(body.get("message") or "")
+
+    snippet = "" if body is not None else (res.text or "").strip().replace("\n", " ")[:200]
+    return {
+        "status": res.status_code,
+        "code": code,
+        "message": message,
+        "request_id": request_id,
+        "snippet": snippet,
+    }
+
+
+_ERROR_HINTS = {
+    "edge-blocked": "허용 IP 아님 — WTS 설정 > Open API > 허용 IP 관리에 서버 공인 IP 등록",
+    "forbidden": "권한 부족 — Open API 사용 승인·약관 동의 확인",
+    "invalid_client": "client_id/secret 불일치 — WTS에서 재발급 후 .env 갱신",
+    "unauthorized_client": "이 클라이언트는 client_credentials 사용 권한이 없습니다",
+    "invalid_request": "요청 형식 오류 — grant_type/client_id/client_secret 확인",
+    "invalid_grant": "grant_type 오류 — client_credentials 만 지원",
+}
+
+
+def _format_token_error(res: requests.Response) -> str:
+    """토스가 준 code·message 를 그대로 노출 (추측 금지)."""
+    info = _extract_token_error(res)
+    parts = [f"{info['status']}"]
+    if info["code"]:
+        parts.append(info["code"])
+    if info["message"]:
+        parts.append(info["message"])
+    if not info["code"] and not info["message"] and info["snippet"]:
+        parts.append(info["snippet"])
+
+    text = " ".join(parts).strip()
+    hint = _ERROR_HINTS.get(info["code"])
+    if hint:
+        text = f"{text} — {hint}"
+    if info["request_id"]:
+        text = f"{text} (req {info['request_id'][:16]})"
+    return text
 
 
 class TossAuth:
@@ -243,7 +286,10 @@ class TossAuth:
 
     def _post_token_request(self, *, use_basic: bool) -> requests.Response:
         payload = {"grant_type": "client_credentials"}
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+        }
         kwargs: dict = {
             "url": f"{BASE_URL}/oauth2/token",
             "data": payload,
@@ -274,15 +320,23 @@ class TossAuth:
                 continue
 
             if res.status_code == 401:
-                logger.info("Toss token form auth 401 — retry with HTTP Basic")
-                try:
-                    res = self._post_token_request(use_basic=True)
-                except requests.RequestException as exc:
-                    last_err = exc
-                    if attempt >= 2:
-                        raise
-                    time.sleep(1 + attempt)
-                    continue
+                info = _extract_token_error(res)
+                logger.warning(
+                    "Toss token 401 — code=%s message=%s req=%s",
+                    info["code"] or "(none)",
+                    info["message"] or info["snippet"] or "(none)",
+                    info["request_id"] or "(none)",
+                )
+                # edge-blocked 는 IP 차단이라 인증 방식을 바꿔도 동일하게 실패한다
+                if info["code"] != "edge-blocked":
+                    try:
+                        res = self._post_token_request(use_basic=True)
+                    except requests.RequestException as exc:
+                        last_err = exc
+                        if attempt >= 2:
+                            raise
+                        time.sleep(1 + attempt)
+                        continue
 
             if res.status_code == 429:
                 retry = max(int(res.headers.get("Retry-After", "2") or 2), 1)
@@ -293,6 +347,14 @@ class TossAuth:
                 continue
 
             if not res.ok:
+                info = _extract_token_error(res)
+                logger.warning(
+                    "Toss token failed — status=%s code=%s message=%s req=%s",
+                    info["status"],
+                    info["code"] or "(none)",
+                    info["message"] or info["snippet"] or "(none)",
+                    info["request_id"] or "(none)",
+                )
                 raise requests.HTTPError(_format_token_error(res), response=res)
 
             return self._parse_token_response(res)

@@ -69,18 +69,15 @@ def format_toss_token_detail(app: App, status: dict | None = None) -> str:
     elif reason == "no_credentials":
         avail = "🔴 API 키 없음 · .env TOSS_CLIENT_ID/SECRET"
     elif reason == "refresh_failed":
-        err = html.escape(str(status.get("error", "재발급 실패"))[:120])
-        if remaining > 0:
-            prefix = "⚠️ 갱신 실패(기존 토큰 유지)"
-        else:
-            prefix = "🔴 갱신 실패"
-        if "허용 IP" in err:
-            avail = f"{prefix} · IP 미등록 · {err}"
-        elif "401" in err or "client" in err.lower():
+        raw = str(status.get("error", "재발급 실패"))
+        err = html.escape(raw[:160])
+        prefix = "⚠️ 갱신 실패(기존 토큰 유지)" if remaining > 0 else "🔴 갱신 실패"
+        avail = f"{prefix} · {err}"
+        if "edge-blocked" in raw or "허용 IP" in raw:
+            avail += f"\n{dim('WTS 설정 > Open API > 허용 IP 관리에 서버 공인 IP 등록')}"
+        elif "invalid_client" in raw:
             hints = " · ".join(format_toss_credential_help(auth_401=True)[:3])
-            avail = f"{prefix} · API 키 오류 · {err}\n{dim(hints)}"
-        else:
-            avail = f"{prefix} · {err}"
+            avail += f"\n{dim(hints)}"
     else:
         avail = "🔴 사용 불가"
 

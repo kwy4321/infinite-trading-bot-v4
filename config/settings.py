@@ -101,6 +101,30 @@ def _parse_inline_env_pairs(line: str) -> list[tuple[str, str]]:
 _GEMINI_KEY_RE = re.compile(r"AIza[0-9A-Za-z_-]{30,}")
 _OPENAI_KEY_RE = re.compile(r"sk-[0-9A-Za-z_-]{20,}")
 
+
+def _accept_llm_key(val: str, provider: str = "gemini") -> bool:
+    """Gemini = AIza… / OpenAI = sk-… 만 유효."""
+    if not val or len(val) < 10:
+        return False
+    prov = (provider or "gemini").lower()
+    if prov == "openai":
+        return bool(_OPENAI_KEY_RE.match(val))
+    return bool(_GEMINI_KEY_RE.match(val))
+
+
+def _key_format_hint(val: str) -> str:
+    if not val:
+        return "비어 있음"
+    prefix = val[:4]
+    if val.startswith("AIza"):
+        return "AIza… (OK)"
+    if val.startswith("AQ."):
+        return "AQ.Ab… — OAuth/토큰 (Gemini API 키 아님)"
+    if val.startswith("sk-"):
+        return "sk-… (OpenAI)"
+    return f"{prefix}… — 형식 불명"
+
+
 _ENV_FILE_CANDIDATES = (".env", "data/.env", "data/secrets.env")
 
 

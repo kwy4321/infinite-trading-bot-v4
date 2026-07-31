@@ -42,18 +42,43 @@ if [[ "$USE_SYSTEMD" == "1" ]]; then
   sudo systemctl daemon-reload
   sudo systemctl enable infinite-trading-dashboard
   sudo systemctl restart infinite-trading-dashboard
-  sleep 2
   sudo systemctl status infinite-trading-dashboard --no-pager -l || true
 else
   echo "sudo/systemd 없음 — run_streamlit.sh 로 백그라운드 실행"
   bash "$INSTALL_DIR/scripts/run_streamlit.sh" restart
 fi
 
+_wait_streamlit() {
+  local i code
+  for i in $(seq 1 15); do
+    if curl -sf -o /dev/null -w "%{http_code}" --max-time 3 http://127.0.0.1:8501 2>/dev/null | grep -qE '^(200|301|302|304)$'; then
+      echo "HTTP 200"
+      return 0
+    fi
+    sleep 2
+  done
+  curl -sf -o /dev/null -w "HTTP %{http_code}\n" --max-time 5 http://127.0.0.1:8501 || echo "HTTP 000"
+  return 1
+}
+
 echo ""
-if curl -sf -o /dev/null -w "HTTP %{http_code}\n" --max-time 5 http://127.0.0.1:8501; then
+if _wait_streamlit; then
   echo "✅ Streamlit 로컬(127.0.0.1:8501) 응답 OK"
 else
-  echo "❌ 로컬 접속 실패 — bash scripts/run_streamlit.sh logs"
+  echo "❌ 로컬 접속 실패"
+  if [[ "$USE_SYSTEMD" == "1" ]]; then
+    echo "--- systemd journal (최근 40줄) ---"
+    sudo journalctl -u infinite-trading-dashboard -n 40 --no-pager 2>/dev/null || true
+    echo "--- run_streamlit.sh 폴백 ---"
+    sudo systemctl stop infinite-trading-dashboard 2>/dev/null || true
+  fi
+  bash "$INSTALL_DIR/scripts/run_streamlit.sh" restart || true
+  if _wait_streamlit; then
+    echo "✅ run_streamlit.sh 폴백으로 로컬 응답 OK"
+  else
+    echo "로그: bash scripts/run_streamlit.sh logs"
+    bash "$INSTALL_DIR/scripts/run_streamlit.sh" logs 2>/dev/null || true
+  fi
 fi
 
 echo ""

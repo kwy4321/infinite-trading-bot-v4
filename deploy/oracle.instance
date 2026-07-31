@@ -3,3 +3,5 @@ INSTANCE_OCID=ocid1.instance.oc1.ap-chuncheon-1.an4w4ljrbhtvjlacu4tveiqge2kspspa
 INSTALL_DIR=/home/ubuntu/infinite-trading-bot-v4
 REPO_URL=https://github.com/kwy4321/infinite-trading-bot-v4.git
 SSH_USER=ubuntu
+# Cloud Shell — VM 생성 때 받은 private key (id_rsa 아님)
+# SSH_KEY=$HOME/ssh-key-YYYY-MM-DD.key

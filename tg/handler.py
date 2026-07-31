@@ -287,14 +287,21 @@ class TelegramHandler:
         markup = ledger_keyboard(self.app.settings)
         if not markup:
             issues = google_sheets_issues(self.app.settings)
-            detail = " · ".join(issues) if issues else "Google Sheets 미설정"
-            await target.reply_text(f"🚨 {detail}")
+            detail = " · ".join(issues) if issues else "장부 미설정"
+            await target.reply_text(
+                f"🚨 {detail}\n\n"
+                "VM .env 에 STREAMLIT_URL=https://....trycloudflare.com 설정 후\n"
+                "bash scripts/cloudshell_bot.sh restart"
+            )
             return
+        intro = "📊 장부 · 대시보드"
+        if self.app.settings.streamlit_link:
+            intro += "\n「📊 대시보드 보기」→ 웹 현황"
         if sync and self.app.settings.has_google_sheets:
             progress = await target.reply_text(self._LEDGER_SYNCING)
             await self._complete_ledger_sync_ui(progress, markup)
             return
-        await target.reply_text("📊", reply_markup=markup)
+        await target.reply_text(intro, reply_markup=markup)
 
     async def cmd_myid(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """채팅 ID 확인 — .env TELEGRAM_ALLOWED_CHAT_IDS 설정용 (허용 검사 없음)."""

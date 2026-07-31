@@ -1,4 +1,4 @@
-"""Streamlit dashboard — 현황·장부 (read-only)."""
+"""Streamlit dashboard — 모바일 우선 현황 (read-only)."""
 
 from __future__ import annotations
 
@@ -24,110 +24,376 @@ from reporting.dashboard_data import (
     prepare_ledger_for_export,
 )
 
+# 모바일(폰) 우선 — 한 손 조작, 세로 스크롤
+CSS = """
+<style>
+  #MainMenu, footer, header { visibility: hidden; }
+  .block-container {
+    padding: 0.55rem 0.7rem 2.5rem !important;
+    max-width: 100% !important;
+  }
+  .stButton > button, .stLinkButton > a {
+    min-height: 44px; font-size: 0.95rem; font-weight: 600;
+    border-radius: 10px;
+  }
+  .stTabs [data-baseweb="tab"] {
+    min-height: 44px; font-size: 0.88rem; font-weight: 650; padding: 0 0.65rem;
+  }
+  div[data-testid="stHorizontalBlock"] { gap: 0.45rem; }
+  div[data-testid="stDataFrame"] { font-size: 0.82rem; }
+
+  .hdr {
+    background: linear-gradient(135deg, #152238, #0f1729);
+    border: 1px solid #243049; border-radius: 14px;
+    padding: 0.85rem 0.95rem; margin-bottom: 0.75rem;
+  }
+  .hdr .title { font-size: 1.15rem; font-weight: 800; color: #f1f5f9; }
+  .hdr .meta { font-size: 0.75rem; color: #94a3b8; margin-top: 0.25rem; }
+  .badges { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.55rem; }
+  .badge {
+    font-size: 0.7rem; font-weight: 700; padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+  }
+  .b-live { background: rgba(34,211,165,.18); color: #34d399; }
+  .b-dry  { background: rgba(251,191,36,.18); color: #fbbf24; }
+  .b-run  { background: rgba(56,189,248,.18); color: #38bdf8; }
+  .b-stop { background: rgba(248,113,113,.18); color: #f87171; }
+
+  .box {
+    background: #141d2e; border: 1px solid #243049; border-radius: 12px;
+    padding: 0.75rem 0.85rem; margin-bottom: 0.55rem;
+  }
+  .box .lbl { font-size: 0.68rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.04em; }
+  .box .val { font-size: 1.35rem; font-weight: 750; color: #f8fafc; margin-top: 0.15rem; line-height: 1.2; }
+  .box .sub { font-size: 0.72rem; color: #64748b; margin-top: 0.2rem; }
+
+  .sym {
+    background: #141d2e; border: 1px solid #243049; border-radius: 14px;
+    padding: 0.9rem 1rem; margin-bottom: 0.65rem;
+  }
+  .sym-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.5rem; }
+  .sym-name { font-size: 1.2rem; font-weight: 800; color: #f8fafc; }
+  .sym-pnl { text-align: right; font-size: 1rem; font-weight: 700; }
+  .sym-meta { font-size: 0.75rem; color: #94a3b8; margin-top: 0.35rem; }
+  .sym-row {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 0.55rem; margin-top: 0.7rem;
+  }
+  .sym-cell { background: rgba(148,163,184,.06); border-radius: 8px; padding: 0.5rem 0.6rem; }
+  .sym-cell .k { font-size: 0.65rem; color: #64748b; }
+  .sym-cell .v { font-size: 0.92rem; font-weight: 700; color: #e2e8f0; margin-top: 0.1rem; }
+
+  .bar { height: 6px; background: rgba(148,163,184,.15); border-radius: 99px; margin-top: 0.55rem; overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: linear-gradient(90deg, #38bdf8, #818cf8); border-radius: 99px; }
+
+  .up { color: #34d399 !important; }
+  .down { color: #f87171 !important; }
+  .flat { color: #94a3b8 !important; }
+
+  .sec { font-size: 0.95rem; font-weight: 700; color: #e2e8f0; margin: 1rem 0 0.5rem; }
+  .empty {
+    text-align: center; color: #64748b; font-size: 0.88rem;
+    padding: 1.5rem 0.75rem; border: 1px dashed #243049; border-radius: 12px;
+  }
+
+  .kv { display: grid; grid-template-columns: 1fr 1fr; gap: 0.45rem; margin-top: 0.65rem; }
+  .kv .c { background: rgba(148,163,184,.06); border: 1px solid #243049; border-radius: 10px; padding: 0.55rem 0.65rem; }
+  .kv .c .k { font-size: 0.65rem; color: #64748b; }
+  .kv .c .v { font-size: 0.88rem; font-weight: 700; color: #e2e8f0; margin-top: 0.08rem; }
+</style>
+"""
+
+TRADE_MOBILE = ["date", "side", "qty", "price", "amount_usd", "note"]
+TRADE_LABELS = {
+    "date": "일자", "symbol": "종목", "side": "구분", "qty": "수량",
+    "price": "단가", "amount_usd": "금액", "cycle_no": "회차", "note": "비고",
+}
+SIDE_KO = {"BUY": "매수", "SELL": "매도"}
+
 
 @st.cache_resource
 def get_app() -> App:
     return App.create()
 
 
-def _check_auth(settings) -> bool:
+def _auth(settings) -> bool:
     pwd = (settings.streamlit_password or "").strip()
-    if not pwd:
+    if not pwd or st.session_state.get("authed"):
         return True
-    if st.session_state.get("authed"):
-        return True
+    st.markdown("### 🔐 로그인")
     with st.form("login"):
-        st.subheader("로그인")
-        entered = st.text_input("비밀번호", type="password")
-        if st.form_submit_button("입장"):
-            if entered == pwd:
+        p = st.text_input("비밀번호", type="password", placeholder="비밀번호")
+        if st.form_submit_button("입장", use_container_width=True, type="primary"):
+            if p == pwd:
                 st.session_state["authed"] = True
                 st.rerun()
-            else:
-                st.error("비밀번호가 올바르지 않습니다.")
+            st.error("비밀번호 오류")
     return False
+
+
+def _cls(v: float) -> str:
+    return "up" if v > 0 else "down" if v < 0 else "flat"
+
+
+def _usd(v: float, signed: bool = False) -> str:
+    return f"${v:+,.2f}" if signed else f"${v:,.2f}"
+
+
+def _header(snapshot: dict) -> None:
+    live = not snapshot["dry_run"]
+    paused = snapshot["paused"]
+    when = str(snapshot.get("updated_at", ""))[:16].replace("T", " ")
+    st.markdown(
+        f"""
+        <div class="hdr">
+          <div class="title">♾️ 무한매수 4.0</div>
+          <div class="meta">갱신 {when}</div>
+          <div class="badges">
+            <span class="badge {'b-live' if live else 'b-dry'}">{'LIVE' if live else 'DRY'}</span>
+            <span class="badge {'b-stop' if paused else 'b-run'}">{'정지' if paused else '운영'}</span>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _kpi_box(label: str, value: str, sub: str = "", tone: str = "") -> str:
+    return f"""
+    <div class="box">
+      <div class="lbl">{label}</div>
+      <div class="val {tone}">{value}</div>
+      <div class="sub">{sub or '&nbsp;'}</div>
+    </div>"""
+
+
+def _kpis(snapshot: dict) -> None:
+    acc = snapshot["account"]
+    total = float(acc.get("total_usd", 0))
+    unreal = float(acc.get("unreal_usd", 0))
+    realized = float(snapshot.get("realized_usd", 0))
+    cash = float(acc.get("cash_usd", 0))
+    krw = float(acc.get("total_krw", 0))
+
+    r1a, r1b = st.columns(2)
+    with r1a:
+        st.markdown(_kpi_box("총 자산", _usd(total), f"₩{krw:,.0f}" if krw else ""), unsafe_allow_html=True)
+    with r1b:
+        st.markdown(
+            _kpi_box("평가 손익", _usd(unreal, True), "", _cls(unreal)),
+            unsafe_allow_html=True,
+        )
+    r2a, r2b = st.columns(2)
+    with r2a:
+        st.markdown(
+            _kpi_box("실현 수익", _usd(realized, True), f"완료 {snapshot.get('completed_cycles', 0)}회", _cls(realized)),
+            unsafe_allow_html=True,
+        )
+    with r2b:
+        st.markdown(
+            _kpi_box("진행 회차", str(snapshot.get("active_cycles", 0)), f"예수금 {_usd(cash)}" if cash else ""),
+            unsafe_allow_html=True,
+        )
+
+
+def _symbol_block(row: dict) -> None:
+    sym = row.get("symbol", "?")
+    pnl_u = float(row.get("cycle_pnl_usd") or 0)
+    pnl_p = float(row.get("cycle_pnl_pct") or 0)
+    t_val = float(row.get("T") or 0)
+    split = int(row.get("split_count") or 1)
+    pct = min(100.0, t_val / split * 100 if split else 0)
+    state = "거래중" if row.get("active") else "대기"
+
+    st.markdown(
+        f"""
+        <div class="sym">
+          <div class="sym-top">
+            <div>
+              <div class="sym-name">{sym}</div>
+              <div class="sym-meta">{state} · {row.get('mode_label', '')} · {row.get('cycle_no', '—')}회차</div>
+            </div>
+            <div class="sym-pnl {_cls(pnl_u)}">{_usd(pnl_u, True)}<br><span style="font-size:0.78rem">{pnl_p:+.1f}%</span></div>
+          </div>
+          <div class="sym-row">
+            <div class="sym-cell"><div class="k">수량</div><div class="v">{int(row.get('qty') or 0):,}</div></div>
+            <div class="sym-cell"><div class="k">평단</div><div class="v">${float(row.get('avg_price') or 0):,.2f}</div></div>
+            <div class="sym-cell"><div class="k">현재가</div><div class="v">${float(row.get('current_price') or 0):,.2f}</div></div>
+            <div class="sym-cell"><div class="k">평가</div><div class="v">${float(row.get('eval_usd') or 0):,.0f}</div></div>
+          </div>
+          <div class="sym-meta" style="margin-top:0.55rem">T {t_val:g} / {split} · {pct:.0f}%</div>
+          <div class="bar"><i style="width:{pct:.0f}%"></i></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _trades_df(trades: list[dict], symbol: str | None = None) -> pd.DataFrame:
+    rows = trades if symbol is None else [t for t in trades if t.get("symbol") == symbol]
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows).sort_values("datetime", ascending=False)
+    df["side"] = df["side"].map(lambda s: SIDE_KO.get(str(s).upper(), s))
+    cols = [c for c in TRADE_MOBILE if c in df.columns]
+    out = df[cols].rename(columns={k: TRADE_LABELS[k] for k in cols})
+    return out
+
+
+def _show_trades(df: pd.DataFrame, height: int = 360) -> None:
+    if df.empty:
+        st.markdown('<div class="empty">체결 내역 없음</div>', unsafe_allow_html=True)
+        return
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True,
+        height=height,
+        column_config={
+            "일자": st.column_config.TextColumn(width="small"),
+            "구분": st.column_config.TextColumn(width="small"),
+            "수량": st.column_config.NumberColumn(format="%d"),
+            "단가": st.column_config.NumberColumn(format="$%.2f"),
+            "금액": st.column_config.NumberColumn(format="$%.0f"),
+        },
+    )
+
+
+def _detail(app: App, symbol: str, trades: list[dict]) -> None:
+    d = collect_symbol_status(app, symbol, fetch_live_price=True)
+    pnl_u = float(d.get("cycle_pnl_usd") or 0)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(_kpi_box("T", f"{float(d.get('T', 0)):g}", f"분할 {d.get('split_count', '—')}"), unsafe_allow_html=True)
+    with c2:
+        st.markdown(_kpi_box("손익", _usd(pnl_u, True), f"{float(d.get('cycle_pnl_pct') or 0):+.1f}%", _cls(pnl_u)), unsafe_allow_html=True)
+
+    cells = [
+        ("수량", f"{int(d.get('qty') or 0):,}"),
+        ("평단", f"${float(d.get('avg_price') or 0):,.2f}"),
+        ("현재가", f"${float(d.get('current_price') or 0):,.2f}"),
+        ("평가", _usd(float(d.get("eval_usd", 0)))),
+        ("원금", _usd(float(d.get("principal", 0)))),
+        ("목표", f"{float(d.get('take_profit_pct', 0)):g}%"),
+        ("역매수", "ON" if d.get("reverse_mode") else "OFF"),
+        ("강제1회", "ON" if d.get("force_one") else "OFF"),
+    ]
+    html = "".join(f'<div class="c"><div class="k">{k}</div><div class="v">{v}</div></div>' for k, v in cells)
+    st.markdown(f'<div class="kv">{html}</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="sec">최근 체결</div>', unsafe_allow_html=True)
+    _show_trades(_trades_df(trades, symbol), height=280)
 
 
 def main() -> None:
     settings = get_settings()
     st.set_page_config(
-        page_title="라오어 무한매수 4.0",
+        page_title="무한매수 4.0",
         page_icon="♾️",
         layout="wide",
+        initial_sidebar_state="collapsed",
     )
-    if not _check_auth(settings):
+    st.markdown(CSS, unsafe_allow_html=True)
+
+    if not _auth(settings):
         st.stop()
 
     app = get_app()
     prepare_ledger_for_export(app)
-    st.title("♾️ 라오어 무한매수 4.0 — 현황 대시보드")
-
-    if st.button("🔄 새로고침"):
-        st.cache_resource.clear()
-        st.rerun()
-
     snapshot = collect_portfolio_snapshot(app, fetch_live_price=True)
-    acc = snapshot["account"]
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("총자산 (USD)", f"${acc.get('total_usd', 0):,.2f}")
-    c2.metric("평가손익", f"${acc.get('unreal_usd', 0):+,.2f}")
-    c3.metric("실현수익", f"${snapshot.get('realized_usd', 0):+,.2f}")
-    c4.metric("진행 회차", str(snapshot.get("active_cycles", 0)))
+    trades = collect_all_trades(app)
+    symbols = snapshot.get("symbols") or []
 
-    st.caption(
-        f"갱신: {snapshot['updated_at']} · "
-        f"{'🧪 DRY' if snapshot['dry_run'] else '🟢 LIVE'} · "
-        f"{'⏸️ 정지' if snapshot['paused'] else '▶️ 운영'}"
-    )
+    _header(snapshot)
 
-    if settings.has_google_sheets:
-        sheets_url = settings.google_sheets_link
-        if sheets_url:
-            st.link_button("📗 Google Sheets 장부 열기", sheets_url)
+    b1, b2 = st.columns(2)
+    with b1:
+        if st.button("🔄 새로고침", use_container_width=True):
+            st.cache_resource.clear()
+            st.rerun()
+    with b2:
+        if settings.google_sheets_link:
+            st.link_button("📗 Sheets", settings.google_sheets_link, use_container_width=True)
 
-    st.divider()
-    st.subheader("종목 현황")
-    status_df = pd.DataFrame(snapshot["symbols"])
-    if not status_df.empty:
-        show_cols = [
-            "symbol", "mode_label", "T", "split_count", "qty", "avg_price",
-            "current_price", "cycle_no", "cycle_pnl_usd", "cycle_pnl_pct",
-            "reverse_mode", "force_one",
-        ]
-        st.dataframe(status_df[[c for c in show_cols if c in status_df.columns]], use_container_width=True)
+    _kpis(snapshot)
 
-    tab_trades, tab_cycles, tab_monthly = st.tabs(["매매 내역", "완료 회차", "월별 수익"])
-    with tab_trades:
-        trades = collect_all_trades(app)
-        if trades:
-            tdf = pd.DataFrame(trades)
-            sym_filter = st.multiselect("종목", SYMBOLS, default=list(SYMBOLS))
-            if sym_filter:
-                tdf = tdf[tdf["symbol"].isin(sym_filter)]
-            st.dataframe(tdf, use_container_width=True, height=420)
+    st.markdown('<div class="sec">종목</div>', unsafe_allow_html=True)
+    if symbols:
+        for row in symbols:
+            _symbol_block(row)
+    else:
+        st.markdown('<div class="empty">종목 없음</div>', unsafe_allow_html=True)
+
+    tab1, tab2, tab3, tab4 = st.tabs(["상세", "체결", "회차", "월별"])
+
+    with tab1:
+        names = [s.get("symbol") for s in symbols if s.get("symbol")] or list(SYMBOLS)
+        pick = st.radio("종목", names, horizontal=True, label_visibility="collapsed")
+        if pick:
+            _detail(app, pick, trades)
+
+    with tab2:
+        syms = st.multiselect("종목", SYMBOLS, default=list(SYMBOLS), placeholder="종목")
+        side = st.selectbox("구분", ["전체", "매수", "매도"], label_visibility="collapsed")
+        df = pd.DataFrame(trades)
+        if syms:
+            df = df[df["symbol"].isin(syms)]
+        if side != "전체":
+            want = "BUY" if side == "매수" else "SELL"
+            df = df[df["side"].str.upper() == want]
+        df = df.sort_values("datetime", ascending=False) if not df.empty else df
+        if df.empty:
+            st.markdown('<div class="empty">체결 없음</div>', unsafe_allow_html=True)
         else:
-            st.info("매매 내역이 없습니다.")
+            tmp = df.copy()
+            tmp["side"] = tmp["side"].map(lambda s: SIDE_KO.get(str(s).upper(), s))
+            cols = [c for c in TRADE_MOBILE if c in tmp.columns]
+            show = tmp[cols].rename(columns={k: TRADE_LABELS[k] for k in cols})
+            st.caption(f"총 {len(show)}건")
+            _show_trades(show, height=420)
 
-    with tab_cycles:
+    with tab3:
         cycles = collect_completed_cycles(app)
         if cycles:
-            st.dataframe(pd.DataFrame(cycles), use_container_width=True)
+            cdf = pd.DataFrame(cycles)
+            show_cols = {
+                "symbol": "종목", "cycle_no": "회차", "ended_at": "종료",
+                "profit_usd": "실현", "profit_pct": "수익률",
+            }
+            cols = [c for c in show_cols if c in cdf.columns]
+            st.dataframe(
+                cdf[cols].rename(columns={k: show_cols[k] for k in cols}),
+                use_container_width=True,
+                hide_index=True,
+                height=400,
+                column_config={
+                    "실현": st.column_config.NumberColumn(format="$%.2f"),
+                    "수익률": st.column_config.NumberColumn(format="%.1f%%"),
+                },
+            )
         else:
-            st.info("완료된 회차가 없습니다.")
+            st.markdown('<div class="empty">완료 회차 없음</div>', unsafe_allow_html=True)
 
-    with tab_monthly:
-        year = st.number_input("연도", min_value=2020, max_value=2100, value=datetime.date.today().year)
+    with tab4:
+        year = st.selectbox("연도", list(range(datetime.date.today().year, 2019, -1)), label_visibility="collapsed")
         monthly = collect_monthly_rows(app, int(year))
         if monthly:
-            mdf = pd.DataFrame(monthly)
-            st.dataframe(mdf, use_container_width=True)
+            mdf = pd.DataFrame([m for m in monthly if m.get("scope") == "전체"])
+            if not mdf.empty:
+                mdf = mdf.rename(columns={"month": "월", "cycles": "회차", "profit_usd": "실현", "profit_pct_on_buy": "수익률"})
+                st.dataframe(
+                    mdf[["월", "회차", "실현", "수익률"]],
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "실현": st.column_config.NumberColumn(format="$%.0f"),
+                        "수익률": st.column_config.NumberColumn(format="%.1f%%"),
+                    },
+                )
+            else:
+                st.markdown('<div class="empty">데이터 없음</div>', unsafe_allow_html=True)
         else:
-            st.info("해당 연도 월별 기록이 없습니다.")
-
-    with st.expander("종목 상세"):
-        sym = st.selectbox("종목 선택", SYMBOLS)
-        detail = collect_symbol_status(app, sym)
-        st.json(detail)
+            st.markdown(f'<div class="empty">{year}년 기록 없음</div>', unsafe_allow_html=True)
 
 
 if __name__ == "__main__":

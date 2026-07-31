@@ -47,7 +47,7 @@ _start() {
     --server.headless=true \
     >>"$LOGFILE" 2>&1 &
   echo $! >"$PIDFILE"
-  sleep 2
+  sleep 4
   if _running; then
     echo "✅ 실행 중 (PID $(cat "$PIDFILE"))"
   else
@@ -82,6 +82,11 @@ case "$ACTION" in
     fi
     ;;
   logs)
+    if command -v systemctl >/dev/null 2>&1 \
+      && systemctl is-active infinite-trading-dashboard >/dev/null 2>&1; then
+      journalctl -u infinite-trading-dashboard -n 80 --no-pager 2>/dev/null || true
+      echo "---"
+    fi
     tail -n 80 "$LOGFILE" 2>/dev/null || echo "로그 없음: $LOGFILE"
     ;;
   *)

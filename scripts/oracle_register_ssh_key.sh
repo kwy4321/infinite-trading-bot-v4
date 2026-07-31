@@ -27,6 +27,8 @@ PUBKEY="$(cat "$HOME/.ssh/id_rsa.pub")"
 FINGERPRINT="$(echo "$PUBKEY" | awk '{print $2}' | tail -c 20)"
 
 echo "=== Cloud Shell 키 등록 (metadata) ==="
+echo "⚠️  Oracle은 VM 생성 후 ssh_authorized_keys metadata 변경 불가"
+echo "   이 스크립트만으로 SSH가 안 되면: bash scripts/oracle_console_ssh_fix.sh"
 OLD="$(oci compute instance get --instance-id "$INSTANCE_OCID" \
   --query 'data.metadata."ssh_authorized_keys"' --raw-output 2>/dev/null || true)"
 if [[ "$OLD" == "null" ]]; then OLD=""; fi

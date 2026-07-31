@@ -13,6 +13,7 @@ import requests
 
 from broker.rate_limiter import RateLimiter
 from config.json_io import load_json, save_json
+from config.toss_credentials import normalize_toss_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,10 @@ def _format_token_error(res: requests.Response) -> str:
                 return "403 허용 IP 아님 — WTS Open API > 허용 IP 관리 확인"
             return f"403 접근 거부{': ' + desc if desc else ''}"
         if status == 401 or err == "invalid_client":
-            return "401 client_id/secret 오류 — WTS Open API 키 재확인"
+            return (
+                "401 client_id/secret 오류 — WTS Open API 키 재확인 "
+                "(ID=c_/tsck_, SECRET=s_, 뒤바뀜·재발급 여부)"
+            )
         if err or desc:
             return f"{status} {err or 'error'}{': ' + desc if desc else ''}"
 
@@ -191,10 +195,13 @@ class TossAuth:
             logger.exception("failed to delete token cache %s", self.cache_path)
 
     def sync_credentials(self, client_id: str, client_secret: str) -> None:
-        """Settings 재로드 후 client_id/secret 반영."""
+        """Settings 재로드 후 client_id/secret 반영 (형식·뒤바뀜 자동 교정)."""
+        cid, sec, notes = normalize_toss_credentials(client_id, client_secret)
+        for note in notes:
+            logger.warning("Toss credentials: %s", note)
         with self._lock:
-            self.client_id = (client_id or "").strip()
-            self.client_secret = (client_secret or "").strip()
+            self.client_id = cid
+            self.client_secret = sec
 
     def _drop_expired_memory(self) -> None:
         with self._lock:

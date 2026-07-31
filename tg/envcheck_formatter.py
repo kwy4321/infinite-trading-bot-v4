@@ -25,8 +25,8 @@ def format_env_check(settings: Settings) -> str:
         "",
         section("거래·알림", "💹"),
         quote(
-            row("🔑", "Toss ID", _mark(diag["toss_client_id_set"])),
-            row("🔑", "Toss SECRET", _mark(diag["toss_client_secret_set"])),
+            row("🔑", "Toss ID", _toss_mark(diag)),
+            row("🔑", "Toss SECRET", _toss_secret_mark(diag)),
             row("💹", "LIVE 가능", _mark(diag["has_toss"])),
             row("🧪", "DRY_RUN", code(str(diag["dry_run"]).lower())),
             row("💬", "Telegram chat", _mark(diag["telegram_chat_ids_set"])),
@@ -105,6 +105,24 @@ def _mark(ok: bool, detail: str = "") -> str:
     if detail:
         return code(f"{badge} {detail}")
     return code(badge)
+
+
+def _toss_mark(diag: dict) -> str:
+    if not diag.get("toss_client_id_set"):
+        return code("❌")
+    masked = diag.get("toss_client_id_masked") or ""
+    fmt = diag.get("toss_id_format_ok")
+    badge = "✅" if fmt else "⚠️"
+    return code(f"{badge} {masked}")
+
+
+def _toss_secret_mark(diag: dict) -> str:
+    if not diag.get("toss_client_secret_set"):
+        return code("❌")
+    masked = diag.get("toss_client_secret_masked") or ""
+    fmt = diag.get("toss_secret_format_ok")
+    badge = "✅" if fmt else "⚠️"
+    return code(f"{badge} {masked}")
 
 
 def _format_mark(probe: dict) -> str:

@@ -14,10 +14,12 @@ from account.account import AccountPaths
 from broker.rate_limiter import RateLimiter
 from broker.toss_auth import TossAuth
 from config.settings import reload_settings
+from config.toss_credentials import diagnose_toss_credentials
 
 
 def main() -> int:
     settings = reload_settings()
+    cred = diagnose_toss_credentials(settings.toss_client_id, settings.toss_client_secret)
     paths = AccountPaths()
     auth = TossAuth(
         settings.toss_client_id,
@@ -29,8 +31,9 @@ def main() -> int:
 
     out = {
         "has_toss": settings.has_toss,
-        "client_id_len": len(settings.toss_client_id or ""),
-        "client_secret_len": len(settings.toss_client_secret or ""),
+        "credential_diag": cred,
+        "client_id_len": cred["client_id_len"],
+        "client_secret_len": cred["client_secret_len"],
         "cache_path": str(paths.token_cache),
         "cache_exists": paths.token_cache.is_file(),
         "status_before": auth.get_status(),

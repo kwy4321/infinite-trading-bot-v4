@@ -41,6 +41,12 @@ _ENV_KEY_ALIASES: dict[str, str] = {
     "GOOGLE_APIKEY": "GOOGLE_API_KEY",
     "GEMINI_KEY": "GEMINI_API_KEY",
     "SUMMARIZER_KEY": "SUMMARIZER_API_KEY",
+    "TOSS_API_KEY": "TOSS_CLIENT_ID",
+    "TOSS_API_ID": "TOSS_CLIENT_ID",
+    "TOSS_KEY": "TOSS_CLIENT_ID",
+    "TOSS_SECRET_KEY": "TOSS_CLIENT_SECRET",
+    "TOSS_API_SECRET": "TOSS_CLIENT_SECRET",
+    "TOSS_SECRET": "TOSS_CLIENT_SECRET",
 }
 
 
@@ -82,7 +88,8 @@ _INLINE_ENV_RE = re.compile(
     r"(SUMMARIZER_API_KEY|GOOGLE_API_KEY|GEMINI_API_KEY|"
     r"GOOGLE_GENERATIVE_AI_API_KEY|OPENAI_API_KEY|"
     r"TELEGRAM_BOT_TOKEN|TELEGRAM_ALLOWED_CHAT_IDS|"
-    r"TOSS_CLIENT_ID|TOSS_CLIENT_SECRET)\s*=\s*([^\s#]+)",
+    r"TOSS_CLIENT_ID|TOSS_CLIENT_SECRET|TOSS_API_KEY|TOSS_SECRET_KEY|"
+    r"TOSS_API_SECRET)\s*=\s*([^\s#]+)",
     re.IGNORECASE,
 )
 
@@ -467,8 +474,16 @@ def is_dry_mode(settings: "Settings", *, force_live: bool = False) -> bool:
 
 @dataclass
 class Settings:
-    toss_client_id: str = field(default_factory=lambda: _env_first("TOSS_CLIENT_ID"))
-    toss_client_secret: str = field(default_factory=lambda: _env_first("TOSS_CLIENT_SECRET"))
+    toss_client_id: str = field(
+        default_factory=lambda: _env_first(
+            "TOSS_CLIENT_ID", "TOSS_API_KEY", "TOSS_API_ID", "TOSS_KEY",
+        ),
+    )
+    toss_client_secret: str = field(
+        default_factory=lambda: _env_first(
+            "TOSS_CLIENT_SECRET", "TOSS_SECRET_KEY", "TOSS_API_SECRET", "TOSS_SECRET",
+        ),
+    )
     toss_account_seq: str = field(default_factory=lambda: _env_first("TOSS_ACCOUNT_SEQ", default="1"))
     telegram_bot_token: str = field(default_factory=lambda: _env_first("TELEGRAM_BOT_TOKEN"))
     telegram_allowed_chat_ids: tuple = field(default_factory=lambda: _parse_chat_ids())
@@ -517,6 +532,13 @@ class Settings:
     )
     streamlit_url: str = field(default_factory=lambda: os.getenv("STREAMLIT_URL", ""))
     streamlit_password: str = field(default_factory=lambda: os.getenv("STREAMLIT_PASSWORD", ""))
+
+    def __post_init__(self) -> None:
+        from config.toss_credentials import normalize_toss_credentials
+
+        cid, sec, _notes = normalize_toss_credentials(self.toss_client_id, self.toss_client_secret)
+        self.toss_client_id = cid
+        self.toss_client_secret = sec
 
     @property
     def summarizer_api_key(self) -> str:
@@ -659,6 +681,8 @@ def google_sheets_issues(settings: "Settings") -> list[str]:
 
 def env_diagnostics(settings: "Settings | None" = None) -> dict:
     """봇이 실제로 읽은 설정 (값 노출 없음)."""
+    from config.toss_credentials import diagnose_toss_credentials
+
     if settings is None:
         settings = reload_settings()
     env_path = str(ROOT / ".env")
@@ -685,12 +709,24 @@ def env_diagnostics(settings: "Settings | None" = None) -> dict:
         )
     if settings.dry_run and settings.has_toss:
         notes.append("DRY_RUN=true — 텔레그램 설정→💹 실거래 켜기 또는 DRY_RUN=false")
+    toss_diag = diagnose_toss_credentials(settings.toss_client_id, settings.toss_client_secret)
+    if settings.has_toss and not (toss_diag["id_format_ok"] and toss_diag["secret_format_ok"]):
+        notes.extend(toss_diag.get("notes") or [])
+    if settings.has_toss and toss_diag["id_format_ok"] and toss_diag["secret_format_ok"]:
+        pass
+    elif settings.has_toss:
+        notes.append("Toss 키 형식 이상 — WTS Open API에서 Client ID(c_/tsck_)·Secret(s_) 재복사")
     return {
         "env_path": env_path,
         "env_exists": (ROOT / ".env").is_file(),
         "env_files_found": env_files,
         "toss_client_id_set": bool(settings.toss_client_id),
         "toss_client_secret_set": bool(settings.toss_client_secret),
+        "toss_id_format_ok": toss_diag["id_format_ok"],
+        "toss_secret_format_ok": toss_diag["secret_format_ok"],
+        "toss_client_id_masked": toss_diag["client_id_masked"],
+        "toss_client_secret_masked": toss_diag["client_secret_masked"],
+        "toss_credential_notes": toss_diag.get("notes") or [],
         "has_toss": settings.has_toss,
         "dry_run": settings.dry_run,
         "telegram_chat_ids_set": bool(settings.telegram_allowed_chat_ids),

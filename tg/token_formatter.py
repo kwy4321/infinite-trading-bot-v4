@@ -6,7 +6,7 @@ import html
 import datetime
 from zoneinfo import ZoneInfo
 
-from app import App
+from config.toss_credentials import format_toss_credential_help
 from tg.format_helpers import dry_mode_reason, is_dry
 from tg.ui import dim, quote, section
 
@@ -77,7 +77,8 @@ def format_toss_token_detail(app: App, status: dict | None = None) -> str:
         if "허용 IP" in err:
             avail = f"{prefix} · IP 미등록 · {err}"
         elif "401" in err or "client" in err.lower():
-            avail = f"{prefix} · API 키 오류 · {err}"
+            hints = " · ".join(format_toss_credential_help(auth_401=True)[:3])
+            avail = f"{prefix} · API 키 오류 · {err}\n{dim(hints)}"
         else:
             avail = f"{prefix} · {err}"
     else:

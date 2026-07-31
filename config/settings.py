@@ -24,7 +24,7 @@ _SA_CACHE = ROOT / "data" / ".google-service-account.cache.json"
 
 
 def _clean_env(raw: str) -> str:
-    s = (raw or "").strip()
+    s = (raw or "").strip().strip("\r")
     if not s:
         return ""
     if len(s) >= 2 and s[0] == s[-1] and s[0] in ('"', "'"):
@@ -32,6 +32,8 @@ def _clean_env(raw: str) -> str:
     # GOOGLE_API_KEY=AIza... # 주석
     if " #" in s:
         s = s.split(" #", 1)[0].rstrip()
+    elif "#" in s:
+        s = re.sub(r"\s+#.*$", "", s).rstrip()
     return s.strip('"').strip("'").strip()
 
 
@@ -61,7 +63,7 @@ _OPENAI_KEY_NAMES = ("OPENAI_API_KEY", "OPENAI_KEY")
 
 
 def _parse_env_line(line: str) -> tuple[str, str] | None:
-    line = line.strip()
+    line = line.strip().strip("\r")
     if not line or line.startswith("#"):
         return None
     if line.startswith("export "):
@@ -69,51 +71,189 @@ def _parse_env_line(line: str) -> tuple[str, str] | None:
     if "=" not in line:
         return None
     key, _, val = line.partition("=")
-    key = _normalize_env_key(key.strip())
+    key = _normalize_env_key(key.strip().lstrip("\ufeff"))
     val = _clean_env(val)
     if not key or not val:
         return None
     return key, val
 
 
+_INLINE_ENV_RE = re.compile(
+    r"(SUMMARIZER_API_KEY|GOOGLE_API_KEY|GEMINI_API_KEY|"
+    r"GOOGLE_GENERATIVE_AI_API_KEY|OPENAI_API_KEY|"
+    r"TELEGRAM_BOT_TOKEN|TELEGRAM_ALLOWED_CHAT_IDS|"
+    r"TOSS_CLIENT_ID|TOSS_CLIENT_SECRET)\s*=\s*([^\s#]+)",
+    re.IGNORECASE,
+)
+
+
+def _parse_inline_env_pairs(line: str) -> list[tuple[str, str]]:
+    """# 주석 뒤 KEY=값 이 한 줄에 붙은 경우 (Windows .env 흔한 실수)."""
+    out: list[tuple[str, str]] = []
+    for m in _INLINE_ENV_RE.finditer(line):
+        key = _normalize_env_key(m.group(1))
+        val = _clean_env(m.group(2))
+        if key and val:
+            out.append((key, val))
+    return out
+
+
+_GEMINI_KEY_RE = re.compile(r"AIza[0-9A-Za-z_-]{30,}")
+_OPENAI_KEY_RE = re.compile(r"sk-[0-9A-Za-z_-]{20,}")
+
+_ENV_FILE_CANDIDATES = (".env", "data/.env", "data/secrets.env")
+
+
+def env_file_paths() -> list[Path]:
+    paths: list[Path] = []
+    seen: set[str] = set()
+    for rel in _ENV_FILE_CANDIDATES:
+        for base in (ROOT, Path.cwd()):
+            p = (base / rel).resolve()
+            key = str(p)
+            if key not in seen:
+                seen.add(key)
+                paths.append(p)
+    extra = ROOT / "data" / "gemini_api_key.txt"
+    if extra.is_file():
+        paths.append(extra)
+    return paths
+
+
+def _read_text_multi_encoding(path: Path) -> str:
+    raw = path.read_bytes()
+    for enc in ("utf-8-sig", "utf-8", "utf-16", "utf-16-le", "cp949", "latin-1"):
+        try:
+            return raw.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
 def _read_dotenv_pairs() -> dict[str, str]:
-    """.env 직접 파싱 — dotenv가 놓치는 export/공백 형식 보완."""
+    """.env 직접 파싱 — dotenv가 놓치는 export/공백/인코딩 보완."""
+    pairs: dict[str, str] = {}
+    for env_path in env_file_paths():
+        if not env_path.is_file():
+            continue
+        if env_path.name == "gemini_api_key.txt":
+            try:
+                val = _clean_env(_read_text_multi_encoding(env_path))
+                if val:
+                    pairs["GOOGLE_API_KEY"] = val
+            except OSError:
+                pass
+            continue
+        try:
+            text = _read_text_multi_encoding(env_path)
+            for line in text.splitlines():
+                parsed = _parse_env_line(line)
+                if parsed:
+                    pairs[parsed[0]] = parsed[1]
+                for key, val in _parse_inline_env_pairs(line):
+                    pairs[key] = val
+        except OSError:
+            pass
+        try:
+            for key, val in dotenv_values(env_path, encoding="utf-8-sig").items():
+                if val is None:
+                    continue
+                cleaned = _clean_env(str(val))
+                if cleaned:
+                    pairs[_normalize_env_key(key)] = cleaned
+        except OSError:
+            pass
+    return pairs
+
+
+def _scan_raw_env_for_api_key() -> tuple[str, str]:
+    """변수명이 달라도 .env 본문에서 Gemini/OpenAI 키 패턴 추출."""
+    for env_path in env_file_paths():
+        if not env_path.is_file():
+            continue
+        try:
+            text = _read_text_multi_encoding(env_path)
+        except OSError:
+            continue
+        for pattern, src in (
+            (r"(?:GOOGLE|GEMINI|SUMMARIZER)[\w]*API[\w]*KEY\s*=\s*['\"]?(AIza[^\"'\s#]+)", "regex:.env:AIza"),
+            (r"(?:OPENAI)[\w]*API[\w]*KEY\s*=\s*['\"]?(sk-[^\"'\s#]+)", "regex:.env:sk"),
+        ):
+            m = re.search(pattern, text, re.IGNORECASE)
+            if m:
+                return _clean_env(m.group(1)), src
+        m = _GEMINI_KEY_RE.search(text)
+        if m:
+            return m.group(0), f"regex:AIza@{env_path.name}"
+        m = _OPENAI_KEY_RE.search(text)
+        if m:
+            return m.group(0), f"regex:sk@{env_path.name}"
+    return "", ""
+
+
+def _read_llm_key_direct_from_env() -> tuple[str, str]:
+    """systemd/os.environ 우회 — .env 파일에서 LLM 키 직접 추출."""
     env_path = ROOT / ".env"
     if not env_path.is_file():
-        return {}
-    pairs: dict[str, str] = {}
+        return "", ""
     try:
-        for line in env_path.read_text(encoding="utf-8-sig").splitlines():
-            parsed = _parse_env_line(line)
-            if parsed:
-                pairs[parsed[0]] = parsed[1]
+        text = _read_text_multi_encoding(env_path)
     except OSError:
-        pass
+        return "", ""
+    for name in _SUMMARIZER_KEY_NAMES:
+        pat = rf"(?m)^[ \t]*{re.escape(name)}[ \t]*=[ \t]*([^\s#]+)"
+        m = re.search(pat, text, re.IGNORECASE)
+        if m:
+            val = _clean_env(m.group(1))
+            if val:
+                return val, f"file:{name}"
+    for key, val in _parse_inline_env_pairs(text.replace("\n", " ")):
+        if key in _SUMMARIZER_KEY_NAMES or key == "GOOGLE_API_KEY":
+            return val, f"inline:{key}"
+    return _scan_raw_env_for_api_key()
+
+
+def probe_llm_key_in_env_file() -> dict:
+    """진단 — 파일에 키 줄/AIza 패턴 있는지 (값 노출 없음)."""
+    env_path = ROOT / ".env"
+    out = {"env_path": str(env_path), "exists": env_path.is_file(), "line_found": False, "aiza_in_file": False}
+    if not env_path.is_file():
+        return out
     try:
-        for key, val in dotenv_values(env_path, encoding="utf-8-sig").items():
-            if val is None:
-                continue
-            cleaned = _clean_env(str(val))
-            if cleaned:
-                pairs[_normalize_env_key(key)] = cleaned
+        text = _read_text_multi_encoding(env_path)
     except OSError:
-        pass
-    return pairs
+        return out
+    out["aiza_in_file"] = bool(_GEMINI_KEY_RE.search(text))
+    for name in _SUMMARIZER_KEY_NAMES:
+        if re.search(rf"(?m)^[ \t]*{re.escape(name)}[ \t]*=", text, re.IGNORECASE):
+            out["line_found"] = True
+            out["line_name"] = name
+            val, _ = _read_llm_key_direct_from_env()
+            out["parsed_ok"] = bool(val)
+            out["parsed_len"] = len(val) if val else 0
+            return out
+    if out["aiza_in_file"]:
+        out["line_found"] = True
+        out["line_name"] = "regex:AIza"
+        val, _ = _read_llm_key_direct_from_env()
+        out["parsed_ok"] = bool(val)
+        out["parsed_len"] = len(val) if val else 0
+    return out
 
 
 _ENV_FILE_CACHE: dict[str, str] = {}
 
 
 def _env_lookup_ci(name: str) -> str:
-    """대소문자 무시 + 캐시 조회."""
-    if val := os.getenv(name):
-        cleaned = _clean_env(str(val))
-        if cleaned:
-            return cleaned
+    """대소문자 무시 — .env 캐시가 systemd/기존 os.environ 보다 우선."""
     target = name.upper()
     for k, v in _ENV_FILE_CACHE.items():
         if k.upper() == target and v:
             return v
+    if val := os.getenv(name):
+        cleaned = _clean_env(str(val))
+        if cleaned:
+            return cleaned
     return ""
 
 
@@ -135,6 +275,10 @@ def _scan_fuzzy_llm_key() -> tuple[str, str]:
 def resolve_summarizer_api_key(provider: str = "gemini") -> tuple[str, str]:
     """브리핑 AI용 API 키 — 항상 .env 최신 반영."""
     _apply_env_file()
+    # systemd EnvironmentFile / os.environ 꼬임 방지 — 파일 직접 읽기 우선
+    val, src = _read_llm_key_direct_from_env()
+    if val:
+        return val, src
     prov = (provider or "gemini").lower()
     if prov == "openai":
         for name in _OPENAI_KEY_NAMES:
@@ -145,15 +289,18 @@ def resolve_summarizer_api_key(provider: str = "gemini") -> tuple[str, str]:
         val = _env_lookup_ci(name)
         if val:
             return val, name
+        from_file = _read_key_file(name)
+        if from_file:
+            return from_file, f"{name}_FILE"
     val, src = _scan_fuzzy_llm_key()
     if val:
         return val, src
-    if prov == "gemini":
-        for name in _OPENAI_KEY_NAMES:
-            val = _env_lookup_ci(name)
-            if val:
-                return val, name
     return "", ""
+
+
+def list_env_file_key_names() -> list[str]:
+    _apply_env_file()
+    return sorted(_ENV_FILE_CACHE.keys(), key=str.upper)
 
 
 def _read_key_file(env_name: str) -> str:
@@ -168,7 +315,7 @@ def _read_key_file(env_name: str) -> str:
     if not path.is_file():
         return ""
     try:
-        return _clean_env(path.read_text(encoding="utf-8-sig"))
+        return _clean_env(_read_text_multi_encoding(path))
     except OSError:
         return ""
 
@@ -435,9 +582,23 @@ def env_diagnostics(settings: "Settings | None" = None) -> dict:
     if settings is None:
         settings = reload_settings()
     env_path = str(ROOT / ".env")
+    env_files = [str(p) for p in env_file_paths() if p.is_file()]
     sa_path = resolve_service_account_path(settings.google_service_account_json)
     summ_key, summ_src = resolve_summarizer_api_key(settings.summarizer_provider)
+    key_names = list_env_file_key_names()
+    llm_like = [k for k in key_names if "API" in k.upper() or "GEMINI" in k.upper() or "SUMMARIZER" in k.upper()]
     notes: list[str] = []
+    if not summ_key:
+        if not (ROOT / ".env").is_file():
+            notes.append(f".env 파일 없음 — VM {ROOT}/.env 필요 (cloudshell_bot.sh restart 로 업로드)")
+        elif llm_like:
+            notes.append(f".env에 변수는 있음({', '.join(llm_like[:5])}) — 값 형식 확인 (AIza… 한 줄)")
+        elif key_names:
+            notes.append(f".env 변수 {len(key_names)}개 로드됨 — SUMMARIZER_API_KEY 또는 GOOGLE_API_KEY=AIza… 추가")
+        else:
+            notes.append(".env가 비어 있거나 읽기 실패 — UTF-8 저장·재업로드")
+        notes.append("PC .env 수정만으로는 VM에 반영 안 됨 — Cloud Shell .env 업로드 후 restart")
+        notes.append("또는 data/gemini_api_key.txt 에 키만 한 줄 저장 가능")
     if summ_key and not sa_path:
         notes.append(
             "GOOGLE_API_KEY = Gemini 브리핑용. Google Sheets 장부는 API키와 별개(JSON 필요)"
@@ -447,6 +608,7 @@ def env_diagnostics(settings: "Settings | None" = None) -> dict:
     return {
         "env_path": env_path,
         "env_exists": (ROOT / ".env").is_file(),
+        "env_files_found": env_files,
         "toss_client_id_set": bool(settings.toss_client_id),
         "toss_client_secret_set": bool(settings.toss_client_secret),
         "has_toss": settings.has_toss,
@@ -459,6 +621,8 @@ def env_diagnostics(settings: "Settings | None" = None) -> dict:
         "service_account_set": sa_path is not None,
         "service_account_path": str(sa_path) if sa_path else "",
         "has_google_sheets": settings.has_google_sheets,
+        "env_key_names": key_names,
+        "env_llm_key_names": llm_like,
         "notes": notes,
     }
 
@@ -470,7 +634,9 @@ def reload_settings() -> Settings:
 
 
 def get_settings() -> Settings:
-    load_dotenv(ROOT / ".env", encoding="utf-8-sig")
+    for p in env_file_paths():
+        if p.is_file() and p.name != "gemini_api_key.txt":
+            load_dotenv(p, encoding="utf-8-sig", override=True)
     _apply_env_file()
     return Settings()
 

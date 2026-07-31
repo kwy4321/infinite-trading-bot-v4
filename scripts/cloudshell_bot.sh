@@ -114,8 +114,25 @@ _sync_secrets() {
   if [[ -f "$ROOT/.env" ]]; then
     scp -o StrictHostKeyChecking=no -i "$SSH_KEY" "$ROOT/.env" "${SSH_USER}@${IP}:${INSTALL_DIR}/.env"
     echo "  .env 업로드"
+    ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "${SSH_USER}@${IP}" bash -s -- "$INSTALL_DIR" <<'VERIFY'
+set -euo pipefail
+DIR="$1"
+ENV="$DIR/.env"
+if grep -qE '^(SUMMARIZER_API_KEY|GOOGLE_API_KEY)=[^[:space:]]' "$ENV" 2>/dev/null; then
+  echo "  ✅ VM .env — AI 키 줄 확인됨"
+else
+  echo "  ❌ VM .env — SUMMARIZER_API_KEY 또는 GOOGLE_API_KEY 값 없음"
+  echo "     Cloud Shell $ENV 를 PC .env 와 동일하게 맞춘 뒤 restart"
+fi
+VERIFY
   else
     echo "  .env 없음 (Cloud Shell $ROOT/.env)"
+    echo "  ⚠️ PC에서 수정한 .env 는 Cloud Shell 로 업로드해야 VM에 반영됩니다"
+  fi
+  if [[ -f "$ROOT/data/gemini_api_key.txt" ]]; then
+    scp -o StrictHostKeyChecking=no -i "$SSH_KEY" "$ROOT/data/gemini_api_key.txt" \
+      "${SSH_USER}@${IP}:${INSTALL_DIR}/data/gemini_api_key.txt"
+    echo "  data/gemini_api_key.txt 업로드 (브리핑 AI fallback)"
   fi
   local json=""
   for candidate in \

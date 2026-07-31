@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import html
 
-from config.settings import ROOT, env_diagnostics, reload_settings, resolve_summarizer_api_key
+from config.settings import ROOT, env_diagnostics, probe_llm_key_in_env_file, reload_settings, resolve_summarizer_api_key
 from tg.build_info import git_rev
 from tg.ui import code, quote, row, section
 
@@ -16,6 +16,7 @@ def format_env_check() -> str:
     sa_path = html.escape(diag.get("service_account_path") or "")
     summ_key, summ_src = resolve_summarizer_api_key(settings.summarizer_provider)
     summ_src = html.escape(summ_src)
+    probe = probe_llm_key_in_env_file()
     lines = [
         section("환경 설정 인식", "🔍"),
         quote(
@@ -35,6 +36,8 @@ def format_env_check() -> str:
         section("아침 브리핑 AI", "🌅"),
         quote(
             row("🤖", "API 키", _mark(bool(summ_key), summ_src)),
+            row("📄", ".env AI줄", _mark(probe.get("line_found", False), probe.get("line_name", ""))),
+            row("🔤", "AIza 패턴", _mark(probe.get("aiza_in_file", False))),
             row("⏰", "BRIEFING", code("on" if diag["briefing_enabled"] else "off")),
         ),
         "",
@@ -45,6 +48,23 @@ def format_env_check() -> str:
             row("✅", "Sheets OK", _mark(diag["has_google_sheets"])),
         ),
     ]
+    if diag.get("env_files_found"):
+        found = ", ".join(html.escape(p) for p in diag["env_files_found"][:3])
+        extra = len(diag["env_files_found"]) - 3
+        if extra > 0:
+            found += f" …(+{extra})"
+        lines.insert(
+            3,
+            quote(row("📂", "env 파일", code(found))),
+        )
+    if diag.get("env_key_names"):
+        names = ", ".join(html.escape(k) for k in diag["env_key_names"][:12])
+        extra = len(diag["env_key_names"]) - 12
+        if extra > 0:
+            names += f" …(+{extra})"
+        lines.append("")
+        lines.append(section(".env 변수", "📝"))
+        lines.append(quote(row("🔑", "로드됨", code(names or "없음"))))
     if diag.get("notes"):
         lines.append("")
         lines.append(section("참고", "💡"))

@@ -1,0 +1,2 @@
+# 이 파일을 gemini_api_key.txt 로 복사한 뒤 API 키만 한 줄 넣으세요 (AIza…)
+# .env 파싱이 안 될 때 브리핑용 Gemini 키 fallback

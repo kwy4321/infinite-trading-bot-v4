@@ -43,8 +43,10 @@ def main() -> int:
             ROOT as PROJECT_ROOT,
             google_sheets_issues,
             is_dry_mode,
+            list_env_file_key_names,
             reload_settings,
             resolve_service_account_path,
+            resolve_summarizer_api_key,
         )
     except ImportError as exc:
         _print_runtime_error(exc)
@@ -52,9 +54,14 @@ def main() -> int:
 
     try:
         settings = reload_settings()
+        summ_key, summ_src = resolve_summarizer_api_key(settings.summarizer_provider)
         json_path = resolve_service_account_path(settings.google_service_account_json)
         issues = google_sheets_issues(settings)
         dry = is_dry_mode(settings, force_live=False)
+        llm_keys = [
+            k for k in list_env_file_key_names()
+            if "API" in k.upper() or "GEMINI" in k.upper() or "SUMMARIZER" in k.upper()
+        ]
         info = {
             "env_file": str(PROJECT_ROOT / ".env"),
             "env_exists": True,
@@ -63,7 +70,10 @@ def main() -> int:
             "toss_client_id": _mask(settings.toss_client_id),
             "trading_mode": "DRY" if dry else "LIVE",
             "briefing_enabled": settings.briefing_enabled,
-            "summarizer_api_key_set": bool(settings.summarizer_api_key),
+            "summarizer_api_key_set": bool(summ_key),
+            "summarizer_api_key_from": summ_src or "",
+            "summarizer_api_key_masked": _mask(summ_key),
+            "env_llm_key_names": llm_keys,
             "summarizer_provider": settings.summarizer_provider,
             "google_sheets_enabled": settings.google_sheets_enabled,
             "google_spreadsheet_id_raw": settings.google_spreadsheet_id or "",
@@ -101,8 +111,12 @@ def main() -> int:
             print("   bash scripts/cloudshell_bot.sh restart")
             config_ok = False
 
-        if settings.briefing_enabled and not settings.summarizer_api_key:
-            print("\n💡 아침 브리핑 AI 요약: SUMMARIZER_API_KEY 또는 GOOGLE_API_KEY(Gemini) 설정")
+        if settings.briefing_enabled and not summ_key:
+            print("\n💡 아침 브리핑 AI: SUMMARIZER_API_KEY 또는 GOOGLE_API_KEY(Gemini) 설정")
+            if llm_keys:
+                print(f"   .env 변수는 있음: {', '.join(llm_keys)} — 값·형식 확인")
+        elif summ_key:
+            print(f"\n✅ 브리핑 AI 키 인식 ({summ_src}) — {_mask(summ_key)}")
 
         if config_ok:
             print("\n✅ 설정 OK")

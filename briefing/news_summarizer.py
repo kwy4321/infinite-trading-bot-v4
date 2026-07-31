@@ -145,24 +145,50 @@ def _summarize_openai(api_key: str, model: str, prompt: str) -> str | None:
         return None
 
 
-def _summarize_gemini(api_key: str, model: str, prompt: str) -> str | None:
-    model = model or "gemini-2.5-flash"
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{model}:generateContent?key={api_key}"
-    )
-    try:
-        resp = requests.post(
-            url,
-            json={"contents": [{"parts": [{"text": prompt}]}]},
-            timeout=45,
+_GEMINI_MODELS = (
+    "gemini-2.5-flash",
+    "gemini-3.5-flash",
+    "gemini-flash-latest",
+    "gemini-2.0-flash",
+)
+
+
+def _summarize_gemini(api_key: str, model: str, prompt: str) -> tuple[str | None, str]:
+    models: list[str] = []
+    if model:
+        models.append(model)
+    for m in _GEMINI_MODELS:
+        if m not in models:
+            models.append(m)
+
+    last_err = ""
+    for m in models:
+        url = (
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{m}:generateContent?key={api_key}"
         )
-        resp.raise_for_status()
-        parts = resp.json()["candidates"][0]["content"]["parts"]
-        return "".join(p.get("text", "") for p in parts).strip()
-    except Exception as exc:
-        logger.warning("Gemini 요약 실패: %s", exc)
-        return None
+        try:
+            resp = requests.post(
+                url,
+                json={"contents": [{"parts": [{"text": prompt}]}]},
+                timeout=45,
+            )
+            if resp.status_code != 200:
+                detail = resp.text[:200].replace("\n", " ")
+                logger.warning("Gemini %s HTTP %s: %s", m, resp.status_code, detail)
+                last_err = f"{m}: HTTP {resp.status_code}"
+                if resp.status_code in (400, 403, 404):
+                    continue
+                return None, last_err
+            parts = resp.json()["candidates"][0]["content"]["parts"]
+            text = "".join(p.get("text", "") for p in parts).strip()
+            if text:
+                return text, ""
+            last_err = f"{m}: empty response"
+        except Exception as exc:
+            logger.warning("Gemini %s 실패: %s", m, exc)
+            last_err = f"{m}: {exc}"
+    return None, last_err or "all models failed"
 
 
 def _split_sections(text: str) -> tuple[str, str] | None:
@@ -203,7 +229,7 @@ def _build_sync(
         env_hint = str(ROOT / ".env")
         return dim(
             f"💡 AI 시황 API 키 없음 — VM .env ({env_hint})에 "
-            "GOOGLE_API_KEY= 또는 SUMMARIZER_API_KEY= 확인 · /envcheck"
+            "SUMMARIZER_API_KEY= 또는 GOOGLE_API_KEY= 확인 · /envcheck"
         )
     if key_src.upper().startswith("OPENAI"):
         provider = "openai"
@@ -229,14 +255,21 @@ def _build_sync(
         )
 
     if provider == "gemini":
-        summary = _summarize_gemini(api_key, settings.summarizer_model, prompt)
+        summary, gem_err = _summarize_gemini(api_key, settings.summarizer_model, prompt)
     else:
         summary = _summarize_openai(api_key, settings.summarizer_model, prompt)
+        gem_err = ""
 
     if summary:
         rendered = _render_analysis(summary)
         if rendered:
             return rendered
+
+    if api_key and gem_err:
+        return dim(
+            f"💡 AI 키는 인식됨 ({html.escape(key_src)}) — Gemini 호출 실패: "
+            f"{html.escape(gem_err)} · /envcheck"
+        )
 
     return dim("AI 시황 요약을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.")
 

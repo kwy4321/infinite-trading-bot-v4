@@ -41,17 +41,7 @@ if grep -q "format_ledger_redirect" tg/handler.py 2>/dev/null; then
   exit 1
 fi
 
-if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files infinite-trading-bot.service &>/dev/null; then
-  if command -v sudo >/dev/null 2>&1 && [[ -x /usr/bin/sudo || -x /bin/sudo ]]; then
-    sudo systemctl restart infinite-trading-bot
-    echo "Service restarted."
-  else
-    echo "systemd unit found but sudo unavailable — bot.sh start"
-    bash scripts/bot.sh start
-  fi
-else
-  echo "No systemd service — bot.sh restart"
-  bash scripts/bot.sh restart
-fi
+echo "=== restart bot ==="
+bash scripts/bot.sh restart
 
 echo "Deploy done: $(git rev-parse --short HEAD)"

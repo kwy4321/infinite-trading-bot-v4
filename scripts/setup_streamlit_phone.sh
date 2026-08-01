@@ -13,13 +13,45 @@ CF="$INSTALL_DIR/data/cloudflared"
 
 echo "=== Streamlit 폰용 HTTPS 터널 ==="
 
-bash "$INSTALL_DIR/scripts/run_streamlit.sh" restart
-code="$(curl -sf -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:8501 2>/dev/null || echo 000)"
-if [[ ! "$code" =~ ^(200|301|302|304)$ ]]; then
-  echo "❌ Streamlit :8501 미응답 — bash scripts/run_streamlit.sh logs"
-  exit 1
+_wait_streamlit() {
+  local i code
+  for i in $(seq 1 35); do
+    code="$(curl -sf -o /dev/null -w '%{http_code}' --max-time 8 http://127.0.0.1:8501 2>/dev/null || echo 000)"
+    if [[ "$code" =~ ^(200|301|302|304)$ ]]; then
+      echo "✅ Streamlit :8501 → HTTP $code"
+      return 0
+    fi
+    if (( i <= 3 || i % 5 == 0 )); then
+      echo "   Streamlit 기동 대기 ($i/35) HTTP $code..."
+    fi
+    sleep 2
+  done
+  echo "❌ Streamlit :8501 타임아웃 (70초)"
+  bash "$INSTALL_DIR/scripts/run_streamlit.sh" logs 2>/dev/null | tail -n 25 || true
+  return 1
+}
+
+_fetch_cf_url() {
+  local url=""
+  url="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$LOG" 2>/dev/null | tail -n 1 || true)"
+  if [[ -n "$url" ]]; then
+    echo "$url"
+    return 0
+  fi
+  if command -v journalctl >/dev/null 2>&1; then
+    url="$(sudo journalctl -u infinite-trading-cloudflared -n 80 --no-pager 2>/dev/null \
+      | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -n 1 || true)"
+  fi
+  [[ -n "$url" ]] && echo "$url"
+}
+
+# nginx :80 점유 시 8501과 무관 — Streamlit만 확인
+if ! _wait_streamlit 2>/dev/null; then
+  echo "Streamlit 재시작..."
+  sudo systemctl stop infinite-trading-dashboard-port80 2>/dev/null || true
+  bash "$INSTALL_DIR/scripts/run_streamlit.sh" restart || bash "$INSTALL_DIR/scripts/run_streamlit.sh" start
+  _wait_streamlit || exit 1
 fi
-echo "✅ Streamlit :8501 OK"
 
 if [[ ! -x "$CF" ]]; then
   echo "cloudflared 다운로드..."
@@ -31,6 +63,7 @@ fi
 
 pkill -f "cloudflared tunnel --url http://127.0.0.1:8501" 2>/dev/null || true
 sudo systemctl stop infinite-trading-cloudflared 2>/dev/null || true
+mkdir -p "$INSTALL_DIR/logs"
 : > "$LOG"
 
 sed "s|__DEPLOY_PATH__|$INSTALL_DIR|g; s|__USER__|$RUN_USER|g" \
@@ -42,15 +75,22 @@ sudo systemctl enable infinite-trading-cloudflared
 sudo systemctl restart infinite-trading-cloudflared
 
 URL=""
-for _ in $(seq 1 25); do
-  URL="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$LOG" 2>/dev/null | tail -n 1 || true)"
+echo "Cloudflare URL 대기 중..."
+for i in $(seq 1 40); do
+  URL="$(_fetch_cf_url || true)"
   [[ -n "$URL" ]] && break
+  if (( i % 5 == 0 )); then
+    echo "   터널 대기 ($i/40)..."
+  fi
   sleep 2
 done
 
 if [[ -z "$URL" ]]; then
-  echo "❌ HTTPS URL 추출 실패"
-  tail -n 40 "$LOG" 2>/dev/null || sudo journalctl -u infinite-trading-cloudflared -n 30 --no-pager
+  echo "❌ HTTPS URL 추출 실패 — cloudflared 로그:"
+  tail -n 30 "$LOG" 2>/dev/null || true
+  sudo journalctl -u infinite-trading-cloudflared -n 40 --no-pager 2>/dev/null || true
+  echo ""
+  echo "수동 시도: $CF tunnel --url http://127.0.0.1:8501"
   exit 1
 fi
 
@@ -78,4 +118,3 @@ echo "✅ .env STREAMLIT_URL → HTTPS 터널"
 grep '^STREAMLIT_URL=' "$ENV_FILE" || true
 echo ""
 echo "봇 반영: bash scripts/cloudshell_bot.sh restart"
-echo "⚠️  VM 재부팅 후 터널 URL 바뀔 수 있음 → 이 스크립트 다시 실행"

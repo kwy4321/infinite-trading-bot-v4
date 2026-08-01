@@ -47,9 +47,21 @@ _start() {
     --server.headless=true \
     >>"$LOGFILE" 2>&1 &
   echo $! >"$PIDFILE"
-  sleep 4
+  local i code
+  for i in $(seq 1 20); do
+    code="$(curl -sf -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$PORT" 2>/dev/null || echo 000)"
+    if [[ "$code" =~ ^(200|301|302|304)$ ]]; then
+      echo "✅ 실행 중 (PID $(cat "$PIDFILE"), HTTP $code)"
+      return 0
+    fi
+    if _running; then
+      sleep 2
+    else
+      break
+    fi
+  done
   if _running; then
-    echo "✅ 실행 중 (PID $(cat "$PIDFILE"))"
+    echo "✅ 실행 중 (PID $(cat "$PIDFILE")) — HTTP 응답 지연 중일 수 있음"
   else
     echo "❌ 시작 실패 — tail $LOGFILE"
     tail -n 30 "$LOGFILE" 2>/dev/null || true

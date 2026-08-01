@@ -45,7 +45,7 @@ _start() {
   _stop
   sleep 1
   : > "$LOG"
-  echo "cloudflared 시작 → Streamlit :8501"
+  echo "cloudflared 시작 → Streamlit :8501" >&2
   nohup "$CF" tunnel --loglevel info --no-autoupdate \
     --url http://127.0.0.1:8501 >>"$LOG" 2>&1 &
   echo $! >"$PIDFILE"

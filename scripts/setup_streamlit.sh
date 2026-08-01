@@ -1,5 +1,5 @@
 #!/bin/bash
-# Streamlit 대시보드 설치·실행 + 모바일 접속 설정
+# Streamlit + nginx(80) — 모바일 LTE·텔레그램 폰 접속용
 # VM: bash scripts/setup_streamlit.sh
 set -euo pipefail
 
@@ -19,30 +19,52 @@ fi
 "$VENV/bin/pip" install -q -r "$INSTALL_DIR/requirements.txt"
 
 PUBLIC_IP="$(curl -4 -s --max-time 5 ifconfig.me 2>/dev/null || curl -4 -s --max-time 5 api.ipify.org 2>/dev/null || true)"
+MOBILE_URL="http://${PUBLIC_IP:-VM공인IP}"
 
-if [[ -f "$ENV_FILE" ]]; then
-  if ! grep -qE '^STREAMLIT_URL=' "$ENV_FILE" 2>/dev/null; then
-    echo "" >> "$ENV_FILE"
-    echo "STREAMLIT_URL=http://${PUBLIC_IP:-VM공인IP}:8501" >> "$ENV_FILE"
-    echo "✅ .env에 STREAMLIT_URL 추가"
-  else
-    current="$(grep '^STREAMLIT_URL=' "$ENV_FILE" | cut -d= -f2- | tr -d '"' | tr -d "'")"
-    if echo "$current" | grep -qE 'localhost|127\.0\.0\.1|0\.0\.0\.0'; then
-      echo "⚠️  STREAMLIT_URL이 localhost 계열 — 폰 접속 불가"
-      echo "   → STREAMLIT_URL=http://${PUBLIC_IP:-공인IP}:8501 로 수정"
-    fi
+_set_streamlit_url() {
+  local url="$1"
+  if [[ ! -f "$ENV_FILE" ]]; then
+    echo "⚠️  .env 없음 — STREAMLIT_URL=$url 수동 추가"
+    return
   fi
-else
-  echo "⚠️  .env 없음 — STREAMLIT_URL=http://${PUBLIC_IP:-공인IP}:8501 수동 추가"
-fi
+  if grep -qE '^STREAMLIT_URL=' "$ENV_FILE" 2>/dev/null; then
+    if grep -qE '^STREAMLIT_URL=.*(:8501|localhost|127\.0\.0\.1)' "$ENV_FILE" 2>/dev/null; then
+      sed -i.bak -E "s|^STREAMLIT_URL=.*|STREAMLIT_URL=$url|" "$ENV_FILE"
+      echo "✅ STREAMLIT_URL → $url (8501/localhost 제거 — 폰용)"
+      rm -f "$ENV_FILE.bak"
+    else
+      echo "ℹ️  STREAMLIT_URL 유지 ($(grep '^STREAMLIT_URL=' "$ENV_FILE" | cut -d= -f2-))"
+    fi
+  else
+    echo "" >> "$ENV_FILE"
+    echo "STREAMLIT_URL=$url" >> "$ENV_FILE"
+    echo "✅ .env에 STREAMLIT_URL=$url 추가"
+  fi
+}
+
+_setup_nginx() {
+  if ! command -v nginx >/dev/null 2>&1; then
+    echo "nginx 설치 중..."
+    sudo apt-get update -qq
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nginx
+  fi
+  sudo cp "$INSTALL_DIR/deploy/nginx-streamlit.conf.tpl" /etc/nginx/sites-available/streamlit-dashboard
+  sudo ln -sf /etc/nginx/sites-available/streamlit-dashboard /etc/nginx/sites-enabled/streamlit-dashboard
+  if [[ -f /etc/nginx/sites-enabled/default ]]; then
+    sudo rm -f /etc/nginx/sites-enabled/default
+  fi
+  sudo nginx -t
+  sudo systemctl enable nginx
+  sudo systemctl restart nginx
+  echo "✅ nginx :80 → Streamlit :8501 프록시"
+}
 
 if command -v ufw >/dev/null 2>&1; then
   if sudo ufw status 2>/dev/null | grep -q "Status: active"; then
-    if ! sudo ufw status 2>/dev/null | grep -q "8501"; then
-      sudo ufw allow 8501/tcp comment 'Streamlit dashboard' || true
-      sudo ufw reload || true
-      echo "✅ ufw 8501/tcp 허용"
-    fi
+    sudo ufw allow 8501/tcp comment 'Streamlit direct' 2>/dev/null || true
+    sudo ufw allow 80/tcp comment 'Streamlit mobile nginx' 2>/dev/null || true
+    sudo ufw reload 2>/dev/null || true
+    echo "✅ ufw 80, 8501 허용"
   fi
 fi
 
@@ -60,9 +82,7 @@ if [[ "$USE_SYSTEMD" == "1" ]]; then
   sudo systemctl daemon-reload
   sudo systemctl enable infinite-trading-dashboard
   sudo systemctl restart infinite-trading-dashboard
-  sudo systemctl status infinite-trading-dashboard --no-pager -l || true
 else
-  echo "sudo/systemd 없음 — run_streamlit.sh 로 백그라운드 실행"
   bash "$INSTALL_DIR/scripts/run_streamlit.sh" restart
 fi
 
@@ -79,25 +99,30 @@ _wait_streamlit() {
 
 echo ""
 if _wait_streamlit; then
-  echo "✅ Streamlit 로컬(127.0.0.1:8501) 응답 OK"
+  echo "✅ Streamlit :8501 로컬 OK"
 else
-  echo "❌ 로컬 접속 실패"
-  if [[ "$USE_SYSTEMD" == "1" ]]; then
-    sudo journalctl -u infinite-trading-dashboard -n 40 --no-pager 2>/dev/null || true
-    sudo systemctl stop infinite-trading-dashboard 2>/dev/null || true
-  fi
-  bash "$INSTALL_DIR/scripts/run_streamlit.sh" restart || true
-  _wait_streamlit && echo "✅ run_streamlit.sh 폴백 OK" || echo "로그: bash scripts/run_streamlit.sh logs"
+  echo "❌ Streamlit 로컬 실패 — bash scripts/run_streamlit.sh logs"
 fi
 
-if [[ -n "$PUBLIC_IP" ]] && command -v ss >/dev/null 2>&1; then
-  echo ""
-  ss -tlnp 2>/dev/null | grep ':8501' || true
+NGINX_OK=0
+if _setup_nginx 2>/dev/null; then
+  NGINX_OK=1
+  _set_streamlit_url "$MOBILE_URL"
+else
+  echo "⚠️  nginx 설정 실패 — STREAMLIT_URL=http://${PUBLIC_IP:-공인IP}:8501 (PC만 가능할 수 있음)"
+  _set_streamlit_url "http://${PUBLIC_IP:-VM공인IP}:8501"
 fi
 
 echo ""
-echo "=== 모바일 접속 ==="
-echo "📱 http://${PUBLIC_IP:-공인IP}:8501"
-echo "📈 텔레그램: 📈 대시보드 메뉴"
+echo "=== 접속 URL ==="
+if [[ "$NGINX_OK" == "1" ]]; then
+  echo "📱 폰 (권장): $MOBILE_URL  ← 포트 80, LTE OK"
+  echo "💻 PC 직접:   http://${PUBLIC_IP:-VM공인IP}:8501"
+else
+  echo "http://${PUBLIC_IP:-VM공인IP}:8501"
+fi
+echo ""
+echo "Oracle/GCP 방화벽: TCP 80 + 8501 Ingress 허용"
+echo "폰: 텔레그램 버튼 → ⋯ → Safari/Chrome에서 열기 (내장 브라우저 X)"
 echo "진단: bash scripts/check_streamlit.sh"
-echo "봇 재시작: bash scripts/cloudshell_bot.sh restart"
+echo "봇: bash scripts/cloudshell_bot.sh restart"

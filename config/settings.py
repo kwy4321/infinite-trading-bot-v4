@@ -727,6 +727,8 @@ def env_diagnostics(settings: "Settings | None" = None) -> dict:
         notes.append("STREAMLIT_URL 미설정 — setup_streamlit.sh 실행 후 📈 대시보드 메뉴 사용")
     elif any(x in streamlit_link for x in ("localhost", "127.0.0.1", "0.0.0.0")):
         notes.append("STREAMLIT_URL에 localhost/127.0.0.1 사용 중 — 폰에서 접속 불가, 공인IP로 변경")
+    elif ":8501" in streamlit_link:
+        notes.append("STREAMLIT_URL :8501 — PC만 될 수 있음. bash scripts/setup_streamlit.sh 로 nginx :80 전환 (폰/LTE)")
     return {
         "env_path": env_path,
         "env_exists": (ROOT / ".env").is_file(),

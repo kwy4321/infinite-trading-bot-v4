@@ -123,7 +123,7 @@ bash scripts/check_streamlit.sh   # 모바일 접속 진단
 `.env`에 `STREAMLIT_URL=http://공인IP:8501` → 텔레그램 **`📈 대시보드`** 메뉴에서 Streamlit 링크.  
 `📊 장부`는 Google Sheets 전용.
 
-**폰 접속 안 될 때:** Oracle/GCP Security List Ingress TCP 8501, `ufw allow 8501`, URL에 localhost 사용 금지.
+**폰 접속 안 될 때:** LTE는 **8501 포트 차단**이 흔함 → `setup_streamlit.sh`가 **nginx :80** 프록시 설정. 텔레그램 내장 브라우저 말고 **Safari/Chrome**에서 URL 직접 열기.
 
 ### Google Sheets 설정
 

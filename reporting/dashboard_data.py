@@ -123,7 +123,7 @@ def collect_portfolio_snapshot(app: "App", *, fetch_live_price: bool = False) ->
         "active_cycles": stats.get("active_cycles", 0),
         "symbols": [
             collect_symbol_status(app, sym, fetch_live_price=fetch_live_price)
-            for sym in SYMBOLS
+            for sym in app.runtime.active_symbols()
         ],
     }
 

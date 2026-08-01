@@ -15,7 +15,7 @@ import pandas as pd
 import streamlit as st
 
 from app import App
-from config.settings import SYMBOLS, get_settings
+from config.settings import get_settings
 from dashboard.glass_theme import glass_login_box, inject_dashboard_theme
 from reporting.dashboard_data import (
     collect_all_trades,
@@ -252,8 +252,9 @@ def main() -> None:
 
     app = get_app()
     prepare_ledger_for_export(app)
+    active = list(app.runtime.active_symbols())
     snapshot = collect_portfolio_snapshot(app, fetch_live_price=True)
-    trades = collect_all_trades(app)
+    trades = [t for t in collect_all_trades(app) if t.get("symbol") in active]
     symbols = snapshot.get("symbols") or []
 
     _header(snapshot)
@@ -277,7 +278,7 @@ def main() -> None:
     tab1, tab2, tab3, tab4 = st.tabs(["상세", "체결", "회차", "월별"])
 
     with tab1:
-        names = [s.get("symbol") for s in symbols if s.get("symbol")] or list(SYMBOLS)
+        names = [s.get("symbol") for s in symbols if s.get("symbol")] or active
         pick = st.radio("종목", names, horizontal=True, label_visibility="collapsed")
         if pick:
             _detail(app, pick, trades)
@@ -285,7 +286,7 @@ def main() -> None:
     with tab2:
         c1, c2 = st.columns(2)
         with c1:
-            syms = st.multiselect("종목", SYMBOLS, default=list(SYMBOLS), placeholder="종목")
+            syms = st.multiselect("종목", active, default=list(active), placeholder="종목")
         with c2:
             side = st.selectbox("구분", ["전체", "매수", "매도"], label_visibility="collapsed")
         df = pd.DataFrame(trades)
@@ -306,7 +307,7 @@ def main() -> None:
             _show_trades(show, height=260)
 
     with tab3:
-        cycles = collect_completed_cycles(app)
+        cycles = [c for c in collect_completed_cycles(app) if c.get("symbol") in active]
         if cycles:
             cdf = pd.DataFrame(cycles)
             show_cols = {
@@ -330,6 +331,7 @@ def main() -> None:
     with tab4:
         year = st.selectbox("연도", list(range(datetime.date.today().year, 2019, -1)), label_visibility="collapsed")
         monthly = collect_monthly_rows(app, int(year))
+        monthly = [m for m in monthly if m.get("scope") == "전체" or m.get("scope") in active]
         if monthly:
             mdf = pd.DataFrame([m for m in monthly if m.get("scope") == "전체"])
             if not mdf.empty:

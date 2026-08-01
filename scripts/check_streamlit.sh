@@ -27,11 +27,13 @@ code8501="$(_http_code http://127.0.0.1:8501)"
 [[ "$code8501" =~ ^(200|301|302|304)$ ]] && echo "✅ 로컬 :8501 → $code8501" || echo "❌ 로컬 :8501 → $code8501"
 
 echo ""
-echo "--- nginx :80 (폰/LTE용) ---"
+echo "--- nginx / :80 (폰/LTE용) ---"
 if systemctl is-active nginx >/dev/null 2>&1; then
   echo "✅ nginx 실행 중"
+elif systemctl is-active infinite-trading-dashboard-port80 >/dev/null 2>&1; then
+  echo "✅ Streamlit :80 직접 실행 (systemd)"
 else
-  echo "❌ nginx 중지 — bash scripts/setup_nginx.sh"
+  echo "❌ :80 미설정 — bash scripts/setup_streamlit_mobile.sh"
 fi
 ss -tlnp 2>/dev/null | grep ':80 ' || echo "❌ 80 리스닝 없음"
 code80="$(_http_code http://127.0.0.1:80)"
@@ -60,7 +62,7 @@ echo "--- 외부 접속 (VM→공인IP) ---"
 if [[ -n "$PUBLIC_IP" ]]; then
   ext80="$(_http_code "http://${PUBLIC_IP}:80")"
   ext8501="$(_http_code "http://${PUBLIC_IP}:8501")"
-  [[ "$ext80" =~ ^(200|301|302|304)$ ]] && echo "✅ http://${PUBLIC_IP} (:80) → $ext80" || echo "❌ http://${PUBLIC_IP} (:80) → $ext80 — Oracle Ingress TCP 80"
+  [[ "$ext80" =~ ^(200|301|302|304)$ ]] && echo "✅ http://${PUBLIC_IP} (:80) → $ext80" || echo "❌ http://${PUBLIC_IP} (:80) → $ext80 — VM 내부 curl은 000일 수 있음(OCI hairpin). 로컬 :80 확인"
   [[ "$ext8501" =~ ^(200|301|302|304)$ ]] && echo "✅ http://${PUBLIC_IP}:8501 → $ext8501" || echo "⚠️  http://${PUBLIC_IP}:8501 → $ext8501 (PC Wi-Fi만 될 수 있음)"
 fi
 
@@ -71,4 +73,6 @@ echo "2) Oracle VCN Security List: TCP 80, 8501 Ingress"
 echo "3) 텔레그램: 버튼 후 ⋯ → Safari/Chrome (내장 브라우저는 Streamlit WebSocket 실패)"
 echo "4) LTE ↔ Wi-Fi 전환"
 echo ""
-echo "설정: bash scripts/setup_nginx.sh && bash scripts/cloudshell_bot.sh restart"
+echo "설정: bash scripts/setup_streamlit_mobile.sh"
+echo "또는 Cloud Shell: bash scripts/cloudshell_bot.sh streamlit-mobile"
+echo "대안(HTTPS): bash scripts/streamlit_cloudflare_tunnel.sh"

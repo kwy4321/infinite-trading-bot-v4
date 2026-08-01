@@ -193,16 +193,19 @@ case "$ACTION" in
   streamlit)
     git fetch origin main
     git reset --hard origin/main
-    bash scripts/setup_streamlit.sh || true
-    sudo systemctl stop infinite-trading-dashboard 2>/dev/null || true
-    bash scripts/run_streamlit.sh restart
+    bash scripts/setup_streamlit_mobile.sh || bash scripts/setup_streamlit.sh || true
     if [[ -x scripts/streamlit_doctor.sh ]]; then
       bash scripts/streamlit_doctor.sh
     else
-      bash scripts/run_streamlit.sh status || true
-      ss -tlnp | grep 8501 || true
-      curl -sf -o /dev/null -w "127.0.0.1:8501 → HTTP %{http_code}\n" --max-time 5 http://127.0.0.1:8501 || true
+      bash scripts/check_streamlit.sh || true
     fi
+    exit 0
+    ;;
+  streamlit-mobile)
+    git fetch origin main
+    git reset --hard origin/main
+    bash scripts/setup_streamlit_mobile.sh
+    bash scripts/check_streamlit.sh || true
     exit 0
     ;;
   streamlit-start)

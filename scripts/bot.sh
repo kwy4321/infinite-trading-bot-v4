@@ -102,7 +102,9 @@ case "$ACTION" in
       _start_nohup
     fi
     if grep -q 'trycloudflare.com' "$ROOT/.env" 2>/dev/null; then
-      bash "$ROOT/scripts/run_cloudflared.sh" ensure 2>/dev/null || true
+      bash "$ROOT/scripts/run_cloudflared.sh" ensure || {
+        echo "⚠️ cloudflared 터널 기동 실패 — bash scripts/run_cloudflared.sh logs"
+      }
     fi
     echo ""
     echo "=== 텔레그램 연결 확인 ==="
@@ -118,7 +120,9 @@ case "$ACTION" in
       _start_nohup
     fi
     if grep -q 'trycloudflare.com' "$ROOT/.env" 2>/dev/null; then
-      bash "$ROOT/scripts/run_cloudflared.sh" ensure 2>/dev/null || true
+      bash "$ROOT/scripts/run_cloudflared.sh" ensure || {
+        echo "⚠️ cloudflared 터널 기동 실패 — bash scripts/run_cloudflared.sh logs"
+      }
     fi
     ;;
   status)

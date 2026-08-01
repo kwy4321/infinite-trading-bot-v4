@@ -124,6 +124,9 @@ elif echo "$cf_env_url" | grep -q 'trycloudflare.com'; then
   echo "❌ .env URL 있으나 터널 꺼짐 (폰 접속 불가)"
   echo "   $cf_env_url"
   echo "   → bash scripts/cloudshell_bot.sh streamlit-phone"
+  echo ""
+  echo "💡 우회: Oracle :8501 이 열려 있으면 폰 LTE에서도 시도:"
+  echo "   http://${PUBLIC_IP:-공인IP}:8501"
 else
   echo "ℹ️  미설정 — bash scripts/cloudshell_bot.sh streamlit-phone"
 fi

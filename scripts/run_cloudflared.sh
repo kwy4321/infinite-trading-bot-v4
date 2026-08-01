@@ -95,8 +95,10 @@ _start() {
   sleep 1
   if _systemd_available; then
     _install_systemd
+    : > "$LOG"
     echo "cloudflared systemd 시작 → Streamlit :8501" >&2
     sudo systemctl restart "$UNIT"
+    sleep 2
   else
     _start_nohup
   fi
@@ -135,7 +137,11 @@ case "$ACTION" in
       exit 0
     fi
     _start
-    _wait_url >/dev/null || true
+    if _wait_url >/dev/null; then
+      exit 0
+    fi
+    echo "❌ cloudflared 기동 실패 — bash scripts/run_cloudflared.sh logs" >&2
+    exit 1
     ;;
   url)
     if [[ -f "$URLFILE" ]]; then cat "$URLFILE"; exit 0; fi

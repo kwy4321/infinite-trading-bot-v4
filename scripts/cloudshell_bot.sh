@@ -111,9 +111,22 @@ _connect() {
 _sync_secrets() {
   echo "=== Cloud Shell → VM .env / Sheets JSON 동기화 ==="
   ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "${SSH_USER}@${IP}" "mkdir -p '$INSTALL_DIR/data'"
+
+  VM_STREAMLIT_URL=""
+  VM_STREAMLIT_URL="$(ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "${SSH_USER}@${IP}" \
+    "grep '^STREAMLIT_URL=' '$INSTALL_DIR/.env' 2>/dev/null | cut -d= -f2- | tr -d '\"'" || true)"
+
   if [[ -f "$ROOT/.env" ]]; then
     scp -o StrictHostKeyChecking=no -i "$SSH_KEY" "$ROOT/.env" "${SSH_USER}@${IP}:${INSTALL_DIR}/.env"
     echo "  .env 업로드"
+    if [[ "$VM_STREAMLIT_URL" == *trycloudflare.com* ]]; then
+      LOCAL_STREAMLIT_URL="$(grep '^STREAMLIT_URL=' "$ROOT/.env" 2>/dev/null | cut -d= -f2- | tr -d '"' || true)"
+      if [[ "$LOCAL_STREAMLIT_URL" != *trycloudflare.com* ]]; then
+        ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "${SSH_USER}@${IP}" \
+          "sed -i.bak -E 's|^STREAMLIT_URL=.*|STREAMLIT_URL=${VM_STREAMLIT_URL}|' '$INSTALL_DIR/.env' && rm -f '$INSTALL_DIR/.env.bak'"
+        echo "  ℹ️  VM HTTPS 터널 URL 유지 (Cloud Shell .env가 덮어쓰지 않음)"
+      fi
+    fi
     ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "${SSH_USER}@${IP}" bash -s -- "$INSTALL_DIR" <<'VERIFY'
 set -euo pipefail
 DIR="$1"

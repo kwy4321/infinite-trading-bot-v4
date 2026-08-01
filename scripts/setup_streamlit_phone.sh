@@ -62,6 +62,11 @@ echo "============================================"
 echo ""
 grep '^STREAMLIT_URL=' "$ENV_FILE" || true
 echo ""
+if ! bash "$INSTALL_DIR/scripts/run_cloudflared.sh" status 2>/dev/null | grep -q '✅'; then
+  echo "❌ cloudflared 미실행 — 로그:"
+  bash "$INSTALL_DIR/scripts/run_cloudflared.sh" logs 2>/dev/null | tail -n 15 || true
+  exit 1
+fi
 echo "터널 상태: bash scripts/run_cloudflared.sh status"
 echo "봇 반영: bash scripts/cloudshell_bot.sh restart"
 echo "URL 재확인: bash scripts/run_cloudflared.sh url"

@@ -36,6 +36,7 @@ from tg.keyboards import (
     trading_symbols_keyboard,
     main_menu_keyboard,
     ledger_keyboard,
+    dashboard_keyboard,
     MAIN_HOME,
     MAIN_HOME_LEGACY,
     MAIN_PLAN,
@@ -43,6 +44,7 @@ from tg.keyboards import (
     MAIN_STATUS,
     MAIN_BALANCE,
     MAIN_LEDGER,
+    MAIN_DASHBOARD,
     MAIN_CYCLES,
 )
 from tg.sender import TelegramSender
@@ -341,7 +343,39 @@ class TelegramHandler:
             await update.message.reply_text(f"🚨 장부 안내 실패: {e}")
 
     async def cmd_dashboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        return await self.cmd_ledger(update, context)
+        """Streamlit 현황 대시보드."""
+        if not self._allowed(update):
+            return await self._deny(update)
+        try:
+            await self._refresh_main_menu(update)
+            self._refresh_env()
+            url = self.app.settings.streamlit_link
+            markup = dashboard_keyboard(self.app.settings)
+            if not url or not markup:
+                await update.message.reply_text(
+                    "⚠️ <b>대시보드 URL 미설정</b>\n\n"
+                    "VM에서 아래 순서로 설정하세요:\n"
+                    "1) bash scripts/setup_streamlit.sh\n"
+                    "2) .env → STREAMLIT_URL=http://공인IP:8501\n"
+                    "3) bash scripts/cloudshell_bot.sh restart\n\n"
+                    "📱 폰 접속: Oracle/GCP 방화벽 TCP 8501 허용 필요",
+                    reply_markup=self._main_menu_markup(),
+                    parse_mode="HTML",
+                )
+                return
+            await update.message.reply_text(
+                "📈 <b>현황 대시보드</b>\n"
+                "아래 버튼으로 Streamlit을 여세요.\n\n"
+                f"🔗 {html.escape(url)}\n\n"
+                "📱 폰에서 안 열리면:\n"
+                "· Wi-Fi ↔ LTE 전환\n"
+                "· VM: bash scripts/check_streamlit.sh",
+                reply_markup=markup,
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.exception("dashboard menu failed")
+            await update.message.reply_text(f"🚨 대시보드 안내 실패: {e}")
 
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await self.cmd_home(update, context)
@@ -446,10 +480,10 @@ class TelegramHandler:
         await target.reply_text(text, reply_markup=markup)
 
     async def cmd_cycles(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        return await self.cmd_ledger(update, context)
+        return await self.cmd_dashboard(update, context)
 
     async def cmd_monthly(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        return await self.cmd_ledger(update, context)
+        return await self.cmd_dashboard(update, context)
 
     async def cmd_run(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
@@ -479,7 +513,7 @@ class TelegramHandler:
         )
 
     async def cmd_history(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        return await self.cmd_ledger(update, context)
+        return await self.cmd_dashboard(update, context)
 
     async def cmd_sheets_sync(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
@@ -880,6 +914,7 @@ class TelegramHandler:
             "📈 현황": self.cmd_home,
             MAIN_BALANCE: self.cmd_balance,
             MAIN_LEDGER: self.cmd_ledger,
+            MAIN_DASHBOARD: self.cmd_dashboard,
             MAIN_CYCLES: self.cmd_ledger,
             "📒 회차내역": self.cmd_ledger,
         }

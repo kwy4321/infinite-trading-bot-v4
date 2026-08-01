@@ -1,4 +1,4 @@
-"""Streamlit dashboard — 모바일 우선 현황 (read-only)."""
+"""Streamlit dashboard — glassmorphism UI, mobile-first."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ import streamlit as st
 
 from app import App
 from config.settings import SYMBOLS, get_settings
+from dashboard.glass_theme import glass_login_box, inject_dashboard_theme
 from reporting.dashboard_data import (
     collect_all_trades,
     collect_completed_cycles,
@@ -23,84 +24,6 @@ from reporting.dashboard_data import (
     collect_symbol_status,
     prepare_ledger_for_export,
 )
-
-# 모바일(폰) 우선 — 한 손 조작, 세로 스크롤
-CSS = """
-<style>
-  #MainMenu, footer, header { visibility: hidden; }
-  .block-container {
-    padding: 0.55rem 0.7rem 2.5rem !important;
-    max-width: 100% !important;
-  }
-  .stButton > button, .stLinkButton > a {
-    min-height: 44px; font-size: 0.95rem; font-weight: 600;
-    border-radius: 10px;
-  }
-  .stTabs [data-baseweb="tab"] {
-    min-height: 44px; font-size: 0.88rem; font-weight: 650; padding: 0 0.65rem;
-  }
-  div[data-testid="stHorizontalBlock"] { gap: 0.45rem; }
-  div[data-testid="stDataFrame"] { font-size: 0.82rem; }
-
-  .hdr {
-    background: linear-gradient(135deg, #152238, #0f1729);
-    border: 1px solid #243049; border-radius: 14px;
-    padding: 0.85rem 0.95rem; margin-bottom: 0.75rem;
-  }
-  .hdr .title { font-size: 1.15rem; font-weight: 800; color: #f1f5f9; }
-  .hdr .meta { font-size: 0.75rem; color: #94a3b8; margin-top: 0.25rem; }
-  .badges { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.55rem; }
-  .badge {
-    font-size: 0.7rem; font-weight: 700; padding: 0.2rem 0.55rem;
-    border-radius: 999px;
-  }
-  .b-live { background: rgba(34,211,165,.18); color: #34d399; }
-  .b-dry  { background: rgba(251,191,36,.18); color: #fbbf24; }
-  .b-run  { background: rgba(56,189,248,.18); color: #38bdf8; }
-  .b-stop { background: rgba(248,113,113,.18); color: #f87171; }
-
-  .box {
-    background: #141d2e; border: 1px solid #243049; border-radius: 12px;
-    padding: 0.75rem 0.85rem; margin-bottom: 0.55rem;
-  }
-  .box .lbl { font-size: 0.68rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.04em; }
-  .box .val { font-size: 1.35rem; font-weight: 750; color: #f8fafc; margin-top: 0.15rem; line-height: 1.2; }
-  .box .sub { font-size: 0.72rem; color: #64748b; margin-top: 0.2rem; }
-
-  .sym {
-    background: #141d2e; border: 1px solid #243049; border-radius: 14px;
-    padding: 0.9rem 1rem; margin-bottom: 0.65rem;
-  }
-  .sym-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.5rem; }
-  .sym-name { font-size: 1.2rem; font-weight: 800; color: #f8fafc; }
-  .sym-pnl { text-align: right; font-size: 1rem; font-weight: 700; }
-  .sym-meta { font-size: 0.75rem; color: #94a3b8; margin-top: 0.35rem; }
-  .sym-row {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 0.55rem; margin-top: 0.7rem;
-  }
-  .sym-cell { background: rgba(148,163,184,.06); border-radius: 8px; padding: 0.5rem 0.6rem; }
-  .sym-cell .k { font-size: 0.65rem; color: #64748b; }
-  .sym-cell .v { font-size: 0.92rem; font-weight: 700; color: #e2e8f0; margin-top: 0.1rem; }
-
-  .bar { height: 6px; background: rgba(148,163,184,.15); border-radius: 99px; margin-top: 0.55rem; overflow: hidden; }
-  .bar > i { display: block; height: 100%; background: linear-gradient(90deg, #38bdf8, #818cf8); border-radius: 99px; }
-
-  .up { color: #34d399 !important; }
-  .down { color: #f87171 !important; }
-  .flat { color: #94a3b8 !important; }
-
-  .sec { font-size: 0.95rem; font-weight: 700; color: #e2e8f0; margin: 1rem 0 0.5rem; }
-  .empty {
-    text-align: center; color: #64748b; font-size: 0.88rem;
-    padding: 1.5rem 0.75rem; border: 1px dashed #243049; border-radius: 12px;
-  }
-
-  .kv { display: grid; grid-template-columns: 1fr 1fr; gap: 0.45rem; margin-top: 0.65rem; }
-  .kv .c { background: rgba(148,163,184,.06); border: 1px solid #243049; border-radius: 10px; padding: 0.55rem 0.65rem; }
-  .kv .c .k { font-size: 0.65rem; color: #64748b; }
-  .kv .c .v { font-size: 0.88rem; font-weight: 700; color: #e2e8f0; margin-top: 0.08rem; }
-</style>
-"""
 
 TRADE_MOBILE = ["date", "side", "qty", "price", "amount_usd", "note"]
 TRADE_LABELS = {
@@ -119,7 +42,10 @@ def _auth(settings) -> bool:
     pwd = (settings.streamlit_password or "").strip()
     if not pwd or st.session_state.get("authed"):
         return True
-    st.markdown("### 🔐 로그인")
+    st.markdown(
+        glass_login_box("♾️ 라오어 무한매수 4.0", "대시보드 접속을 위해 비밀번호를 입력하세요"),
+        unsafe_allow_html=True,
+    )
     with st.form("login"):
         p = st.text_input("비밀번호", type="password", placeholder="비밀번호")
         if st.form_submit_button("입장", use_container_width=True, type="primary"):
@@ -178,10 +104,7 @@ def _kpis(snapshot: dict) -> None:
     with r1a:
         st.markdown(_kpi_box("총 자산", _usd(total), f"₩{krw:,.0f}" if krw else ""), unsafe_allow_html=True)
     with r1b:
-        st.markdown(
-            _kpi_box("평가 손익", _usd(unreal, True), "", _cls(unreal)),
-            unsafe_allow_html=True,
-        )
+        st.markdown(_kpi_box("평가 손익", _usd(unreal, True), "", _cls(unreal)), unsafe_allow_html=True)
     r2a, r2b = st.columns(2)
     with r2a:
         st.markdown(
@@ -235,8 +158,7 @@ def _trades_df(trades: list[dict], symbol: str | None = None) -> pd.DataFrame:
     df = pd.DataFrame(rows).sort_values("datetime", ascending=False)
     df["side"] = df["side"].map(lambda s: SIDE_KO.get(str(s).upper(), s))
     cols = [c for c in TRADE_MOBILE if c in df.columns]
-    out = df[cols].rename(columns={k: TRADE_LABELS[k] for k in cols})
-    return out
+    return df[cols].rename(columns={k: TRADE_LABELS[k] for k in cols})
 
 
 def _show_trades(df: pd.DataFrame, height: int = 360) -> None:
@@ -278,8 +200,8 @@ def _detail(app: App, symbol: str, trades: list[dict]) -> None:
         ("역매수", "ON" if d.get("reverse_mode") else "OFF"),
         ("강제1회", "ON" if d.get("force_one") else "OFF"),
     ]
-    html = "".join(f'<div class="c"><div class="k">{k}</div><div class="v">{v}</div></div>' for k, v in cells)
-    st.markdown(f'<div class="kv">{html}</div>', unsafe_allow_html=True)
+    html_cells = "".join(f'<div class="c"><div class="k">{k}</div><div class="v">{v}</div></div>' for k, v in cells)
+    st.markdown(f'<div class="kv">{html_cells}</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="sec">최근 체결</div>', unsafe_allow_html=True)
     _show_trades(_trades_df(trades, symbol), height=280)
@@ -293,7 +215,7 @@ def main() -> None:
         layout="wide",
         initial_sidebar_state="collapsed",
     )
-    st.markdown(CSS, unsafe_allow_html=True)
+    inject_dashboard_theme()
 
     if not _auth(settings):
         st.stop()
@@ -314,6 +236,9 @@ def main() -> None:
     with b2:
         if settings.google_sheets_link:
             st.link_button("📗 Sheets", settings.google_sheets_link, use_container_width=True)
+
+    if settings.streamlit_link:
+        st.caption(f"📱 {settings.streamlit_link}")
 
     _kpis(snapshot)
 
@@ -380,7 +305,10 @@ def main() -> None:
         if monthly:
             mdf = pd.DataFrame([m for m in monthly if m.get("scope") == "전체"])
             if not mdf.empty:
-                mdf = mdf.rename(columns={"month": "월", "cycles": "회차", "profit_usd": "실현", "profit_pct_on_buy": "수익률"})
+                mdf = mdf.rename(columns={
+                    "month": "월", "cycles": "회차",
+                    "profit_usd": "실현", "profit_pct_on_buy": "수익률",
+                })
                 st.dataframe(
                     mdf[["월", "회차", "실현", "수익률"]],
                     use_container_width=True,

@@ -717,13 +717,16 @@ def env_diagnostics(settings: "Settings | None" = None) -> dict:
         notes.extend(alias_conflicts)
     if settings.has_toss and not (toss_diag["id_format_ok"] and toss_diag["secret_format_ok"]):
         notes.extend(toss_diag.get("notes") or [])
-    if settings.has_toss and toss_diag["id_format_ok"] and toss_diag["secret_format_ok"]:
-        pass
-    elif settings.has_toss:
-        notes.append("Toss 키 형식 이상 — WTS Open API에서 Client ID·Secret(tsck_live_…) 재복사")
+        if not toss_diag.get("notes"):
+            notes.append("Toss 키 형식 이상 — WTS Open API에서 Client ID·Secret(tsck_live_…) 재복사")
     pub_ip = fetch_public_ip()
     if pub_ip:
         notes.append(f"서버 공인 IP: {pub_ip} — WTS 허용 IP와 일치해야 Toss API 동작")
+    streamlit_link = settings.streamlit_link
+    if not streamlit_link:
+        notes.append("STREAMLIT_URL 미설정 — setup_streamlit.sh 실행 후 📈 대시보드 메뉴 사용")
+    elif any(x in streamlit_link for x in ("localhost", "127.0.0.1", "0.0.0.0")):
+        notes.append("STREAMLIT_URL에 localhost/127.0.0.1 사용 중 — 폰에서 접속 불가, 공인IP로 변경")
     return {
         "env_path": env_path,
         "env_exists": (ROOT / ".env").is_file(),
@@ -746,6 +749,8 @@ def env_diagnostics(settings: "Settings | None" = None) -> dict:
         "service_account_set": sa_path is not None,
         "service_account_path": str(sa_path) if sa_path else "",
         "has_google_sheets": settings.has_google_sheets,
+        "streamlit_url_set": bool(streamlit_link),
+        "streamlit_password_set": bool((settings.streamlit_password or "").strip()),
         "env_key_names": key_names,
         "env_llm_key_names": llm_like,
         "notes": notes,

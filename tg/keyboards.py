@@ -11,10 +11,21 @@ MAIN_PLAN = "📋 주문계획"
 MAIN_SETTING = "⚙️ 설정"
 MAIN_BALANCE = "💼 잔고"
 MAIN_LEDGER = "📊 장부"
+MAIN_DASHBOARD = "📈 대시보드"
 # 구 하단 메뉴 라벨 (키보드 갱신 전 — 탭 시 메인·현황과 동일 동작)
 MAIN_STATUS = "♾️ 현황"
 MAIN_HOME_LEGACY = "🏠 메인"
 MAIN_CYCLES = MAIN_LEDGER  # 하위 호환
+
+
+def dashboard_keyboard(settings) -> InlineKeyboardMarkup | None:
+    """Streamlit 대시보드 바로가기."""
+    url = settings.streamlit_link
+    if not url:
+        return None
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📈 대시보드 열기", url=url)],
+    ])
 
 
 def ledger_keyboard(settings) -> InlineKeyboardMarkup | None:
@@ -35,7 +46,7 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [
             [KeyboardButton(MAIN_HOME), KeyboardButton(MAIN_PLAN), KeyboardButton(MAIN_SETTING)],
-            [KeyboardButton(MAIN_BALANCE), KeyboardButton(MAIN_LEDGER)],
+            [KeyboardButton(MAIN_BALANCE), KeyboardButton(MAIN_LEDGER), KeyboardButton(MAIN_DASHBOARD)],
         ],
         resize_keyboard=True,
         is_persistent=True,

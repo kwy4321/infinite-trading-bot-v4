@@ -112,24 +112,18 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup_and_run.ps1
 
 장부·회차·월별 수익은 **Streamlit**과 **Google Sheets**에서 확인합니다. 텔레그램은 주문·설정·현황(T) 중심으로 사용합니다.
 
-### Streamlit 실행
+### Streamlit 실행 (VM)
 
 ```bash
 cd ~/infinite-trading-bot-v4
-source .venv/bin/activate
-pip install -r requirements.txt
-streamlit run dashboard/streamlit_app.py --server.port 8501 --server.address=0.0.0.0
+bash scripts/setup_streamlit.sh   # 설치·방화벽·STREAMLIT_URL 자동 설정
+bash scripts/check_streamlit.sh   # 모바일 접속 진단
 ```
 
-`.env`에 `STREAMLIT_URL=http://서버IP:8501` 설정 → 텔레그램 `/dashboard`, `📊 장부` 메뉴에서 링크 표시.
+`.env`에 `STREAMLIT_URL=http://공인IP:8501` → 텔레그램 **`📈 대시보드`** 메뉴에서 Streamlit 링크.  
+`📊 장부`는 Google Sheets 전용.
 
-systemd (선택):
-
-```bash
-sudo cp deploy/infinite-trading-dashboard.service.tpl /etc/systemd/system/infinite-trading-dashboard.service
-# User, WorkingDirectory, ExecStart 경로 수정 후
-sudo systemctl enable --now infinite-trading-dashboard
-```
+**폰 접속 안 될 때:** Oracle/GCP Security List Ingress TCP 8501, `ufw allow 8501`, URL에 localhost 사용 금지.
 
 ### Google Sheets 설정
 
@@ -163,16 +157,16 @@ STREAMLIT_URL=http://서버IP:8501
 
 | 구분 | 명령 | 설명 |
 |------|------|------|
-| 현황 | `/dashboard` | Streamlit·Sheets 장부 링크 |
+| 현황 | `/dashboard`, `📈 대시보드` | Streamlit 현황 대시보드 |
 | | `/status [종목]` | 전략·T·잔고 상세 |
 | | `/balance` | Toss API 계좌 잔고 (`DRY_RUN=false`) |
 | | `/plan [종목]` | 오늘 T 기준 주문 계획 |
 | | `/sync [종목]` | API 수량·평단 → 기록 반영 |
-| | `/sheets_sync` | Google Sheets 수동 동기화 |
+| | `/sheets_sync`, `📊 장부` | Google Sheets 장부 |
 | 설정 | `/setting` | 원금·분할·리버스·강제1회 |
 | | `/split` | 액면분할 |
 | | `/set_t <값> [종목]` | T 수동 조정 |
-| 장부 | `/cycles`, `/monthly`, `/history` | Streamlit·Sheets 안내 |
+| 장부 | `/cycles`, `/monthly`, `/history` | Streamlit 대시보드 안내 |
 | | `/cycle_done [종목]` | 수동 졸업 |
 | 운영 | `/pause` `/resume` | 자동 Job 정지·재개 |
 | | `/run` | Job 수동 실행 |

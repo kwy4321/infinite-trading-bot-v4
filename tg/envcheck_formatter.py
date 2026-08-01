@@ -48,6 +48,12 @@ def format_env_check(settings: Settings) -> str:
             row("📁", "서비스계정 JSON", _mark(diag["service_account_set"], sa_path)),
             row("✅", "Sheets OK", _mark(diag["has_google_sheets"])),
         ),
+        "",
+        section("Streamlit 대시보드", "📈"),
+        quote(
+            row("🔗", "STREAMLIT_URL", _mark(diag.get("streamlit_url_set", False))),
+            row("🔒", "비밀번호", _mark(diag.get("streamlit_password_set", False))),
+        ),
     ]
     if diag.get("env_files_found"):
         found = ", ".join(html.escape(p) for p in diag["env_files_found"][:3])

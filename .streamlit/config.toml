@@ -1,13 +1,24 @@
-[theme]
-base = "dark"
-primaryColor = "#38bdf8"
-backgroundColor = "#0b1220"
-secondaryBackgroundColor = "#141d2e"
-textColor = "#e2e8f0"
-font = "sans serif"
-
 [server]
 headless = true
+address = "0.0.0.0"
+port = 8501
+enableCORS = false
+enableXsrfProtection = false
+enableWebsocketCompression = true
+maxUploadSize = 50
 
 [browser]
 gatherUsageStats = false
+serverAddress = "0.0.0.0"
+
+[theme]
+base = "dark"
+primaryColor = "#818cf8"
+backgroundColor = "#0b0f1a"
+secondaryBackgroundColor = "rgba(255,255,255,0.04)"
+textColor = "#e2e8f0"
+font = "sans serif"
+
+[client]
+toolbarMode = "minimal"
+showSidebarNavigation = false

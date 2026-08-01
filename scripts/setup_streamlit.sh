@@ -1,11 +1,13 @@
 #!/bin/bash
-# Streamlit 대시보드 설치·실행 — VM: bash scripts/setup_streamlit.sh
+# Streamlit 대시보드 설치·실행 + 모바일 접속 설정
+# VM: bash scripts/setup_streamlit.sh
 set -euo pipefail
 
 INSTALL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$INSTALL_DIR"
 RUN_USER="${SUDO_USER:-${USER:-ubuntu}}"
 VENV="$INSTALL_DIR/.venv"
+ENV_FILE="$INSTALL_DIR/.env"
 
 echo "=== Streamlit 대시보드 설정 ==="
 echo "경로: $INSTALL_DIR"
@@ -16,16 +18,32 @@ fi
 "$VENV/bin/pip" install -q -U pip
 "$VENV/bin/pip" install -q -r "$INSTALL_DIR/requirements.txt"
 
-PUBLIC_IP="$(curl -4 -s ifconfig.me 2>/dev/null || curl -4 -s api.ipify.org 2>/dev/null || true)"
+PUBLIC_IP="$(curl -4 -s --max-time 5 ifconfig.me 2>/dev/null || curl -4 -s --max-time 5 api.ipify.org 2>/dev/null || true)"
 
-if [[ -f "$INSTALL_DIR/.env" ]]; then
-  if ! grep -qE '^STREAMLIT_URL=' "$INSTALL_DIR/.env" 2>/dev/null; then
-    echo "" >> "$INSTALL_DIR/.env"
-    echo "STREAMLIT_URL=http://${PUBLIC_IP:-VM공인IP}:8501" >> "$INSTALL_DIR/.env"
-    echo "  .env 에 STREAMLIT_URL 추가함"
+if [[ -f "$ENV_FILE" ]]; then
+  if ! grep -qE '^STREAMLIT_URL=' "$ENV_FILE" 2>/dev/null; then
+    echo "" >> "$ENV_FILE"
+    echo "STREAMLIT_URL=http://${PUBLIC_IP:-VM공인IP}:8501" >> "$ENV_FILE"
+    echo "✅ .env에 STREAMLIT_URL 추가"
+  else
+    current="$(grep '^STREAMLIT_URL=' "$ENV_FILE" | cut -d= -f2- | tr -d '"' | tr -d "'")"
+    if echo "$current" | grep -qE 'localhost|127\.0\.0\.1|0\.0\.0\.0'; then
+      echo "⚠️  STREAMLIT_URL이 localhost 계열 — 폰 접속 불가"
+      echo "   → STREAMLIT_URL=http://${PUBLIC_IP:-공인IP}:8501 로 수정"
+    fi
   fi
 else
   echo "⚠️  .env 없음 — STREAMLIT_URL=http://${PUBLIC_IP:-공인IP}:8501 수동 추가"
+fi
+
+if command -v ufw >/dev/null 2>&1; then
+  if sudo ufw status 2>/dev/null | grep -q "Status: active"; then
+    if ! sudo ufw status 2>/dev/null | grep -q "8501"; then
+      sudo ufw allow 8501/tcp comment 'Streamlit dashboard' || true
+      sudo ufw reload || true
+      echo "✅ ufw 8501/tcp 허용"
+    fi
+  fi
 fi
 
 USE_SYSTEMD=0
@@ -49,15 +67,13 @@ else
 fi
 
 _wait_streamlit() {
-  local i code
+  local i
   for i in $(seq 1 15); do
     if curl -sf -o /dev/null -w "%{http_code}" --max-time 3 http://127.0.0.1:8501 2>/dev/null | grep -qE '^(200|301|302|304)$'; then
-      echo "HTTP 200"
       return 0
     fi
     sleep 2
   done
-  curl -sf -o /dev/null -w "HTTP %{http_code}\n" --max-time 5 http://127.0.0.1:8501 || echo "HTTP 000"
   return 1
 }
 
@@ -67,26 +83,21 @@ if _wait_streamlit; then
 else
   echo "❌ 로컬 접속 실패"
   if [[ "$USE_SYSTEMD" == "1" ]]; then
-    echo "--- systemd journal (최근 40줄) ---"
     sudo journalctl -u infinite-trading-dashboard -n 40 --no-pager 2>/dev/null || true
-    echo "--- run_streamlit.sh 폴백 ---"
     sudo systemctl stop infinite-trading-dashboard 2>/dev/null || true
   fi
   bash "$INSTALL_DIR/scripts/run_streamlit.sh" restart || true
-  if _wait_streamlit; then
-    echo "✅ run_streamlit.sh 폴백으로 로컬 응답 OK"
-  else
-    echo "로그: bash scripts/run_streamlit.sh logs"
-    bash "$INSTALL_DIR/scripts/run_streamlit.sh" logs 2>/dev/null || true
-  fi
+  _wait_streamlit && echo "✅ run_streamlit.sh 폴백 OK" || echo "로그: bash scripts/run_streamlit.sh logs"
+fi
+
+if [[ -n "$PUBLIC_IP" ]] && command -v ss >/dev/null 2>&1; then
+  echo ""
+  ss -tlnp 2>/dev/null | grep ':8501' || true
 fi
 
 echo ""
-echo "=== 외부 접속 ==="
-echo "브라우저: http://${PUBLIC_IP:-VM공인IP}:8501"
-echo ""
-echo "체크리스트:"
-echo "  1) .env STREAMLIT_URL=http://${PUBLIC_IP:-VM공인IP}:8501"
-echo "  2) Oracle/GCP 방화벽 TCP 8501 허용"
-echo "  3) VM .env 반영: bash scripts/cloudshell_bot.sh restart"
-echo "  4) (선택) STREAMLIT_PASSWORD=비밀번호"
+echo "=== 모바일 접속 ==="
+echo "📱 http://${PUBLIC_IP:-공인IP}:8501"
+echo "📈 텔레그램: 📈 대시보드 메뉴"
+echo "진단: bash scripts/check_streamlit.sh"
+echo "봇 재시작: bash scripts/cloudshell_bot.sh restart"

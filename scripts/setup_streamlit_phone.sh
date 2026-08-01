@@ -62,8 +62,25 @@ echo "============================================"
 echo ""
 grep '^STREAMLIT_URL=' "$ENV_FILE" || true
 echo ""
-if ! bash "$INSTALL_DIR/scripts/run_cloudflared.sh" status 2>/dev/null | grep -q '✅'; then
-  echo "❌ cloudflared 미실행 — 로그:"
+
+_verify_https() {
+  local url="$1" i code
+  for i in $(seq 1 20); do
+    code="$(curl -sf -o /dev/null -w '%{http_code}' --max-time 15 "$url" 2>/dev/null || echo 000)"
+    if [[ "$code" =~ ^(200|301|302|304)$ ]]; then
+      echo "✅ HTTPS 터널 응답 $code"
+      return 0
+    fi
+    sleep 2
+  done
+  echo "❌ HTTPS 응답 실패 (마지막 HTTP $code)"
+  return 1
+}
+
+if _verify_https "$URL"; then
+  bash "$INSTALL_DIR/scripts/run_cloudflared.sh" status 2>/dev/null || true
+else
+  echo "❌ cloudflared 미실행 또는 터널 끊김 — 로그:"
   bash "$INSTALL_DIR/scripts/run_cloudflared.sh" logs 2>/dev/null | tail -n 15 || true
   exit 1
 fi

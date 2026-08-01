@@ -50,8 +50,12 @@ _nohup_running() {
   [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
 }
 
+_pgrep_running() {
+  pgrep -f "cloudflared tunnel --url http://127.0.0.1:8501" >/dev/null 2>&1
+}
+
 _running() {
-  _systemd_active || _nohup_running
+  _systemd_active || _nohup_running || _pgrep_running
 }
 
 _install_systemd() {
@@ -98,18 +102,34 @@ _start() {
     : > "$LOG"
     echo "cloudflared systemd 시작 → Streamlit :8501" >&2
     sudo systemctl restart "$UNIT"
-    sleep 2
+    sleep 3
+    if ! _running; then
+      echo "systemd 기동 실패 — nohup fallback" >&2
+      sudo systemctl stop "$UNIT" 2>/dev/null || true
+      _start_nohup
+    fi
   else
     _start_nohup
   fi
 }
 
 _wait_url() {
-  local i url=""
+  local i url="" retries=0
   for i in $(seq 1 45); do
     url="$(parse_url_from_file "$LOG" || true)"
-    [[ -n "$url" ]] && { _save_url "$url"; echo "$url"; return 0; }
-    if ! _running; then
+    if [[ -n "$url" ]] && _running; then
+      _save_url "$url"
+      echo "$url"
+      return 0
+    fi
+    if [[ -n "$url" ]] && ! _running && (( retries < 2 )); then
+      echo "cloudflared URL 생성 후 종료 — nohup 재시도 ($((retries + 1))/2)" >&2
+      retries=$((retries + 1))
+      sudo systemctl stop "$UNIT" 2>/dev/null || true
+      pkill -f "cloudflared tunnel --url http://127.0.0.1:8501" 2>/dev/null || true
+      sleep 1
+      _start_nohup
+    elif ! _running && [[ -z "$url" ]]; then
       echo "cloudflared 프로세스 종료됨" >&2
       tail -n 20 "$LOG" >&2 || true
       return 1
@@ -154,6 +174,8 @@ case "$ACTION" in
       echo "✅ cloudflared systemd 실행 중"
     elif _nohup_running; then
       echo "✅ cloudflared nohup PID $(cat "$PIDFILE")"
+    elif _pgrep_running; then
+      echo "✅ cloudflared 프로세스 실행 중 (pgrep)"
     else
       echo "⏹ cloudflared 꺼짐"
       exit 0

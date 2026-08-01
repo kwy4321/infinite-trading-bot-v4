@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import html as html_lib
+
 DIVIDER = "━━━━━━━━━━━━━━━━"
 THIN = "┈┈┈┈┈┈┈┈┈┈┈┈"
 DOTS = "· · · · · · · · · · · ·"
@@ -44,13 +46,17 @@ MARKET_STATUS_KO = {
 }
 
 
+def _esc(text: object) -> str:
+    return html_lib.escape(str(text))
+
+
 def section(title: str, emoji: str = "") -> str:
     label = f"{emoji} {title}" if emoji else title
-    return f"<b>{label}</b>\n{DIVIDER}"
+    return f"<b>{_esc(label)}</b>\n{DIVIDER}"
 
 
 def subsection(title: str) -> str:
-    return f"<b>▸ {title}</b>"
+    return f"<b>▸ {_esc(title)}</b>"
 
 
 def mode_label(mode: str, *, brief: bool = False) -> str:
@@ -64,17 +70,16 @@ def market_status_label(status: str) -> str:
 
 
 def code(text: str) -> str:
-    """숫자·값 강조. <blockquote> 카드 안에서는 <code>가 허용되지 않으므로
-    (Telegram: blockquote는 다른 엔티티를 포함할 수 없음) 볼드로 강조한다."""
-    return f"<b>{text}</b>"
+    """숫자·값 강조. blockquote 안에서는 <code> 대신 bold."""
+    return f"<b>{_esc(text)}</b>"
 
 
 def dim(text: str) -> str:
-    return f"<i>{text}</i>"
+    return f"<i>{_esc(text)}</i>"
 
 
 def bold(text: str) -> str:
-    return f"<b>{text}</b>"
+    return f"<b>{_esc(text)}</b>"
 
 
 def usd(amount: float, decimals: int = 2, signed: bool = False) -> str:
@@ -143,7 +148,7 @@ def symbol_card(symbol: str) -> str:
 
 
 def empty(msg: str = "데이터 없음") -> str:
-    return f"📭 <i>{msg}</i>"
+    return f"📭 <i>{_esc(msg)}</i>"
 
 
 def badge_on(on: bool) -> str:

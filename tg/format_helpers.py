@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from broker.toss_client import _money
@@ -10,6 +11,8 @@ from config.settings import is_dry_mode
 
 if TYPE_CHECKING:
     from app import App
+
+logger = logging.getLogger(__name__)
 
 
 def is_dry(app: App) -> bool:
@@ -50,6 +53,28 @@ def resolve_price(app: App, symbol: str) -> float:
 
 def resolve_prices(app: App, symbols: list[str]) -> dict[str, float]:
     """종목별 현재가 — holdings 1회 조회 후 캐시 (주문계획 등)."""
+    import concurrent.futures
+
+    def _fetch() -> dict[str, float]:
+        return _resolve_prices_inner(app, symbols)
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(_fetch).result(timeout=30.0)
+    except concurrent.futures.TimeoutError:
+        logger.warning("resolve_prices timeout symbols=%s", symbols)
+        return _resolve_prices_fallback(app, symbols)
+
+
+def _resolve_prices_fallback(app: App, symbols: list[str]) -> dict[str, float]:
+    out: dict[str, float] = {}
+    for sym in symbols:
+        st = app.state.load(sym.upper())
+        out[sym.upper()] = float(st.get("avg_price") or 0)
+    return out
+
+
+def _resolve_prices_inner(app: App, symbols: list[str]) -> dict[str, float]:
     out: dict[str, float] = {}
     want = [s.upper() for s in symbols]
     if is_dry(app):

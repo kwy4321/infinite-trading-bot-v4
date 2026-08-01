@@ -95,13 +95,16 @@ class TossClient:
             h["X-Tossinvest-Account"] = str(self.account_seq)
         return h
 
-    def _request(self, method: str, path: str, group: str, account: bool = False, **kwargs):
+    def _request(
+        self, method: str, path: str, group: str, account: bool = False,
+        _attempt: int = 0, **kwargs,
+    ):
         self.limiter.acquire(group)
         url = f"{BASE_URL}{path}"
         headers = self._headers(with_account=account)
         headers.update(kwargs.pop("headers", {}))
         res = requests.request(method, url, headers=headers, timeout=20, **kwargs)
-        if res.status_code == 401:
+        if res.status_code == 401 and _attempt == 0:
             logger.warning("Toss API 401 on %s — token re-issue", path)
             self.auth.invalidate()
             try:
@@ -111,11 +114,15 @@ class TossClient:
                 raise
             res = requests.request(method, url, headers=headers, timeout=20, **kwargs)
         if res.status_code == 429:
-            retry = int(res.headers.get("Retry-After", "2"))
-            logger.warning("Rate limited, wait %ss", retry)
-            import time
+            if _attempt >= 4:
+                logger.error("Toss API 429 retry exhausted on %s", path)
+                res.raise_for_status()
+            retry = max(int(res.headers.get("Retry-After", "2") or 2), 1)
+            logger.warning("Rate limited, wait %ss (attempt %s)", retry, _attempt + 1)
             time.sleep(retry)
-            return self._request(method, path, group, account, **kwargs)
+            return self._request(
+                method, path, group, account, _attempt=_attempt + 1, **kwargs,
+            )
         if not res.ok:
             try:
                 err = res.json()

@@ -6,9 +6,11 @@ import asyncio
 import datetime
 import html
 import logging
+import re
 from zoneinfo import ZoneInfo
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from app import App
@@ -429,9 +431,37 @@ class TelegramHandler:
         return format_plans(self.app, symbols, premium)
 
     def _build_plan_reply(self, symbols: list[str], premium: int):
+        sync_broker_dry_run(self.app)
         msg = self._render_plans(symbols, premium)
         markup = plan_action_keyboard(symbols) if symbols else None
         return msg, markup
+
+    async def _edit_plan_message(self, status, text: str, markup=None) -> None:
+        """HTML 실패·타임아웃 시 plain text fallback."""
+        body = text[:4096]
+        plain = re.sub(r"<[^>]+>", "", body)
+        last_err: Exception | None = None
+        for content, parse_mode in ((body, "HTML"), (plain, None)):
+            try:
+                await asyncio.wait_for(
+                    status.edit_text(
+                        content,
+                        reply_markup=markup,
+                        parse_mode=parse_mode,
+                    ),
+                    timeout=20.0,
+                )
+                return
+            except asyncio.TimeoutError as exc:
+                last_err = exc
+                logger.warning("plan edit timeout parse_mode=%s", parse_mode)
+            except BadRequest as exc:
+                last_err = exc
+                logger.warning("plan edit BadRequest parse_mode=%s: %s", parse_mode, exc)
+            except Exception as exc:
+                last_err = exc
+                logger.exception("plan edit failed parse_mode=%s", parse_mode)
+        raise RuntimeError(f"주문계획 표시 실패: {last_err}")
 
     async def cmd_plan(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
@@ -440,16 +470,13 @@ class TelegramHandler:
         symbols = self._plan_symbols(context, parts)
         premium = self.app.runtime.premium_default()
         context.user_data["plan_symbols"] = symbols
-        status = await update.message.reply_text(
-            "📋 주문계획 조회 중...",
-            reply_markup=self._main_menu_markup(),
-        )
+        status = await update.message.reply_text("📋 주문계획 조회 중...")
         try:
             msg, markup = await asyncio.wait_for(
                 asyncio.to_thread(self._build_plan_reply, symbols, premium),
                 timeout=45.0,
             )
-            await status.edit_text(msg, reply_markup=markup, parse_mode="HTML")
+            await self._edit_plan_message(status, msg, markup)
         except asyncio.TimeoutError:
             logger.warning("plan query timeout symbols=%s", symbols)
             await status.edit_text(
@@ -458,7 +485,10 @@ class TelegramHandler:
             )
         except Exception as e:
             logger.exception("plan failed")
-            await status.edit_text(f"🚨 조회 실패: {e}")
+            try:
+                await status.edit_text(f"🚨 조회 실패: {html.escape(str(e))}", parse_mode="HTML")
+            except Exception:
+                await update.message.reply_text(f"🚨 조회 실패: {e}")
 
     async def cmd_setting(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):

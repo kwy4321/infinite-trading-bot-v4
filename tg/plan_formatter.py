@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import html as html_mod
 from zoneinfo import ZoneInfo
 
 from app import App
@@ -119,7 +120,7 @@ def _format_order_lines(orders: list[dict], plan: dict, side: str) -> list[str]:
         est = _order_est_usd(o)
         if idx > 1:
             lines.append(THIN)
-        lines.append(f"{idx}. {label}")
+        lines.append(f"{idx}. {html_mod.escape(label)}")
         lines.append(
             f"   💵 {code(f'${est:,.2f}')}  ·  "
             f"{dim(f'${price:.2f} × {qty}주')}"
@@ -198,6 +199,9 @@ def format_plan_block(
 
 
 def format_plans(app: App, symbols: list[str], premium: int) -> str:
+    from tg.format_helpers import sync_broker_dry_run
+
+    sync_broker_dry_run(app)
     kst = ZoneInfo("Asia/Seoul")
     today = datetime.datetime.now(kst).strftime("%Y-%m-%d")
     us_close_date = TossClient.target_us_date_for_evening_loc()

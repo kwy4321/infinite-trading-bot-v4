@@ -1,6 +1,6 @@
 [Unit]
 Description=Cloudflare Tunnel for Streamlit Dashboard
-After=network-online.target infinite-trading-dashboard.service
+After=network-online.target
 Wants=network-online.target
 
 [Service]

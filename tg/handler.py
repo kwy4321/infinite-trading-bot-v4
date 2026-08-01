@@ -363,14 +363,23 @@ class TelegramHandler:
                     parse_mode="HTML",
                 )
                 return
-            mobile_hint = (
-                "📱 <b>폰 접속 (중요)</b>\n"
-                "① 아래 URL을 <b>Safari/Chrome</b>에 직접 입력\n"
-                "   (텔레그램 내장 브라우저는 Streamlit 미지원)\n"
-                "② URL에 <code>:8501</code> 있으면 VM에서\n"
-                "   <code>bash scripts/setup_streamlit.sh</code>\n"
-                "   → 포트 80(nginx)으로 자동 전환\n"
-            )
+            if "trycloudflare.com" in url or url.startswith("https://"):
+                mobile_hint = (
+                    "📱 <b>폰/LTE</b> — Safari/Chrome에서 위 HTTPS URL 열기\n"
+                    "(텔레그램 내장 브라우저 X)"
+                )
+            elif ":8501" in url:
+                mobile_hint = (
+                    "💻 <b>PC/Wi-Fi</b> — :8501 만 열림\n"
+                    "📱 <b>폰은 Cloud Shell에서:</b>\n"
+                    "<code>bash scripts/cloudshell_bot.sh streamlit-phone</code>\n"
+                    "→ HTTPS URL 생성 후 /restart"
+                )
+            else:
+                mobile_hint = (
+                    "📱 Safari/Chrome에서 URL 직접 입력\n"
+                    "(:80 안 열리면 streamlit-phone 실행)"
+                )
             await update.message.reply_text(
                 "📈 <b>현황 대시보드</b>\n\n"
                 f"🔗 <code>{html.escape(url)}</code>\n\n"

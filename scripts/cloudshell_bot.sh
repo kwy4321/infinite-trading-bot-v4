@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Oracle Cloud Shell — IP 입력 없이 VM에 봇 백그라운드 시작
 # Cloud Shell을 꺼도 VM에서 계속 실행됨
-# 사용: bash scripts/cloudshell_bot.sh start | stop | restart | status | logs | doctor | streamlit | streamlit-start | streamlit-doctor
+# 사용: bash scripts/cloudshell_bot.sh start | ... | streamlit-phone
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -208,6 +208,13 @@ case "$ACTION" in
     bash scripts/check_streamlit.sh || true
     exit 0
     ;;
+  streamlit-phone)
+    git fetch origin main
+    git reset --hard origin/main
+    bash scripts/setup_streamlit_phone.sh
+    bash scripts/check_streamlit.sh || true
+    exit 0
+    ;;
   streamlit-start)
     sudo systemctl stop infinite-trading-dashboard 2>/dev/null || true
     bash scripts/run_streamlit.sh restart
@@ -246,20 +253,15 @@ echo "=== bot.sh $ACTION (VM) ==="
 _sync_secrets
 _run_remote
 
-if [[ "$ACTION" == "streamlit" || "$ACTION" == "streamlit-start" || "$ACTION" == "streamlit-doctor" ]]; then
+if [[ "$ACTION" == "streamlit" || "$ACTION" == "streamlit-start" || "$ACTION" == "streamlit-doctor" || "$ACTION" == "streamlit-phone" || "$ACTION" == "streamlit-mobile" ]]; then
   echo ""
   echo "=== Streamlit (VM) ==="
-  echo "브라우저: http://${IP}:8501"
-  echo ""
-  echo "⚠️  Cloud Shell에서 run_streamlit.sh 실행 ≠ VM 실행"
-  echo "   VM에서 띄우려면: bash scripts/cloudshell_bot.sh streamlit"
-  echo ""
-  echo "외부 접속 테스트 (Cloud Shell → VM):"
-  curl -sf -o /dev/null -w "  http://${IP}:8501 → HTTP %{http_code}\n" --max-time 8 "http://${IP}:8501" \
-    || echo "  ❌ http://${IP}:8501 응답 없음 — Security List TCP 8501 / VM ufw 확인"
-  echo ""
-  echo "VM .env: STREAMLIT_URL=http://${IP}:8501"
-  echo "진단: bash scripts/cloudshell_bot.sh streamlit-doctor"
+  echo "PC: http://${IP}:8501"
+  if [[ "$ACTION" == "streamlit-phone" ]]; then
+    echo "폰: .env STREAMLIT_URL (HTTPS) — bash scripts/cloudshell_bot.sh restart"
+  else
+    echo "폰(LTE): bash scripts/cloudshell_bot.sh streamlit-phone"
+  fi
 fi
 
 if [[ "$ACTION" == "start" || "$ACTION" == "restart" ]]; then

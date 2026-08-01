@@ -46,8 +46,10 @@ if [[ -f "$ENV_FILE" ]]; then
   if [[ -z "$url" ]]; then
     echo "❌ 없음 → STREAMLIT_URL=http://${PUBLIC_IP:-공인IP}"
   elif echo "$url" | grep -q ':8501'; then
-    echo "⚠️  $url"
-    echo "   → 폰 LTE는 8501 차단 많음. setup_streamlit.sh 로 :80(nginx) 전환 권장"
+    echo "⚠️  $url (PC/Wi-Fi만)"
+    echo "   → 폰: bash scripts/setup_streamlit_phone.sh"
+  elif echo "$url" | grep -q 'trycloudflare.com'; then
+    echo "✅ $url (폰/LTE HTTPS OK)"
   elif echo "$url" | grep -qE 'localhost|127\.0\.0\.1'; then
     echo "❌ localhost — 폰 불가: $url"
   else
@@ -92,13 +94,18 @@ if [[ "${local80_ok:-0}" == "1" ]]; then
   echo "폰: http://${PUBLIC_IP:-공인IP} (Safari/Chrome, 텔레그램 내장 X)"
   echo "안 열리면 Oracle Security List Ingress TCP 80 재확인"
 else
-  echo "=== 폰이 PC만 되고 안 될 때 ==="
-  echo "1) bash scripts/setup_streamlit_mobile.sh"
-  echo "2) Oracle VCN Security List: TCP 80, 8501 Ingress"
-  echo "3) 텔레그램 ⋯ → Safari/Chrome"
-  echo "4) LTE ↔ Wi-Fi"
+  echo "=== 8501만 열릴 때 (Oracle :80 미개방) ==="
+  echo "PC: http://${PUBLIC_IP:-공인IP}:8501"
+  echo "폰: bash scripts/setup_streamlit_phone.sh  (HTTPS, 방화벽 불필요)"
 fi
 echo ""
-echo "설정: bash scripts/setup_streamlit_mobile.sh"
-echo "Cloud Shell: bash scripts/cloudshell_bot.sh streamlit-mobile"
-echo "대안(HTTPS): bash scripts/streamlit_cloudflare_tunnel.sh"
+echo "--- Cloudflare HTTPS (폰/LTE) ---"
+if systemctl is-active infinite-trading-cloudflared >/dev/null 2>&1; then
+  echo "✅ cloudflared 실행 중"
+  cf_url="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$INSTALL_DIR/logs/cloudflared.log" 2>/dev/null | tail -n 1 || true)"
+  [[ -n "$cf_url" ]] && echo "📱 $cf_url"
+else
+  echo "ℹ️  미설정 — bash scripts/setup_streamlit_phone.sh"
+fi
+echo ""
+echo "Cloud Shell: bash scripts/cloudshell_bot.sh streamlit-phone"

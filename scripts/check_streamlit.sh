@@ -100,10 +100,9 @@ else
 fi
 echo ""
 echo "--- Cloudflare HTTPS (폰/LTE) ---"
-if systemctl is-active infinite-trading-cloudflared >/dev/null 2>&1; then
-  echo "✅ cloudflared 실행 중"
-  cf_url="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$INSTALL_DIR/logs/cloudflared.log" 2>/dev/null | tail -n 1 || true)"
-  [[ -n "$cf_url" ]] && echo "📱 $cf_url"
+if bash "$INSTALL_DIR/scripts/run_cloudflared.sh" status 2>/dev/null | grep -q '✅'; then
+  cf_url="$(bash "$INSTALL_DIR/scripts/run_cloudflared.sh" url 2>/dev/null || true)"
+  [[ -n "$cf_url" ]] && echo "📱 $cf_url" || echo "ℹ️  실행 중 — bash scripts/run_cloudflared.sh url"
 else
   echo "ℹ️  미설정 — bash scripts/setup_streamlit_phone.sh"
 fi

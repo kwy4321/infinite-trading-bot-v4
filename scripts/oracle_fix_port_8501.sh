@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# OCI 8501 외부 접속 진단 + Security List 일괄 추가
-# Cloud Shell: bash scripts/oracle_fix_port_8501.sh
+# OCI Streamlit 포트 외부 접속 — Security List + VM ufw
+# Cloud Shell: bash scripts/oracle_fix_port_8501.sh 80
+#            bash scripts/oracle_fix_port_8501.sh 8501
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -12,8 +13,14 @@ if [[ -f deploy/oracle.instance ]]; then
 fi
 
 INSTANCE_OCID="${INSTANCE_OCID:-}"
-IP="${1:-158.180.95.81}"
-PORT=8501
+# 첫 인자가 숫자면 포트, 아니면 IP
+if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
+  PORT="$1"
+  IP="${2:-158.180.95.81}"
+else
+  PORT="${STREAMLIT_PORT:-8501}"
+  IP="${1:-158.180.95.81}"
+fi
 
 if [[ -z "$INSTANCE_OCID" ]]; then
   echo "INSTANCE_OCID 없음"
@@ -139,7 +146,7 @@ curl -sf -o /dev/null -w "127.0.0.1:${PORT} → %{http_code}\n" --max-time 5 "ht
 curl -sf -o /dev/null -w "공인IP:${PORT} → %{http_code}\n" --max-time 5 "http://$(curl -4 -s ifconfig.me):${PORT}" 2>/dev/null || echo "공인IP curl 실패"
 VMFIX
 else
-  echo "SSH 키 없음 — VM에서 수동: sudo ufw allow 8501/tcp; sudo iptables -I INPUT 1 -p tcp --dport 8501 -j ACCEPT"
+  echo "SSH 키 없음 — VM에서 수동: sudo ufw allow ${PORT}/tcp"
 fi
 
 echo ""

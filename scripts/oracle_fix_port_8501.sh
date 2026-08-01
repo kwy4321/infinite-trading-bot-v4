@@ -122,17 +122,17 @@ for k in "$HOME"/ssh-key-*.key "$HOME/.ssh/id_rsa"; do
 done
 
 if [[ -n "$KEY" ]]; then
-  ssh -o StrictHostKeyChecking=no -o ConnectTimeout=20 -i "$KEY" "ubuntu@${IP_OCI:-$IP}" bash -s <<'VMFIX' || true
+  ssh -o StrictHostKeyChecking=no -o ConnectTimeout=20 -i "$KEY" "ubuntu@${IP_OCI:-$IP}" bash -s "$PORT" <<'VMFIX' || true
 set -euo pipefail
-PORT=8501
+PORT="$1"
 echo "ufw:"
-sudo ufw allow ${PORT}/tcp 2>/dev/null || true
+sudo ufw allow "${PORT}"/tcp 2>/dev/null || true
 sudo ufw status 2>/dev/null || echo "  (ufw 없음)"
 echo ""
 echo "iptables INPUT (상위 15줄):"
 sudo iptables -L INPUT -n --line-numbers 2>/dev/null | head -n 15 || true
 if sudo iptables -L INPUT -n 2>/dev/null | grep -q "REJECT\|DROP"; then
-  echo "  → iptables REJECT/DROP 있음 — 8501 허용 추가"
+  echo "  → iptables REJECT/DROP 있음 — ${PORT} 허용 추가"
   sudo iptables -I INPUT 1 -p tcp --dport ${PORT} -j ACCEPT 2>/dev/null || true
   if command -v netfilter-persistent >/dev/null 2>&1; then
     sudo netfilter-persistent save 2>/dev/null || true

@@ -100,11 +100,32 @@ else
 fi
 echo ""
 echo "--- Cloudflare HTTPS (폰/LTE) ---"
-if bash "$INSTALL_DIR/scripts/run_cloudflared.sh" status 2>/dev/null | grep -q '✅'; then
+cf_env_url=""
+[[ -f "$ENV_FILE" ]] && cf_env_url="$(grep '^STREAMLIT_URL=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true)"
+cf_running=0
+bash "$INSTALL_DIR/scripts/run_cloudflared.sh" status 2>/dev/null | grep -q '✅' && cf_running=1
+
+if [[ "$cf_running" == "1" ]]; then
   cf_url="$(bash "$INSTALL_DIR/scripts/run_cloudflared.sh" url 2>/dev/null || true)"
-  [[ -n "$cf_url" ]] && echo "📱 $cf_url" || echo "ℹ️  실행 중 — bash scripts/run_cloudflared.sh url"
+  [[ -z "$cf_url" && -n "$cf_env_url" ]] && cf_url="$cf_env_url"
+  if [[ -n "$cf_url" ]]; then
+    cf_code="$(_http_code "$cf_url")"
+    if [[ "$cf_code" =~ ^(200|301|302|304)$ ]]; then
+      echo "✅ 터널 실행 + HTTPS $cf_code"
+      echo "📱 $cf_url"
+    else
+      echo "⚠️  터널 실행 중이나 HTTPS → $cf_code (잠시 후 재시도)"
+      echo "📱 $cf_url"
+    fi
+  else
+    echo "ℹ️  실행 중 — bash scripts/run_cloudflared.sh url"
+  fi
+elif echo "$cf_env_url" | grep -q 'trycloudflare.com'; then
+  echo "❌ .env URL 있으나 터널 꺼짐 (폰 접속 불가)"
+  echo "   $cf_env_url"
+  echo "   → bash scripts/cloudshell_bot.sh streamlit-phone"
 else
-  echo "ℹ️  미설정 — bash scripts/setup_streamlit_phone.sh"
+  echo "ℹ️  미설정 — bash scripts/cloudshell_bot.sh streamlit-phone"
 fi
 echo ""
 echo "Cloud Shell: bash scripts/cloudshell_bot.sh streamlit-phone"

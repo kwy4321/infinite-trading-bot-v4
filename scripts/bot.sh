@@ -101,6 +101,9 @@ case "$ACTION" in
     else
       _start_nohup
     fi
+    if grep -q 'trycloudflare.com' "$ROOT/.env" 2>/dev/null; then
+      bash "$ROOT/scripts/run_cloudflared.sh" ensure 2>/dev/null || true
+    fi
     echo ""
     echo "=== 텔레그램 연결 확인 ==="
     bash "$ROOT/scripts/diag_telegram.sh" || true
@@ -113,6 +116,9 @@ case "$ACTION" in
       _start_systemd
     else
       _start_nohup
+    fi
+    if grep -q 'trycloudflare.com' "$ROOT/.env" 2>/dev/null; then
+      bash "$ROOT/scripts/run_cloudflared.sh" ensure 2>/dev/null || true
     fi
     ;;
   status)

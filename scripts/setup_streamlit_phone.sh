@@ -62,5 +62,6 @@ echo "============================================"
 echo ""
 grep '^STREAMLIT_URL=' "$ENV_FILE" || true
 echo ""
+echo "터널 상태: bash scripts/run_cloudflared.sh status"
 echo "봇 반영: bash scripts/cloudshell_bot.sh restart"
 echo "URL 재확인: bash scripts/run_cloudflared.sh url"

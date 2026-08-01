@@ -43,20 +43,7 @@ _set_streamlit_url() {
 }
 
 _setup_nginx() {
-  if ! command -v nginx >/dev/null 2>&1; then
-    echo "nginx 설치 중..."
-    sudo apt-get update -qq
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nginx
-  fi
-  sudo cp "$INSTALL_DIR/deploy/nginx-streamlit.conf.tpl" /etc/nginx/sites-available/streamlit-dashboard
-  sudo ln -sf /etc/nginx/sites-available/streamlit-dashboard /etc/nginx/sites-enabled/streamlit-dashboard
-  if [[ -f /etc/nginx/sites-enabled/default ]]; then
-    sudo rm -f /etc/nginx/sites-enabled/default
-  fi
-  sudo nginx -t
-  sudo systemctl enable nginx
-  sudo systemctl restart nginx
-  echo "✅ nginx :80 → Streamlit :8501 프록시"
+  bash "$INSTALL_DIR/scripts/setup_nginx.sh"
 }
 
 if command -v ufw >/dev/null 2>&1; then
@@ -105,12 +92,12 @@ else
 fi
 
 NGINX_OK=0
-if _setup_nginx 2>/dev/null; then
+if bash "$INSTALL_DIR/scripts/setup_nginx.sh"; then
   NGINX_OK=1
   _set_streamlit_url "$MOBILE_URL"
 else
-  echo "⚠️  nginx 설정 실패 — STREAMLIT_URL=http://${PUBLIC_IP:-공인IP}:8501 (PC만 가능할 수 있음)"
-  _set_streamlit_url "http://${PUBLIC_IP:-VM공인IP}:8501"
+  echo "⚠️  nginx 설정 실패 — 위 오류 확인 후: bash scripts/setup_nginx.sh"
+  echo "   PC만: http://${PUBLIC_IP:-VM공인IP}:8501"
 fi
 
 echo ""

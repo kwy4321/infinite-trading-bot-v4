@@ -17,8 +17,10 @@ echo ""
 echo "--- Streamlit :8501 ---"
 if systemctl is-active infinite-trading-dashboard >/dev/null 2>&1; then
   echo "✅ systemd 서비스 실행 중"
+elif ss -tlnp 2>/dev/null | grep -q ':8501'; then
+  echo "ℹ️  systemd 아님 — run_streamlit.sh 로 :8501 실행 중 (정상)"
 else
-  echo "❌ 서비스 중지 — bash scripts/setup_streamlit.sh"
+  echo "❌ Streamlit 미실행 — bash scripts/run_streamlit.sh start"
 fi
 ss -tlnp 2>/dev/null | grep ':8501' || echo "❌ 8501 리스닝 없음"
 code8501="$(_http_code http://127.0.0.1:8501)"
@@ -29,7 +31,7 @@ echo "--- nginx :80 (폰/LTE용) ---"
 if systemctl is-active nginx >/dev/null 2>&1; then
   echo "✅ nginx 실행 중"
 else
-  echo "❌ nginx 중지 — bash scripts/setup_streamlit.sh (폰은 :80 필요)"
+  echo "❌ nginx 중지 — bash scripts/setup_nginx.sh"
 fi
 ss -tlnp 2>/dev/null | grep ':80 ' || echo "❌ 80 리스닝 없음"
 code80="$(_http_code http://127.0.0.1:80)"
@@ -69,4 +71,4 @@ echo "2) Oracle VCN Security List: TCP 80, 8501 Ingress"
 echo "3) 텔레그램: 버튼 후 ⋯ → Safari/Chrome (내장 브라우저는 Streamlit WebSocket 실패)"
 echo "4) LTE ↔ Wi-Fi 전환"
 echo ""
-echo "설정: bash scripts/setup_streamlit.sh && bash scripts/cloudshell_bot.sh restart"
+echo "설정: bash scripts/setup_nginx.sh && bash scripts/cloudshell_bot.sh restart"

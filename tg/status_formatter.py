@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app import App
-from tg.format_helpers import is_dry, resolve_price
+from tg.format_helpers import is_dry, resolve_price, resolve_prices
 from tg.ui import (
     code,
     dim,
@@ -16,10 +16,13 @@ from tg.ui import (
 )
 
 
-def build_symbol_status_lines(app: App, sym: str, *, brief: bool = False) -> list[str]:
+def build_symbol_status_lines(
+    app: App, sym: str, *, brief: bool = False, price: float | None = None,
+) -> list[str]:
     """종목 1개 전략 카드 본문. brief=True — 아침 브리핑(간결·섹션 ♾️와 중복 방지)."""
     st = app.state.load(sym)
-    price = resolve_price(app, sym)
+    if price is None:
+        price = resolve_price(app, sym)
     progress = app.cycles.cycle_progress(sym, trading=True, qty=st["qty"])
     live = app.cycles.calc_unrealized_pnl(sym, st["qty"], st["avg_price"], price)
     strat = mode_label(
@@ -97,8 +100,11 @@ def format_status(app: App, *, title: str = "무매 현황", icon: str = "♾️
         lines.append(quote(dim("거래 종목 없음 · ⚙️ 설정 → 📡 거래 종목")))
         return "\n".join(lines)
 
+    prices = resolve_prices(app, symbols)
     for sym in symbols:
-        lines.append(quote(*build_symbol_status_lines(app, sym)))
+        lines.append(quote(*build_symbol_status_lines(
+            app, sym, price=prices.get(sym.upper(), 0.0),
+        )))
 
     if is_dry(app):
         lines.append(dim("🧪 DRY 모드 · 전략 기록 기준"))

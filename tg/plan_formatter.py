@@ -10,11 +10,11 @@ from app import App
 from broker.toss_client import TossClient
 from tg.format_helpers import is_dry, resolve_available_cash, resolve_price, resolve_prices
 from tg.ui import (
+    card,
     code,
     dim,
     empty,
     mode_label,
-    quote,
     section,
     side_icon,
     symbol_card,
@@ -150,7 +150,7 @@ def format_plan_block(
     one_buy = float(plan.get("one_buy_amount", 0))
     is_reverse = bool(plan.get("reverse_mode"))
 
-    card = [
+    card_lines = [
         symbol_card(symbol),
         "",
         "📌 진행",
@@ -159,43 +159,41 @@ def format_plan_block(
 
     if price > 0:
         if st["qty"] > 0 and avg > 0:
-            card.append(f"현재 ${price:.2f}  ·  보유 {st['qty']}주 @ ${avg:.2f}")
+            card_lines.append(f"현재 ${price:.2f}  ·  보유 {st['qty']}주 @ ${avg:.2f}")
         else:
-            card.append(f"현재 ${price:.2f}  ·  보유 없음")
+            card_lines.append(f"현재 ${price:.2f}  ·  보유 없음")
     elif is_dry(app):
-        card.append("현재가 —  (LIVE 전환 후 표시)")
+        card_lines.append("현재가 —  (LIVE 전환 후 표시)")
 
-    card.extend(["", "📐 기준가"])
+    card_lines.extend(["", "📐 기준가"])
     if is_reverse and star_price > 0:
-        card.append(f"별(5일 종가 평균)  →  ${star_price:.2f}")
+        card_lines.append(f"별(5일 종가 평균)  →  ${star_price:.2f}")
         if plan.get("reverse_first_day"):
-            card.append(dim("첫날: MOC 무조건 매도 · 매수 없음"))
+            card_lines.append(dim("첫날: MOC 무조건 매도 · 매수 없음"))
         else:
             qb = float(plan.get("quarter_buy_budget", 0))
-            card.append(f"쿼터매수(잔금÷4)  →  ${qb:,.2f}")
+            card_lines.append(f"쿼터매수(잔금÷4)  →  ${qb:,.2f}")
     elif avg > 0 and star_price > 0:
-        card.append(f"별% +{star_pct:g}%  →  ${star_price:.2f}")
+        card_lines.append(f"별% +{star_pct:g}%  →  ${star_price:.2f}")
         tp_price = round(avg * (1 + tp_pct / 100), 2)
-        card.append(f"익절 +{tp_pct:g}%  →  ${tp_price:.2f}")
+        card_lines.append(f"익절 +{tp_pct:g}%  →  ${tp_price:.2f}")
     elif star_pct != 0:
-        card.append(f"별% +{star_pct:g}%  (진입 후 산출)")
+        card_lines.append(f"별% +{star_pct:g}%  (진입 후 산출)")
     if one_buy > 0 and not is_reverse:
-        card.append(f"1회 매수액  →  ${one_buy:,.2f}")
+        card_lines.append(f"1회 매수액  →  ${one_buy:,.2f}")
 
     buys = plan.get("buy_orders", [])
     sells = plan.get("sell_orders", [])
     if not buys and not sells:
         if price <= 0 and not is_dry(app):
-            card.append("")
-            card.append("📭 API 확인 필요")
+            card_lines.extend(["", "📭 API 확인 필요"])
         elif price > 0:
-            card.append("")
-            card.append("📭 오늘 주문 없음")
+            card_lines.extend(["", "📭 오늘 주문 없음"])
     else:
-        card.extend(_format_order_lines(buys, plan, "BUY"))
-        card.extend(_format_order_lines(sells, plan, "SELL"))
+        card_lines.extend(_format_order_lines(buys, plan, "BUY"))
+        card_lines.extend(_format_order_lines(sells, plan, "SELL"))
 
-    return quote(*card)
+    return card(*card_lines)
 
 
 def format_plans(app: App, symbols: list[str], premium: int) -> str:
@@ -213,7 +211,7 @@ def format_plans(app: App, symbols: list[str], premium: int) -> str:
         "",
     ]
     if not symbols:
-        blocks.append(quote(empty("거래 종목 없음 · /setting → 거래 종목")))
+        blocks.append(empty("거래 종목 없음 · /setting → 거래 종목"))
         return "\n".join(blocks)
     skip_notes = []
     for symbol in symbols:

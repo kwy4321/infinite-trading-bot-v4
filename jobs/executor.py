@@ -705,7 +705,7 @@ class JobExecutor:
         from tg.plan_formatter import format_plans
         premium = self.app.runtime.premium_default()
         try:
-            text = format_plans(self.app, symbols, premium)
+            text = await asyncio.to_thread(format_plans, self.app, symbols, premium)
         except Exception as e:
             logger.exception("plan broadcast build failed")
             await self._notify(f"🚨 주문계획 자동 전송 실패: {e}")

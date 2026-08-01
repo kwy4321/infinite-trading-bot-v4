@@ -15,6 +15,12 @@ def quote(*lines) -> str:
     return f"<blockquote>{body}</blockquote>"
 
 
+def card(*lines) -> str:
+    """blockquote 없이 카드 — Telegram nested HTML 오류 방지 (주문계획 등)."""
+    body = "\n".join(str(line) for line in lines if line is not None)
+    return f"{body}\n{THIN}"
+
+
 def quote_exp(*lines) -> str:
     """접을 수 있는 인용 박스 — 긴 목록(기록 등)에 사용."""
     body = "\n".join(str(line) for line in lines if line is not None)

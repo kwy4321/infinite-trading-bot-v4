@@ -208,10 +208,18 @@ class TelegramHandler:
             return await self._deny(update)
         try:
             token_line = await self._resolve_token_line()
+            text = await asyncio.wait_for(
+                asyncio.to_thread(format_home_status, self.app, token_line),
+                timeout=45.0,
+            )
             await update.message.reply_text(
-                format_home_status(self.app, token_line),
+                text,
                 reply_markup=self._main_menu_markup(),
                 parse_mode="HTML",
+            )
+        except asyncio.TimeoutError:
+            await update.message.reply_text(
+                "🚨 현황 조회 시간 초과 — Toss API 지연, 잠시 후 다시 시도하세요.",
             )
         except Exception as e:
             logger.exception("home failed")
@@ -436,32 +444,34 @@ class TelegramHandler:
         markup = plan_action_keyboard(symbols) if symbols else None
         return msg, markup
 
-    async def _edit_plan_message(self, status, text: str, markup=None) -> None:
-        """HTML 실패·타임아웃 시 plain text fallback."""
-        body = text[:4096]
-        plain = re.sub(r"<[^>]+>", "", body)
-        last_err: Exception | None = None
-        for content, parse_mode in ((body, "HTML"), (plain, None)):
+    def _split_telegram_text(self, text: str, limit: int = 4096) -> list[str]:
+        if len(text) <= limit:
+            return [text]
+        chunks: list[str] = []
+        rest = text
+        while rest:
+            if len(rest) <= limit:
+                chunks.append(rest)
+                break
+            cut = rest.rfind("\n", 0, limit)
+            if cut < limit // 2:
+                cut = limit
+            chunks.append(rest[:cut])
+            rest = rest[cut:].lstrip("\n")
+        return chunks
+
+    async def _send_html_message(self, message, text: str, *, markup=None) -> None:
+        plain = re.sub(r"<[^>]+>", "", text)
+        for body, parse_mode in ((text[:4096], "HTML"), (plain[:4096], None)):
             try:
                 await asyncio.wait_for(
-                    status.edit_text(
-                        content,
-                        reply_markup=markup,
-                        parse_mode=parse_mode,
-                    ),
+                    message.reply_text(body, reply_markup=markup, parse_mode=parse_mode),
                     timeout=20.0,
                 )
                 return
-            except asyncio.TimeoutError as exc:
-                last_err = exc
-                logger.warning("plan edit timeout parse_mode=%s", parse_mode)
-            except BadRequest as exc:
-                last_err = exc
-                logger.warning("plan edit BadRequest parse_mode=%s: %s", parse_mode, exc)
-            except Exception as exc:
-                last_err = exc
-                logger.exception("plan edit failed parse_mode=%s", parse_mode)
-        raise RuntimeError(f"주문계획 표시 실패: {last_err}")
+            except (asyncio.TimeoutError, BadRequest) as exc:
+                logger.warning("reply failed mode=%s: %s", parse_mode, exc)
+        raise RuntimeError("Telegram 메시지 전송 실패")
 
     async def cmd_plan(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
@@ -474,21 +484,33 @@ class TelegramHandler:
         try:
             msg, markup = await asyncio.wait_for(
                 asyncio.to_thread(self._build_plan_reply, symbols, premium),
-                timeout=45.0,
+                timeout=60.0,
             )
-            await self._edit_plan_message(status, msg, markup)
         except asyncio.TimeoutError:
             logger.warning("plan query timeout symbols=%s", symbols)
             await status.edit_text(
                 "🚨 주문계획 조회 시간 초과\n"
-                "Toss API 응답 지연 — 잠시 후 다시 시도하거나 /status 로 확인하세요.",
+                "Toss API 응답 지연 — 잠시 후 다시 시도하세요.",
             )
+            return
         except Exception as e:
-            logger.exception("plan failed")
-            try:
-                await status.edit_text(f"🚨 조회 실패: {html.escape(str(e))}", parse_mode="HTML")
-            except Exception:
-                await update.message.reply_text(f"🚨 조회 실패: {e}")
+            logger.exception("plan build failed")
+            await status.edit_text(f"🚨 조회 실패: {e}")
+            return
+
+        try:
+            await status.delete()
+        except Exception:
+            pass
+
+        try:
+            chunks = self._split_telegram_text(msg)
+            for i, chunk in enumerate(chunks):
+                mk = markup if i == len(chunks) - 1 else None
+                await self._send_html_message(update.message, chunk, markup=mk)
+        except Exception as e:
+            logger.exception("plan send failed")
+            await update.message.reply_text(f"🚨 주문계획 표시 실패: {e}")
 
     async def cmd_setting(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):

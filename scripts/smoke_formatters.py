@@ -31,6 +31,26 @@ def _mock_app(*, dry: bool = True, symbols: list[str] | None = None) -> MagicMoc
         "cycle_pnl_pct": 2.1,
     }
     app.strategy.resolve_mode.return_value = MagicMock(value="NORMAL_EARLY")
+    app.strategy.resolve_mode_from_state.return_value = MagicMock(value="NORMAL_EARLY")
+    app.strategy.get_plan_from_state.return_value = {
+        "mode": "NORMAL_EARLY",
+        "star_pct": 12.0,
+        "star_price": 47.0,
+        "star_buy": 46.99,
+        "take_profit_pct": 15.0,
+        "current_price": 43.0,
+        "avg_price": 42.0,
+        "premium_pct": 10,
+        "one_buy_amount": 250.0,
+        "buy_orders": [],
+        "sell_orders": [],
+        "reverse_mode": False,
+        "reverse_first_day": False,
+    }
+    app.runtime.force_live.return_value = False
+    app.broker.dry_run = dry
+    sym_data = {"current": {"total_buy_usd": 0.0, "total_sell_usd": 0.0}}
+    app.cycles.get_symbol_data.return_value = sym_data
     return app
 
 
@@ -44,6 +64,10 @@ def main() -> None:
         trading_symbols_keyboard,
     )
     from tg.status_formatter import format_status
+    from tg.plan_formatter import format_plans
+
+    plan = format_plans(_mock_app(), ["TQQQ"], 10)
+    assert "주문계획" in plan or "오늘" in plan, plan[:200]
 
     rows = _holding_rows({
         "symbol": "TQQQ",

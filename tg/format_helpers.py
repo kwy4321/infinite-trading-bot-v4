@@ -51,21 +51,6 @@ def resolve_price(app: App, symbol: str) -> float:
     return resolve_prices(app, [symbol]).get(symbol.upper(), 0.0)
 
 
-def resolve_prices(app: App, symbols: list[str]) -> dict[str, float]:
-    """종목별 현재가 — holdings 1회 조회 후 캐시 (주문계획 등)."""
-    import concurrent.futures
-
-    def _fetch() -> dict[str, float]:
-        return _resolve_prices_inner(app, symbols)
-
-    try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(_fetch).result(timeout=30.0)
-    except concurrent.futures.TimeoutError:
-        logger.warning("resolve_prices timeout symbols=%s", symbols)
-        return _resolve_prices_fallback(app, symbols)
-
-
 def _resolve_prices_fallback(app: App, symbols: list[str]) -> dict[str, float]:
     out: dict[str, float] = {}
     for sym in symbols:
@@ -74,33 +59,43 @@ def _resolve_prices_fallback(app: App, symbols: list[str]) -> dict[str, float]:
     return out
 
 
-def _resolve_prices_inner(app: App, symbols: list[str]) -> dict[str, float]:
+def resolve_prices(app: App, symbols: list[str]) -> dict[str, float]:
+    """종목별 현재가 — holdings 1회 조회 (주문계획·현황 공통)."""
     out: dict[str, float] = {}
-    want = [s.upper() for s in symbols]
-    if is_dry(app):
-        for sym in want:
-            st = app.state.load(sym)
-            out[sym] = float(st.get("avg_price") or 0)
+    want = [s.upper() for s in symbols if s]
+    if not want:
         return out
+    if is_dry(app):
+        return _resolve_prices_fallback(app, want)
     try:
         overview = app.broker.get_holdings_overview() or {}
         items = {str(i.get("symbol", "")).upper(): i for i in overview.get("items", [])}
         for sym in want:
             item = items.get(sym)
             if not item:
-                out[sym] = float(app.broker.get_price(sym) or 0)
+                out[sym] = 0.0
                 continue
             qty = int(float(item.get("quantity", 0) or 0))
-            cost = item.get("cost") or {}
             mkt = _money(item.get("marketValue"), "usd")
             if mkt <= 0:
                 mkt = float(item.get("lastPrice", 0) or 0) * qty
             if qty > 0 and mkt > 0:
                 out[sym] = mkt / qty
             else:
-                out[sym] = float(app.broker.get_price(sym) or 0)
-    except Exception:
+                out[sym] = float(item.get("lastPrice", 0) or 0)
+        missing = [s for s in want if out.get(s, 0) <= 0]
+        for sym in missing[:2]:
+            try:
+                px = float(app.broker.get_price(sym) or 0)
+                if px > 0:
+                    out[sym] = px
+            except Exception:
+                logger.debug("get_price failed %s", sym, exc_info=True)
         for sym in want:
-            st = app.state.load(sym)
-            out[sym] = float(st.get("avg_price") or 0)
+            if out.get(sym, 0) <= 0:
+                st = app.state.load(sym)
+                out[sym] = float(st.get("avg_price") or 0)
+    except Exception:
+        logger.warning("resolve_prices failed — state fallback", exc_info=True)
+        return _resolve_prices_fallback(app, want)
     return out

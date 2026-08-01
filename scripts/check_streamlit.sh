@@ -62,17 +62,43 @@ echo "--- 외부 접속 (VM→공인IP) ---"
 if [[ -n "$PUBLIC_IP" ]]; then
   ext80="$(_http_code "http://${PUBLIC_IP}:80")"
   ext8501="$(_http_code "http://${PUBLIC_IP}:8501")"
-  [[ "$ext80" =~ ^(200|301|302|304)$ ]] && echo "✅ http://${PUBLIC_IP} (:80) → $ext80" || echo "❌ http://${PUBLIC_IP} (:80) → $ext80 — VM 내부 curl은 000일 수 있음(OCI hairpin). 로컬 :80 확인"
-  [[ "$ext8501" =~ ^(200|301|302|304)$ ]] && echo "✅ http://${PUBLIC_IP}:8501 → $ext8501" || echo "⚠️  http://${PUBLIC_IP}:8501 → $ext8501 (PC Wi-Fi만 될 수 있음)"
+  local80_ok=0
+  [[ "$code80" =~ ^(200|301|302|304)$ ]] && local80_ok=1
+
+  if [[ "$local80_ok" == "1" ]]; then
+    echo "✅ 서버 :80 준비됨 (로컬 $code80) — 폰 Safari/Chrome에서 테스트:"
+    echo "   http://${PUBLIC_IP}"
+  fi
+
+  if [[ "$ext80" =~ ^(200|301|302|304)$ ]]; then
+    echo "✅ http://${PUBLIC_IP} (:80) → $ext80"
+  elif [[ "$local80_ok" == "1" ]]; then
+    echo "⚠️  VM→공인IP :80 → $ext80 (OCI hairpin 또는 Security List TCP 80 — 폰에서 직접 열어보세요)"
+  else
+    echo "❌ http://${PUBLIC_IP} (:80) → $ext80"
+  fi
+
+  if [[ "$ext8501" =~ ^(200|301|302|304)$ ]]; then
+    echo "✅ http://${PUBLIC_IP}:8501 → $ext8501 (PC/Wi-Fi용)"
+  else
+    echo "⚠️  http://${PUBLIC_IP}:8501 → $ext8501"
+  fi
 fi
 
 echo ""
-echo "=== 폰이 PC만 되고 안 될 때 ==="
-echo "1) STREAMLIT_URL 포트 8501 → http://${PUBLIC_IP:-공인IP} (:80, nginx)"
-echo "2) Oracle VCN Security List: TCP 80, 8501 Ingress"
-echo "3) 텔레그램: 버튼 후 ⋯ → Safari/Chrome (내장 브라우저는 Streamlit WebSocket 실패)"
-echo "4) LTE ↔ Wi-Fi 전환"
+if [[ "${local80_ok:-0}" == "1" ]]; then
+  echo "=== 결론 ==="
+  echo "nginx/Streamlit 정상. ❌가 아니라 ⚠️ 이면 VM 자체 테스트 한계일 수 있음."
+  echo "폰: http://${PUBLIC_IP:-공인IP} (Safari/Chrome, 텔레그램 내장 X)"
+  echo "안 열리면 Oracle Security List Ingress TCP 80 재확인"
+else
+  echo "=== 폰이 PC만 되고 안 될 때 ==="
+  echo "1) bash scripts/setup_streamlit_mobile.sh"
+  echo "2) Oracle VCN Security List: TCP 80, 8501 Ingress"
+  echo "3) 텔레그램 ⋯ → Safari/Chrome"
+  echo "4) LTE ↔ Wi-Fi"
+fi
 echo ""
 echo "설정: bash scripts/setup_streamlit_mobile.sh"
-echo "또는 Cloud Shell: bash scripts/cloudshell_bot.sh streamlit-mobile"
+echo "Cloud Shell: bash scripts/cloudshell_bot.sh streamlit-mobile"
 echo "대안(HTTPS): bash scripts/streamlit_cloudflare_tunnel.sh"

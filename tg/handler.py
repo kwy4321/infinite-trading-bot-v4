@@ -953,8 +953,8 @@ class TelegramHandler:
             )
             return
         ref = float(pos["current_price"] or 0)
-        plan["holdings_qty"] = int(st.get("qty") or 0)
-        from strategy.order_planner import prepare_loc_submit_orders
+        from strategy.order_planner import prepare_loc_submit_orders, resolve_holdings_qty
+        plan["holdings_qty"] = resolve_holdings_qty(st, pos, dry=not is_live)
         filtered = {
             "buy_orders": plan.get("buy_orders", []),
             "sell_orders": plan.get("sell_orders", []),

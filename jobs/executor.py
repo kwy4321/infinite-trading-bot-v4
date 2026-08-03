@@ -14,11 +14,13 @@ from services.trading_context import (
     is_dry as app_is_dry,
     resolve_available_cash,
 )
+from strategy.fill_reconciler import FillReconciler
 from strategy.order_planner import (
     JobPhase,
     filter_orders_for_phase,
     prepare_loc_orders,
     prepare_loc_submit_orders,
+    resolve_holdings_qty,
 )
 from jobs.backup_job import run_backup as create_backup_archive
 from strategy.session_fill import (
@@ -486,7 +488,16 @@ class JobExecutor:
             symbol, price, st, premium, available_cash=cash,
         )
         self.app.state.save(symbol, st)
-        plan["holdings_qty"] = int(st.get("qty") or 0)
+        plan["holdings_qty"] = resolve_holdings_qty(st, api, dry=is_dry)
+        if (
+            not is_dry
+            and int(st.get("qty") or 0) > int(plan["holdings_qty"])
+            and int(api.get("qty") or 0) > 0
+        ):
+            logger.warning(
+                "%s state qty=%s > broker sellable=%s — 매도 cap 을 실계좌 기준으로 줄임",
+                symbol, st.get("qty"), plan["holdings_qty"],
+            )
         filtered = filter_orders_for_phase(plan, phase)
         is_dry = self._is_dry()
         wait_fill = True

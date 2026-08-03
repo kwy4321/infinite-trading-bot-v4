@@ -69,6 +69,22 @@ def prepare_loc_orders(filtered: dict, close_price: float) -> list[dict]:
     return picked["buy_orders"] + picked["sell_orders"] + moc_sells
 
 
+def resolve_holdings_qty(state: dict, broker_item: dict | None, *, dry: bool) -> int:
+    """매도 cap 기준 보유 주수 — LIVE 는 토스 실계좌 우선 (422 방지).
+
+    봇 state.qty 가 실제보다 크면 토스가 '매도 가능 수량 부족'(422)을 반환한다.
+    DRY 는 state 만 쓴다.
+    """
+    state_qty = int(state.get("qty") or 0)
+    if dry or not broker_item:
+        return max(0, state_qty)
+    broker_qty = int(broker_item.get("qty") or 0)
+    if broker_qty <= 0:
+        return max(0, state_qty)
+    # 실계좌가 더 적으면 그쪽을 따르고, 더 많으면 state 기준(전략과 맞춤).
+    return min(state_qty, broker_qty) if state_qty > 0 else broker_qty
+
+
 def _cap_sell_orders(sells: list[dict], plan: dict) -> list[dict]:
     """매도 LOC 합계가 보유 주수를 넘지 않도록."""
     cap = int(plan.get("holdings_qty") or 0)
@@ -89,11 +105,17 @@ def _cap_sell_orders(sells: list[dict], plan: dict) -> list[dict]:
 
 
 def prepare_loc_submit_orders(filtered: dict, plan: dict) -> list[dict]:
-    """장중 CLS 접수 — 매수·매도 LOC + 리버스 MOC 매도."""
+    """장중 CLS 접수 — 매수·매도 LOC + 리버스 MOC 매도.
+
+    매도 LOC·MOC 합계를 holdings_qty 로 한 번만 cap 한다.
+    (이전에는 LOC cap 후 MOC 를 원본에서 다시 붙여 같은 MOC 가 두 번 나갈 수 있었다.)
+    """
     buys = list(filtered.get("buy_orders") or [])
-    sells = _cap_sell_orders(list(filtered.get("sell_orders") or []), plan)
-    moc = [
-        o for o in (filtered.get("sell_orders") or [])
-        if str(o.get("exec", "")).upper() == "MOC"
+    capped = _cap_sell_orders(list(filtered.get("sell_orders") or []), plan)
+    loc_sells = [
+        o for o in capped if str(o.get("exec", "")).upper() != "MOC"
     ]
-    return buys + sells + moc
+    moc = [
+        o for o in capped if str(o.get("exec", "")).upper() == "MOC"
+    ]
+    return buys + loc_sells + moc

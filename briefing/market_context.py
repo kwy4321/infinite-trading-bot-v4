@@ -33,14 +33,17 @@ def should_skip_scheduled_briefing(kst_now: datetime.datetime | None = None) -> 
     return now.weekday() in (6, 0)  # 일=6, 월=0
 
 
-def get_briefing_market_context(broker: "TossClient | None") -> dict:
+def get_briefing_market_context(
+    broker: "TossClient | None",
+    kst_now: datetime.datetime | None = None,
+) -> dict:
     """7시 KST 브리핑 — 직전 미국 정규장 마감일·휴장 여부.
 
-    7시 KST는 미국장 마감(약 5~6시 KST) 직후이므로 지수는 항상
-    토스 ``previousBusinessDay``(직전 마감일) 기준. ``today``에 정규장이
-    없으면 휴장일로 표시한다.
+    7시 KST는 미국장 마감(약 5~6시 KST) 직후이다. NY ``today``가 정규장이면
+    그날 마감(방금 끝난 세션)을 쓰고, ``today``가 휴장이면
+    ``previousBusinessDay``(직전 마감일)를 쓴다.
     """
-    kst_now = datetime.datetime.now(KST)
+    kst_now = kst_now or datetime.datetime.now(KST)
     ny_today = kst_now.astimezone(NY).date().isoformat()
 
     if broker is None or broker.dry_run:
@@ -72,7 +75,12 @@ def get_briefing_market_context(broker: "TossClient | None") -> dict:
     prev_date = str(prev_day.get("date") or "")
     prev_open = prev_day.get("regularMarket") is not None
 
-    session_date = prev_date if prev_open else today_date
+    # 7시 KST ≒ 직전 미국 정규장 마감(06시 KST) 직후 — NY today가 개장일이면 그날 마감,
+    # 휴장일이면 previousBusinessDay(직전 마감일) 사용.
+    if today_open:
+        session_date = today_date
+    else:
+        session_date = prev_date if prev_open else today_date
     us_holiday = not today_open
 
     return {

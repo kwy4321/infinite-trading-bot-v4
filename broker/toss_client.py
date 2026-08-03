@@ -779,7 +779,8 @@ class TossClient:
             cal = self.get_us_market_calendar()
             day = self.find_us_market_day(cal, target_date)
             if not day:
-                day = cal.get("today") or {}
+                # API는 today/next/previous 3일만 제공 — target이 없으면 휴장으로 간주
+                return False, target_date, True
             us_date = day.get("date", target_date)
             return day.get("regularMarket") is not None, us_date, True
         except Exception:
@@ -823,13 +824,12 @@ class TossClient:
             return False
         return self._in_session(datetime.datetime.now(KST), day.get("regularMarket"))
 
-    def is_us_market_open_today(self) -> bool:
-        """대시보드용 — 지금 시각 기준 다음/당일 미국 정규장 개장 여부."""
-        now = datetime.datetime.now(KST)
-        if now.hour < 12:
-            target = self.target_us_date_for_morning_job(now)
-        else:
-            target = self.target_us_date_for_ny_job(now)
+    def is_us_market_open_today(
+        self, kst_now: datetime.datetime | None = None,
+    ) -> bool:
+        """18:00/18:05 저녁 Job — KST 당일 미국 정규장 개장 여부 (LOC 타깃일과 동일)."""
+        now = kst_now or datetime.datetime.now(KST)
+        target = self.target_us_date_for_evening_loc(now)
         open_, _, cal_ok = self.check_us_regular_session(target)
         return open_ if cal_ok else False
 

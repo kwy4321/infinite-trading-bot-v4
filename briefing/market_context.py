@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import datetime
 from typing import TYPE_CHECKING
-from zoneinfo import ZoneInfo
+
+from core.clock import KST, NY
 
 if TYPE_CHECKING:
     from broker.toss_client import TossClient
-
-KST = ZoneInfo("Asia/Seoul")
-NY = ZoneInfo("America/New_York")
 
 _WEEKDAY_KO = ("월", "화", "수", "목", "금", "토", "일")
 

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 from account.account import AccountPaths
-from zoneinfo import ZoneInfo
+from core.clock import KST
 
 from config.json_io import load_json, save_json
 from config.settings import SYMBOLS
@@ -122,7 +122,7 @@ class StateStore:
             return self.load(symbol)
         state = self.load(symbol)
         if not date:
-            date = datetime.datetime.now(ZoneInfo("Asia/Seoul")).date().isoformat()
+            date = datetime.datetime.now(KST).date().isoformat()
         hist: list = list(state.get("close_prices") or [])
         hist = [h for h in hist if not (
             isinstance(h, dict) and h.get("date") == date

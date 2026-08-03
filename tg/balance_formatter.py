@@ -1,84 +1,58 @@
-"""Format /balance — account snapshot (계좌현황)."""
+"""Format /balance — account snapshot (계좌현황).
+
+계좌 숫자는 services.account_service 가 유일한 출처다. 여기서는 표시만 한다.
+"""
 
 from __future__ import annotations
 
-from broker.toss_client import _money, cash_krw, cash_usd
 from app import App
-from config.settings import SYMBOLS
-from tg.ui import THIN, code, empty, krw, quote, row, section, subsection, symbol_card, usd
+from services.account_service import AccountSnapshot, Holding, fetch_account_snapshot
+from tg.ui import (
+    THIN,
+    code,
+    empty,
+    krw,
+    quote,
+    row,
+    section,
+    subsection,
+    symbol_card,
+    usd,
+)
 
 
-def format_balance(app: App) -> str:
-    broker = app.broker
-    lines = [section("계좌현황", "💼"), ""]
-
-    buying_usd = broker.get_buying_power("USD")
-    buying_krw = broker.get_buying_power("KRW")
-    cash_usd_val = cash_usd(buying_usd)
-    cash_krw_val = cash_krw(buying_krw)
-
-    overview = broker.get_holdings_overview() or {}
-    items = overview.get("items", [])
-    tracked = [i for i in items if i.get("symbol", "").upper() in SYMBOLS]
-    display = tracked or items
-
-    stock_usd = sum(_money(i.get("marketValue"), "usd") for i in display)
-    stock_krw = sum(_money(i.get("marketValue"), "krw") for i in display)
-
-    total_usd = _money(overview.get("totalEvaluationAmount"), "usd")
-    total_krw = _money(overview.get("totalEvaluationAmount"), "krw")
-    if total_usd <= 0:
-        total_usd = cash_usd_val + stock_usd
-    if total_krw <= 0:
-        total_krw = cash_krw_val + stock_krw
-
-    fx = broker.get_exchange_rate("USD", "KRW")
-    fx_rate = float(fx.get("rate") or fx.get("midRate") or 0)
-    if total_krw <= 0 and fx_rate > 0 and total_usd > 0:
-        total_krw = total_usd * fx_rate
-
-    summary = [
-        row("🇺🇸", "총 자산", usd(total_usd)),
-    ]
+def _summary_rows(acct: AccountSnapshot) -> list[str]:
+    rows = [row("🇺🇸", "총 자산", usd(acct.total_usd))]
+    total_krw = acct.total_krw_or_converted()
     if total_krw > 0:
-        summary.append(row("🇰🇷", "총 자산", krw(total_krw)))
-    if cash_krw_val > 0:
-        summary.append(
-            row("💵", "예수금", f"{usd(cash_usd_val)}  ·  {krw(cash_krw_val)}"),
+        rows.append(row("🇰🇷", "총 자산", krw(total_krw)))
+    if acct.cash_krw > 0:
+        rows.append(
+            row("💵", "예수금", f"{usd(acct.cash_usd)}  ·  {krw(acct.cash_krw)}"),
         )
     else:
-        summary.append(row("💵", "예수금", usd(cash_usd_val)))
-    if fx_rate > 0:
-        summary.append(row("💱", "환율", code(f"$1 = ₩{fx_rate:,.2f}")))
+        rows.append(row("💵", "예수금", usd(acct.cash_usd)))
+    if acct.fx_rate > 0:
+        rows.append(row("💱", "환율", code(f"$1 = ₩{acct.fx_rate:,.2f}")))
+    return rows
 
-    lines.extend([subsection("요약"), quote(*summary), ""])
 
-    if display:
-        rows = []
-        for i, item in enumerate(display):
-            if i > 0:
-                rows.append(THIN)
-            rows.extend(_holding_rows(item))
-        lines.append(subsection("보유 종목"))
-        lines.append(quote(*rows))
+def _holding_rows(holding: Holding | dict) -> list[str]:
+    """보유 1종목 표시. dict 도 받아 기존 호출부·테스트와 호환한다."""
+    if isinstance(holding, dict):
+        from core.money import holding_avg_price, holding_market_value, parse_money
+
+        sym = str(holding.get("symbol", "?")).upper()
+        qty = parse_money(holding.get("quantity"))
+        avg = holding_avg_price(holding)
+        mkt_usd = holding_market_value(holding, "usd")
+        mkt_krw = holding_market_value(holding, "krw")
     else:
-        lines.append(empty("보유 종목 없음"))
-
-    return "\n".join(lines)
-
-
-def _holding_rows(item: dict) -> list[str]:
-    sym = item.get("symbol", "?").upper()
-    qty = float(item.get("quantity", 0) or 0)
-    avg = float(item.get("averagePurchasePrice", 0) or 0)
-    if avg == 0:
-        cost = item.get("cost", {})
-        avg = float(cost.get("averagePrice", 0) or 0)
-    last = float(item.get("lastPrice", 0) or 0)
-    mkt_usd = _money(item.get("marketValue"), "usd")
-    mkt_krw = _money(item.get("marketValue"), "krw")
-    if mkt_usd == 0 and qty and last:
-        mkt_usd = qty * last
+        sym = holding.symbol
+        qty = holding.qty
+        avg = holding.avg_price
+        mkt_usd = holding.market_value_usd
+        mkt_krw = holding.market_value_krw
 
     eval_row = row("💰", "평가", usd(mkt_usd))
     if mkt_krw > 0:
@@ -90,3 +64,31 @@ def _holding_rows(item: dict) -> list[str]:
         row("📐", "평단", usd(avg)),
         eval_row,
     ]
+
+
+def format_balance(app: App) -> str:
+    acct = fetch_account_snapshot(app)
+    lines = [section("계좌현황", "💼"), ""]
+
+    if acct.dry:
+        lines.append(empty("🧪 DRY 모드 — Toss API 미조회"))
+        return "\n".join(lines)
+    if not acct.ok:
+        lines.append(empty("계좌 조회 실패 — /token 으로 API 상태 확인"))
+        return "\n".join(lines)
+
+    lines.extend([subsection("요약"), quote(*_summary_rows(acct)), ""])
+
+    display = acct.tracked(app.runtime.active_symbols())
+    if display:
+        rows: list[str] = []
+        for i, holding in enumerate(display):
+            if i > 0:
+                rows.append(THIN)
+            rows.extend(_holding_rows(holding))
+        lines.append(subsection("보유 종목"))
+        lines.append(quote(*rows))
+    else:
+        lines.append(empty("보유 종목 없음"))
+
+    return "\n".join(lines)

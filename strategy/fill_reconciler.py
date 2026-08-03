@@ -8,7 +8,6 @@ import math
 from typing import TYPE_CHECKING
 
 from strategy.strategy_v40 import InfiniteStrategyV40, REVERSE_BUY
-from tg.format_helpers import is_dry as app_is_dry
 
 if TYPE_CHECKING:
     from app import App
@@ -32,7 +31,7 @@ class FillReconciler:
         qty_before = int(st.get("qty", 0))
         applied: list[dict] = []
 
-        if app_is_dry(self.app):
+        if self.app.is_dry():
             return {
                 "applied": applied,
                 "t_before": t_before,
@@ -485,8 +484,9 @@ class FillReconciler:
     def _plan_for_state(
         self, symbol: str, st: dict, price: float, premium: int,
     ) -> dict:
-        from tg.format_helpers import resolve_available_cash
-        cash = resolve_available_cash(self.app, symbol, st)
+        cash = self.app.cycles.available_cash(
+            symbol, float(st.get("principal", 0.0) or 0.0),
+        )
         return self.app.strategy.get_plan_from_state(
             symbol, price, st, premium, available_cash=cash,
         )

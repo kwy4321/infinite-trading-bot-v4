@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app import App
-from tg.format_helpers import dry_mode_reason, is_dry
+from services.trading_context import dry_mode_reason, is_dry
 from tg.status_formatter import format_status
 from tg.ui import (
     badge_bot,

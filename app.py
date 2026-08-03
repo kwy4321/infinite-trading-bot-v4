@@ -81,14 +81,20 @@ class App:
         app.reconciler = FillReconciler(app)
         return app
 
+    def is_dry(self) -> bool:
+        """현재 DRY 여부 — 표현 계층이 아닌 여기서 판정한다."""
+        return is_dry_mode(self.settings, force_live=self.runtime.force_live())
+
+    def sync_broker_mode(self) -> None:
+        """broker.dry_run 을 현재 설정과 일치시킨다."""
+        self.broker.dry_run = self.is_dry()
+
     def reload_settings(self) -> None:
         """.env 재로드 + broker DRY/LIVE·토큰 자격 동기화."""
-        from tg.format_helpers import sync_broker_dry_run
-
         self.settings = reload_settings()
         self.broker.auth.sync_credentials(
             self.settings.toss_client_id,
             self.settings.toss_client_secret,
         )
         self.broker.account_seq = str(self.settings.toss_account_seq or "1")
-        sync_broker_dry_run(self)
+        self.sync_broker_mode()

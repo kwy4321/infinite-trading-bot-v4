@@ -6,18 +6,21 @@ import asyncio
 import json
 import logging
 from datetime import datetime
-from zoneinfo import ZoneInfo
 
 from app import App
 from broker.toss_client import TossClient
+from core.clock import KST, loc_auto_submit_kst
+from services.trading_context import (
+    is_dry as app_is_dry,
+    resolve_available_cash,
+)
 from strategy.order_planner import (
     JobPhase,
     filter_orders_for_phase,
     prepare_loc_orders,
     prepare_loc_submit_orders,
 )
-from tg.format_helpers import is_dry as app_is_dry
-from strategy.market_schedule import loc_auto_submit_kst
+from jobs.backup_job import run_backup as create_backup_archive
 from strategy.session_fill import (
     has_us_session_fill_from_broker,
     has_us_session_fill_in_state,
@@ -31,10 +34,10 @@ from tg.notifications import (
     format_order_submitted,
     order_label,
 )
+from tg.plan_formatter import format_plans
 from tg.ui import dim
 
 logger = logging.getLogger(__name__)
-KST = ZoneInfo("Asia/Seoul")
 _LOC_PHASES = (JobPhase.JOB1_LOC_CLOSE, JobPhase.JOB3_LOC_CLOSE)
 
 
@@ -474,9 +477,10 @@ class JobExecutor:
                     ),
                     "grad_msg": None,
                 }
-        api = self.app.broker.get_holdings_item(symbol)
-        price = api["current_price"] or self.app.broker.get_price(symbol)
-        from tg.format_helpers import resolve_available_cash
+        api = await asyncio.to_thread(self.app.broker.get_holdings_item, symbol)
+        price = api["current_price"]
+        if not price:
+            price = await asyncio.to_thread(self.app.broker.get_price, symbol)
         cash = resolve_available_cash(self.app, symbol, st)
         plan = self.app.strategy.get_plan_from_state(
             symbol, price, st, premium, available_cash=cash,
@@ -548,7 +552,12 @@ class JobExecutor:
             await self._notify("⏸️ 자동매매가 정지 상태예요. /resume 로 재개하세요.")
             return
 
-        if phase in _LOC_PHASES and not force and not scheduled_loc and not self._can_submit_loc_now():
+        if (
+            phase in _LOC_PHASES
+            and not force
+            and not scheduled_loc
+            and not await asyncio.to_thread(self._can_submit_loc_now)
+        ):
             logger.info("LOC run_phase skipped — outside US premarket/regular session")
             if submit_at_open:
                 await self._notify(
@@ -561,7 +570,9 @@ class JobExecutor:
         if phase != JobPhase.JOB4_REPORT:
             target = self._target_us_date_for_phase(phase)
             try:
-                open_, us_date, cal_ok = self.app.broker.check_us_regular_session(target)
+                open_, us_date, cal_ok = await asyncio.to_thread(
+                    self.app.broker.check_us_regular_session, target,
+                )
             except Exception as e:
                 logger.exception("market open check failed")
                 await self._notify(f"🚨 장 개장 확인 실패: {e}")
@@ -693,7 +704,7 @@ class JobExecutor:
         if self.app.runtime.is_paused():
             return
         try:
-            if not self.app.broker.is_us_market_open_today():
+            if not await asyncio.to_thread(self.app.broker.is_us_market_open_today):
                 return
         except Exception:
             logger.exception("market open check failed (plan broadcast)")
@@ -702,7 +713,6 @@ class JobExecutor:
         if not symbols:
             await self._notify("⚠️ 거래 종목이 없어요. /setting → 📡 거래 종목에서 켜주세요.")
             return
-        from tg.plan_formatter import format_plans
         premium = self.app.runtime.premium_default()
         try:
             text = await asyncio.to_thread(format_plans, self.app, symbols, premium)
@@ -719,7 +729,7 @@ class JobExecutor:
         if self.app.runtime.is_paused():
             return
         try:
-            if not self.app.broker.is_us_market_open_today():
+            if not await asyncio.to_thread(self.app.broker.is_us_market_open_today):
                 return
         except Exception:
             logger.exception("market open check failed (LOC submit)")
@@ -744,11 +754,11 @@ class JobExecutor:
             self.app.runtime.mark_job3_run(target)
             return
 
-        if not self._can_submit_loc_now():
+        if not await asyncio.to_thread(self._can_submit_loc_now):
             logger.warning("premarket LOC skipped — not in US premarket/regular session")
             status = ""
             try:
-                status = self.app.broker.get_us_market_status()
+                status = await asyncio.to_thread(self.app.broker.get_us_market_status)
             except Exception:
                 pass
             await self._notify(
@@ -899,8 +909,11 @@ class JobExecutor:
     async def run_backup(self) -> None:
         if not self.app.settings.backup_enabled:
             return
-        from jobs.backup_job import run_backup
-        path = run_backup(self.app.paths.data_root, keep=self.app.settings.backup_keep)
+        path = await asyncio.to_thread(
+            create_backup_archive,
+            self.app.paths.data_root,
+            keep=self.app.settings.backup_keep,
+        )
         if path:
             await self._notify(f"📦 백업: {path.name}")
 
@@ -911,7 +924,7 @@ class JobExecutor:
         await self._notify("job2는 사용하지 않아요. LOC 접수는 18:05 또는 /job3 입니다.")
 
     async def run_job3(self, premium: int | None = None, *, scheduled: bool = True, **_):
-        if not self._can_submit_loc_now(force=not scheduled):
+        if not await asyncio.to_thread(self._can_submit_loc_now, force=not scheduled):
             logger.info("job3 skipped — outside US premarket/regular session")
             if not scheduled:
                 await self._notify(

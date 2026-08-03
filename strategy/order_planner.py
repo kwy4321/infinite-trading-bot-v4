@@ -5,6 +5,8 @@
 
 from enum import Enum
 
+from core.clock import LOC_SUBMIT_HHMM, PLAN_HHMM
+
 
 class JobPhase(str, Enum):
     JOB1_LOC_CLOSE = "job1"   # /job1 수동 — job3와 동일
@@ -14,11 +16,12 @@ class JobPhase(str, Enum):
 
 
 # KST 일정 — 계획 18:00 · LOC 접수 18:05 · 체결 반영 새벽 job4
+# 시각 상수는 core.clock 이 단일 소스다 (broker·strategy 가 같은 값을 봐야 한다).
 JOB_SCHEDULE_KST = {
     JobPhase.JOB4_REPORT: {"summer": (6, 15), "winter": (6, 15)},
     "morning_briefing": {"summer": (7, 0), "winter": (7, 0)},
-    "premarket_plan": {"summer": (18, 0), "winter": (18, 0)},
-    "premarket_loc": {"summer": (18, 5), "winter": (18, 5)},
+    "premarket_plan": {"summer": PLAN_HHMM, "winter": PLAN_HHMM},
+    "premarket_loc": {"summer": LOC_SUBMIT_HHMM, "winter": LOC_SUBMIT_HHMM},
 }
 
 

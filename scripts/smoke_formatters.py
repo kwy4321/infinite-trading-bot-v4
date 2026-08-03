@@ -51,6 +51,7 @@ def _mock_app(*, dry: bool = True, symbols: list[str] | None = None) -> MagicMoc
     app.broker.dry_run = dry
     sym_data = {"current": {"total_buy_usd": 0.0, "total_sell_usd": 0.0}}
     app.cycles.get_symbol_data.return_value = sym_data
+    app.cycles.available_cash.return_value = 10000.0
     return app
 
 

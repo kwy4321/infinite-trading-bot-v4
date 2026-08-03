@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import datetime
 import logging
-from zoneinfo import ZoneInfo
 
 from telegram.ext import ApplicationBuilder, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 from telegram import BotCommand
 
 from app import App
+from core.clock import KST, LOC_SUBMIT_HHMM, PLAN_HHMM
 from jobs.executor import JobExecutor
 from tg.bot_lock import acquire_bot_lock
 from tg.build_info import git_rev
@@ -18,9 +18,8 @@ from tg.keyboards import main_menu_keyboard
 from tg.sender import TelegramSender
 
 logger = logging.getLogger(__name__)
-KST = ZoneInfo("Asia/Seoul")
-PLAN_PREMARKET_KST = datetime.time(18, 0, tzinfo=KST)
-LOC_PREMARKET_KST = datetime.time(18, 5, tzinfo=KST)
+PLAN_PREMARKET_KST = datetime.time(*PLAN_HHMM, tzinfo=KST)
+LOC_PREMARKET_KST = datetime.time(*LOC_SUBMIT_HHMM, tzinfo=KST)
 
 
 def _register_jobs(app_tg, executor: JobExecutor):
@@ -55,8 +54,7 @@ def _register_jobs(app_tg, executor: JobExecutor):
 def main():
     _lock = acquire_bot_lock()
     application_app = App.create()
-    from tg.format_helpers import is_dry
-    dry = is_dry(application_app)
+    dry = application_app.is_dry()
     logger.info(
         "Trading mode=%s | toss=%s | sheets=%s | briefing=%s | summarizer=%s",
         "DRY" if dry else "LIVE",

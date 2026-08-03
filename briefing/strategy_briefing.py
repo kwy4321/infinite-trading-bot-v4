@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from app import App
 from cycles.cycle_tracker import CycleTracker
+from render.html import dim, quote
+from render.numbers import section
+from services.trading_context import is_dry
 from strategy.session_fill import us_session_date_from_when
-from tg.format_helpers import is_dry
 from tg.status_formatter import build_symbol_status_lines
-from tg.ui import dim, quote, section
 
 
 def _trades_for_session(app: App, symbol: str, session_date: str) -> list[dict]:

@@ -1,205 +1,90 @@
-"""Shared Telegram UI styling — HTML-safe (Telegram parse_mode=HTML)."""
+"""텔레그램 UI 프리미티브 — 구현은 render 패키지에 있다.
+
+render 는 app/broker 에 의존하지 않는 순수 포맷 라이브러리라서,
+도메인 코드(cycles, reporting)도 tg 를 import 하지 않고 같은 스타일을 쓸 수 있다.
+새 포맷 함수는 render 에 추가하고 여기서 재노출한다.
+"""
 
 from __future__ import annotations
 
-import html as html_lib
+from render.html import (
+    DIVIDER,
+    DOTS,
+    TELEGRAM_MAX_LEN,
+    THIN,
+    bold,
+    card,
+    code,
+    dim,
+    esc,
+    quote,
+    quote_exp,
+    split_html,
+    strip_tags,
+    validate_html,
+)
+from render.labels import (
+    MARKET_STATUS_KO,
+    MODE_BRIEF,
+    MODE_KO,
+    badge_auto,
+    badge_bot,
+    badge_live,
+    badge_on,
+    market_status_label,
+    mode_label,
+    month_bar,
+    order_side,
+    pnl_dot,
+    side_icon,
+    trend_arrow,
+)
+from render.numbers import (
+    empty,
+    krw,
+    pct,
+    pnl_line,
+    pnl_line_brief,
+    pnl_line_precise,
+    row,
+    section,
+    signed_usd_text,
+    subsection,
+    symbol_card,
+    t_transition,
+    usd,
+)
 
-DIVIDER = "━━━━━━━━━━━━━━━━"
-THIN = "┈┈┈┈┈┈┈┈┈┈┈┈"
-DOTS = "· · · · · · · · · · · ·"
-
-
-def quote(*lines) -> str:
-    """카드처럼 보이는 인용 박스 (왼쪽 세로 바)."""
-    body = "\n".join(str(line) for line in lines if line is not None)
-    return f"<blockquote>{body}</blockquote>"
-
-
-def card(*lines) -> str:
-    """blockquote 없이 카드 — Telegram nested HTML 오류 방지 (주문계획 등)."""
-    body = "\n".join(str(line) for line in lines if line is not None)
-    return f"{body}\n{THIN}"
-
-
-def quote_exp(*lines) -> str:
-    """접을 수 있는 인용 박스 — 긴 목록(기록 등)에 사용."""
-    body = "\n".join(str(line) for line in lines if line is not None)
-    return f"<blockquote expandable>{body}</blockquote>"
-
-MODE_KO = {
-    "ENTRY": "🌱 진입",
-    "NORMAL_EARLY": "🌅 전반전",
-    "NORMAL_LATE": "🌇 후반전",
-    "REVERSE": "🔄 리버스",
-    "FORCE_ONE": "⚡ 강제1회",
-}
-
-MODE_BRIEF = {
-    "ENTRY": "진입",
-    "NORMAL_EARLY": "전반전",
-    "NORMAL_LATE": "후반전",
-    "REVERSE": "리버스",
-    "FORCE_ONE": "강제1회",
-}
-
-MARKET_STATUS_KO = {
-    "regular": "🟢 장중",
-    "premarket": "🟡 프리마켓",
-    "afterhours": "🟡 애프터장",
-    "day": "🟡 주간거래",
-    "off_hours": "⏸️ 장외",
-    "closed": "🔴 휴장",
-}
-
-
-def _esc(text: object) -> str:
-    return html_lib.escape(str(text))
-
-
-def section(title: str, emoji: str = "") -> str:
-    label = f"{emoji} {title}" if emoji else title
-    return f"<b>{_esc(label)}</b>\n{DIVIDER}"
-
-
-def subsection(title: str) -> str:
-    return f"<b>▸ {_esc(title)}</b>"
-
-
-def mode_label(mode: str, *, brief: bool = False) -> str:
-    if brief:
-        return MODE_BRIEF.get(mode, mode.replace("_", " "))
-    return MODE_KO.get(mode, mode.replace("_", " "))
-
-
-def market_status_label(status: str) -> str:
-    return MARKET_STATUS_KO.get(status, "⏸️ 장외")
-
-
-def code(text: str) -> str:
-    """숫자·값 강조. blockquote 안에서는 <code> 대신 bold."""
-    return f"<b>{_esc(text)}</b>"
-
-
-def dim(text: str) -> str:
-    return f"<i>{_esc(text)}</i>"
-
-
-def bold(text: str) -> str:
-    return f"<b>{_esc(text)}</b>"
-
-
-def usd(amount: float, decimals: int = 2, signed: bool = False) -> str:
-    sign = ""
-    if signed and amount > 0:
-        sign = "+"
-    return code(f"{sign}${amount:,.{decimals}f}")
-
-
-def krw(amount: float, signed: bool = False) -> str:
-    sign = ""
-    if signed and amount > 0:
-        sign = "+"
-    return code(f"{sign}₩{amount:,.0f}")
-
-
-def pct(value: float, signed: bool = True) -> str:
-    sign = "+" if signed and value > 0 else ""
-    if not signed and value > 0:
-        sign = "+"
-    return dim(f"({sign}{value:.1f}%)")
-
-
-def pnl_dot(positive: bool) -> str:
-    return "🟢" if positive else "🔴"
-
-
-def trend_arrow(positive: bool) -> str:
-    """지수·등락 — 브리핑 등 (pnl_dot와 구분)."""
-    return "▲" if positive else "▼"
-
-
-def side_icon(side: str, *, style: str = "arrow") -> str:
-    """매수/매도 표시. dot=🟢🔴, arrow=▲▼, text=한글만."""
-    s = str(side).upper()
-    if style == "arrow":
-        return "▲" if s == "BUY" else "▼"
-    if style == "text":
-        return ""
-    return "🟢" if s == "BUY" else "🔴"
-
-
-def pnl_line(usd: float, pct_val: float) -> str:
-    pos = usd >= 0
-    sign = "+" if usd >= 0 else ""
-    return f"{trend_arrow(pos)} {code(f'{sign}${usd:,.0f}')}  {pct(pct_val)}"
-
-
-def pnl_line_precise(usd: float, pct_val: float) -> str:
-    pos = usd >= 0
-    sign = "+" if usd >= 0 else ""
-    return f"{trend_arrow(pos)} {code(f'{sign}${usd:,.2f}')}  {pct(pct_val)}"
-
-
-def pnl_line_brief(usd: float, pct_val: float) -> str:
-    """pnl_line 별칭 (브리핑·호환)."""
-    return pnl_line(usd, pct_val)
-
-
-def row(emoji: str, label: str, value: str) -> str:
-    return f"{emoji} {dim(label)}  {value}"
-
-
-def symbol_card(symbol: str) -> str:
-    return f"◆ {bold(symbol)}"
-
-
-def empty(msg: str = "데이터 없음") -> str:
-    return f"📭 <i>{_esc(msg)}</i>"
-
-
-def badge_on(on: bool) -> str:
-    return "🟢 ON" if on else "⚪ OFF"
-
-
-def badge_live(dry: bool) -> str:
-    return "🧪 DRY" if dry else "💹 LIVE"
-
-
-def badge_bot(paused: bool) -> str:
-    return "⏸️ 정지" if paused else "🤖 가동"
-
-
-def badge_auto(paused: bool) -> str:
-    return "⏸️ 멈춤" if paused else "⏰ 실행"
-
-
-def order_side(side: str) -> tuple[str, str]:
-    if side.upper() == "BUY":
-        return "▲", "매수"
-    return "▼", "매도"
-
-
-def month_bar(positive: bool) -> str:
-    return "🟩" if positive else "🟥"
+__all__ = [
+    "DIVIDER", "DOTS", "THIN", "TELEGRAM_MAX_LEN",
+    "MARKET_STATUS_KO", "MODE_BRIEF", "MODE_KO",
+    "badge_auto", "badge_bot", "badge_live", "badge_on", "bold", "card", "code",
+    "dim", "empty", "esc", "help_block", "krw", "market_status_label", "mode_label",
+    "month_bar", "order_side", "pct", "pnl_dot", "pnl_line", "pnl_line_brief",
+    "pnl_line_precise", "quote", "quote_exp", "row", "section", "side_icon",
+    "signed_usd_text", "split_html", "strip_tags", "subsection", "symbol_card",
+    "t_transition", "trend_arrow", "usd", "validate_html",
+]
 
 
 def help_block() -> str:
+    """/help 명령 목록 — 텔레그램 전용이므로 render 로 내리지 않는다."""
     groups = [
         ("♾️ 현황", [
-            (f"{code('/status')}", "♾️ 무매 진행상황"),
-            (f"{code('/balance')}", "💼 계좌현황"),
-            (f"{code('/plan')}", "📋 오늘 주문계획"),
+            (code("/status"), "♾️ 무매 진행상황"),
+            (code("/balance"), "💼 계좌현황"),
+            (code("/plan"), "📋 오늘 주문계획"),
         ]),
         ("⚙️ 설정", [
-            (f"{code('/setting')}", "💰 원금·분할·큰수매수"),
-            (f"{code('/split')}", "📐 액면분할"),
-            (f"{code('/set_t')}", "🎯 T 값 조정"),
-            (f"{code('/token')}", "🔑 API 토큰 상태·갱신"),
+            (code("/setting"), "💰 원금·분할·큰수매수"),
+            (code("/split"), "📐 액면분할"),
+            (code("/set_t"), "🎯 T 값 조정"),
+            (code("/token"), "🔑 API 토큰 상태·갱신"),
         ]),
         ("🔧 운영", [
-            (f"{code('/pause')}", "⏸ 자동 실행 멈춤"),
-            (f"{code('/resume')}", "⏰ 자동 실행 재개"),
-            (f"{code('/run')}", "▶️ 수동 실행"),
+            (code("/pause"), "⏸ 자동 실행 멈춤"),
+            (code("/resume"), "⏰ 자동 실행 재개"),
+            (code("/run"), "▶️ 수동 실행"),
         ]),
     ]
     blocks = []

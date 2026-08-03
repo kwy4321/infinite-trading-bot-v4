@@ -7,16 +7,19 @@ import os
 import random
 import threading
 from collections import defaultdict
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional, Union
-from zoneinfo import ZoneInfo
 
 from config.json_io import load_json, save_json
 from config.settings import SYMBOLS, get_settings
+from core.clock import KST
+from render.html import bold, dim, quote
+from render.labels import month_bar, side_icon, trend_arrow
+from render.numbers import pnl_line, signed_usd_text, t_transition
 
 CYCLES_FILE = "cycles.json"
 DEFAULT_DATA = os.path.join("data", "accounts", "default")
-KST = ZoneInfo("Asia/Seoul")
 
 
 def _parse_trade_dt(raw: str) -> datetime.datetime | None:
@@ -73,7 +76,6 @@ class CycleTracker:
 
     def batch(self):
         """여러 cycle 갱신을 cycles.json 1회 저장으로 묶는다."""
-        from contextlib import contextmanager
 
         @contextmanager
         def _ctx():
@@ -272,6 +274,17 @@ class CycleTracker:
 
     def get_symbol_data(self, symbol: str) -> dict:
         return self._get(self._load_all(), symbol)
+
+    def available_cash(self, symbol: str, principal: float) -> float:
+        """리버스 쿼터매수용 가용 잔금 ≈ 원금 − 누적 매수 + 누적 매도 (현재 회차 기준).
+
+        회차 원장이 원본이므로 계산은 여기 한 곳에만 둔다
+        (services.trading_context.resolve_available_cash 가 이걸 호출한다).
+        """
+        cur = self.get_symbol_data(symbol).get("current") or {}
+        buy = float(cur.get("total_buy_usd", 0.0) or 0.0)
+        sell = float(cur.get("total_sell_usd", 0.0) or 0.0)
+        return max(0.0, round(float(principal or 0.0) - buy + sell, 2))
 
     def calc_unrealized_pnl(self, symbol: str, qty: int, avg_price: float, current_price: float) -> dict:
         sym = self.get_symbol_data(symbol)
@@ -870,7 +883,6 @@ class CycleTracker:
         """매매 1건 — 연번 · 날짜 · 종목 · 매수/매도 · 수량 · 체결가 · 합계 · T (한 줄)."""
         side = tr.get("side", "")
         sym = tr.get("symbol") or symbol
-        from tg.ui import side_icon
         icon = side_icon(side, style=side_style)
         side_txt = "매수" if side == "BUY" else "매도"
         side_part = f"{icon}{side_txt}" if icon else side_txt
@@ -879,29 +891,15 @@ class CycleTracker:
         qty = int(tr.get("qty", 0))
         exec_price = float(tr.get("price") or 0)
         total_usd = round(exec_price * qty, 2)
-        t_after = tr.get("t_after")
-        t_before = tr.get("t_before")
-        try:
-            has_before = t_before not in (None, "")
-            has_after = t_after not in (None, "")
-            if has_before and has_after and float(t_before) != float(t_after):
-                t_txt = f"T {float(t_before):g}→{float(t_after):g}"
-            elif has_after:
-                t_txt = f"T {float(t_after):g}"
-            elif has_before:
-                t_txt = f"T {float(t_before):g}"
-            else:
-                t_txt = "T —"
-        except (TypeError, ValueError):
-            t_txt = "T —"
-        prefix = f"<b>{index}.</b> " if index is not None else ""
+        t_txt = t_transition(tr.get("t_before"), tr.get("t_after"))
+        prefix = f"{bold(f'{index}.')} " if index is not None else ""
         if qty > 1:
             amt_txt = f"${exec_price:,.2f} · 합 ${total_usd:,.2f}"
         else:
             amt_txt = f"${exec_price:,.2f}"
         return (
-            f"{prefix}{when} · <b>{sym}</b> · {side_part} · "
-            f"<b>{qty}</b>주 · {amt_txt} · {t_txt}"
+            f"{prefix}{when} · {bold(sym)} · {side_part} · "
+            f"{bold(qty)}주 · {amt_txt} · {t_txt}"
         )
 
     @classmethod
@@ -909,7 +907,7 @@ class CycleTracker:
         """매매 내역 블록 — 연번 + 줄 간격."""
         if not trades:
             return []
-        lines = ["  📋 <b>매매 내역</b>", ""]
+        lines = [f"  📋 {bold('매매 내역')}", ""]
         shown = trades[-20:]
         start_no = max(1, len(trades) - len(shown) + 1)
         for i, tr in enumerate(shown):
@@ -936,8 +934,7 @@ class CycleTracker:
         else:
             self.backfill_trade_t_metadata(symbol)
         sym = self.get_symbol_data(symbol)
-        from tg.ui import pnl_line, trend_arrow
-        lines = [f"📒 <b>[{symbol}] 회차 기록</b>\n"]
+        lines = [f"📒 {bold(f'[{symbol}] 회차 기록')}\n"]
         snap = sym.get("current", {}).get("snapshot") if sym.get("current") else None
         live = self.calc_unrealized_pnl(symbol, qty, avg_price, current_price)
         if broker_fills and qty > 0:
@@ -951,22 +948,31 @@ class CycleTracker:
 
         if live:
             lines += [
-                f"🔵 <b>진행 중 — {live['cycle_no']}회차</b>",
-                f"  시작: {live['started_at']}",
+                "🔵 " + bold("진행 중 — {}회차".format(live["cycle_no"])),
+                "  시작: {}".format(live["started_at"]),
             ]
             if snap:
+                t_txt = bold("{:g}".format(snap["T"]))
+                avg_txt = bold("${:,.2f}".format(snap["avg_price"]))
+                eval_txt = bold("${:,.2f}".format(snap["eval_usd"]))
                 lines += [
-                    f"  🎯 T <b>{snap['T']:g}</b> · 평단 <b>${snap['avg_price']:,.2f}</b> · <b>{snap['qty']}</b>주",
-                    f"  💵 평가 <b>${snap['eval_usd']:,.2f}</b> (투입 ${snap['invested_usd']:,.2f})",
+                    "  🎯 T {} · 평단 {} · {}주".format(t_txt, avg_txt, bold(snap["qty"])),
+                    "  💵 평가 {} (투입 ${:,.2f})".format(eval_txt, snap["invested_usd"]),
                 ]
             lines += [
-                f"  회차 손익: {pnl_line(live['cycle_pnl_usd'], live['cycle_pnl_pct'])}", "",
+                "  회차 손익: {}".format(
+                    pnl_line(live["cycle_pnl_usd"], live["cycle_pnl_pct"]),
+                ),
+                "",
             ]
         elif qty > 0 or trades:
             cycle_no = (sym.get("current") or {}).get("cycle_no", 1)
             lines += [
-                f"🔵 <b>진행 중 — {cycle_no}회차</b>",
-                f"  🎯 T · 평단 <b>${avg_price:,.2f}</b> · <b>{qty}</b>주", "",
+                "🔵 " + bold("진행 중 — {}회차".format(cycle_no)),
+                "  🎯 T · 평단 {} · {}주".format(
+                    bold("${:,.2f}".format(avg_price)), bold(qty),
+                ),
+                "",
             ]
         else:
             lines.append("💤 진행 중인 회차 없음\n")
@@ -976,13 +982,19 @@ class CycleTracker:
 
         completed = sym.get("completed", [])
         if completed:
-            lines.append(f"🏆 <b>완료된 회차 ({len(completed)}개)</b>")
+            lines.append("🏆 " + bold("완료된 회차 ({}개)".format(len(completed))))
             lines.append("")
             for c in reversed(completed[-10:]):
                 sign = "+" if c["profit_usd"] >= 0 else ""
                 lines.append(
-                    f"  #{c['cycle_no']} {c['ended_at']} · "
-                    f"{trend_arrow(c['profit_usd'] >= 0)} {sign}${c['profit_usd']:,.2f} ({sign}{c['profit_pct']:.2f}%)"
+                    "  #{} {} · {} {} ({}{:.2f}%)".format(
+                        c["cycle_no"],
+                        c["ended_at"],
+                        trend_arrow(c["profit_usd"] >= 0),
+                        signed_usd_text(c["profit_usd"]),
+                        sign,
+                        c["profit_pct"],
+                    )
                 )
                 c_trades = self._dedupe_trades(c.get("trades") or [])
                 self._recompute_t_metadata(c_trades)
@@ -993,22 +1005,29 @@ class CycleTracker:
             lines.append("📭 매매·완료 회차 기록 없음")
         if snap and snap.get("at"):
             snap_at = _trade_date_display(snap["at"])
-            lines.append(f"\n<i>🔄 {snap_at} 동기화</i>")
+            lines.append("\n" + dim("🔄 {} 동기화".format(snap_at)))
         return "\n".join(lines)
 
     def format_monthly_report(self, year: Optional[int] = None, symbol: Optional[str] = None) -> str:
         year = year or datetime.date.today().year
         label = symbol or "전체"
         summary = self.monthly_summary(symbol, year)
-        lines = [f"📅 <b>[{label}] {year}년 월별 수익</b>\n"]
+        lines = [bold("📅 [{}] {}년 월별 수익".format(label, year)) + "\n"]
         if not summary:
             lines.append("해당 연도 완료 회차가 없습니다.")
             return "\n".join(lines)
         for month, info in summary.items():
-            mm = month[5:7]
             sign = "+" if info["profit_usd"] >= 0 else ""
-            bar = "🟩" if info["profit_usd"] >= 0 else "🟥"
-            lines.append(f"{bar} <b>{mm}월</b> | {info['cycles']}회 | {sign}${info['profit_usd']:,.2f} ({sign}{info['profit_pct_on_buy']:.2f}%)")
+            lines.append(
+                "{} {} | {}회 | {} ({}{:.2f}%)".format(
+                    month_bar(info["profit_usd"] >= 0),
+                    bold("{}월".format(month[5:7])),
+                    info["cycles"],
+                    signed_usd_text(info["profit_usd"]),
+                    sign,
+                    info["profit_pct_on_buy"],
+                )
+            )
         return "\n".join(lines)
 
     _GRADUATION_VARIANTS = (
@@ -1041,8 +1060,8 @@ class CycleTracker:
 
     def format_graduation_message(self, completed: dict, symbol: str) -> str:
         pct = completed["profit_pct"]
-        usd = completed["profit_usd"]
-        sign = "+" if usd >= 0 else ""
+        profit = completed["profit_usd"]
+        sign = "+" if profit >= 0 else ""
         trades = completed.get("buy_count", 0) + completed.get("sell_count", 0)
         headline, tagline = self._GRADUATION_VARIANTS[-1][1][0]
         for threshold, variants in self._GRADUATION_VARIANTS:
@@ -1050,19 +1069,20 @@ class CycleTracker:
                 headline, tagline = random.choice(variants)
                 break
 
-        from tg.ui import trend_arrow
         note = completed.get("note", "")
-        note_line = f"\n📝 <i>{note}</i>" if note else ""
+        body = [
+            "◆ {}　·　🔢 {}".format(
+                bold(symbol), bold("{}회차".format(completed["cycle_no"])),
+            ),
+            "📅 " + dim("{} → {}".format(completed["started_at"], completed["ended_at"])),
+            "🔁 " + dim("{}번 매매".format(trades)),
+            "{} {}　{}".format(
+                trend_arrow(profit >= 0),
+                bold("{}${:,.2f}".format(sign, profit)),
+                dim("({}{:.2f}%)".format(sign, pct)),
+            ),
+        ]
+        if note:
+            body.append("📝 " + dim(note))
 
-        card = (
-            f"◆ <b>{symbol}</b>　·　🔢 <b>{completed['cycle_no']}회차</b>\n"
-            f"📅 <i>{completed['started_at']} → {completed['ended_at']}</i>\n"
-            f"🔁 <i>{trades}번 매매</i>\n"
-            f"{trend_arrow(usd >= 0)} <b>{sign}${usd:,.2f}</b>　<i>({sign}{pct:.2f}%)</i>{note_line}"
-        )
-
-        return (
-            f"<b>{headline}</b>\n"
-            f"<blockquote>{card}</blockquote>\n"
-            f"<i>{tagline}</i>"
-        )
+        return "{}\n{}\n{}".format(bold(headline), quote(*body), dim(tagline))

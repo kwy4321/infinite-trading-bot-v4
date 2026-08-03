@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from broker.toss_client import _money, _pct, cash_krw, cash_usd
 from app import App
-from config.settings import SYMBOLS
-from tg.format_helpers import is_dry, resolve_price
+from services.account_service import fetch_account_snapshot
+from services.market_data import resolve_price
+from services.trading_context import is_dry
 from tg.ui import (
     DIVIDER,
     code,
@@ -24,76 +24,17 @@ from tg.ui import (
 
 
 
-def _item_unrealized(item: dict) -> tuple[float, float | None]:
-    for key in ("evaluationProfitLoss", "profitLoss", "profit", "unrealizedProfitLoss"):
-        val = item.get(key)
-        if val is None:
-            continue
-        u = _money(val, "usd")
-        p = _pct(val)
-        if u != 0 or p is not None:
-            return u, p
-    qty = float(item.get("quantity", 0) or 0)
-    avg = float(item.get("averagePurchasePrice", 0) or 0)
-    if avg == 0:
-        cost = item.get("cost", {})
-        avg = float(cost.get("averagePrice", 0) or 0)
-    last = float(item.get("lastPrice", 0) or 0)
-    if qty > 0 and avg > 0 and last > 0:
-        u = round((last - avg) * qty, 2)
-        p = round((last - avg) / avg * 100, 2)
-        return u, p
-    return 0.0, None
-
-
 def _fetch_account(app: App) -> dict:
-    broker = app.broker
-    overview = broker.get_holdings_overview() or {}
-    items = overview.get("items", [])
-    tracked = [i for i in items if i.get("symbol", "").upper() in SYMBOLS]
-    display = tracked or items
-
-    buying_usd = broker.get_buying_power("USD")
-    buying_krw = broker.get_buying_power("KRW")
-    cash_usd_val = cash_usd(buying_usd)
-    cash_krw_val = cash_krw(buying_krw)
-
-    stock_usd = sum(_money(i.get("marketValue"), "usd") for i in display)
-    unreal_usd = 0.0
-    cost_usd = 0.0
-    for item in display:
-        u, _ = _item_unrealized(item)
-        unreal_usd += u
-        qty = float(item.get("quantity", 0) or 0)
-        avg = float(item.get("averagePurchasePrice", 0) or 0)
-        if avg == 0:
-            cost = item.get("cost", {})
-            avg = float(cost.get("averagePrice", 0) or 0)
-        cost_usd += qty * avg
-
-    total_usd = _money(overview.get("totalEvaluationAmount"), "usd")
-    total_krw = _money(overview.get("totalEvaluationAmount"), "krw")
-    if total_usd <= 0:
-        total_usd = cash_usd_val + stock_usd
-    if total_krw <= 0 and cash_krw_val > 0:
-        total_krw = cash_krw_val + sum(_money(i.get("marketValue"), "krw") for i in display)
-
-    fx = broker.get_exchange_rate("USD", "KRW")
-    fx_rate = float(fx.get("rate") or fx.get("midRate") or 0)
-    unreal_pct = round(unreal_usd / cost_usd * 100, 2) if cost_usd > 0 else None
-
-    return {
-        "cash_usd": cash_usd_val,
-        "total_usd": total_usd,
-        "total_krw": total_krw,
-        "unreal_usd": round(unreal_usd, 2),
-        "unreal_pct": unreal_pct,
-        "fx_rate": fx_rate,
-    }
+    """하위 호환 — 실제 조회는 services.account_service 가 담당한다."""
+    return fetch_account_snapshot(app).as_dict()
 
 
 def _qty_by_symbol(app: App) -> dict[str, int]:
-    return {sym: int(app.state.load(sym).get("qty", 0)) for sym in SYMBOLS}
+    """거래 중인 종목의 보유 수량 (미거래 종목은 집계·표시에서 제외)."""
+    return {
+        sym: int(app.state.load(sym).get("qty", 0))
+        for sym in app.runtime.active_symbols()
+    }
 
 
 def _active_cycle_lines(app: App, stats: dict) -> list[str]:
@@ -118,9 +59,9 @@ def _tracked_symbols(app: App) -> list[str]:
     return app.runtime.active_symbols()
 
 
-def _cycle_progress_rows(stats: dict) -> list[str]:
+def _cycle_progress_rows(app: App, stats: dict) -> list[str]:
     rows = []
-    for sym in SYMBOLS:
+    for sym in app.runtime.active_symbols():
         progress = stats["per_symbol"].get(sym, {}).get("cycle_progress", 0)
         rows.append(row("🔢", sym, code(f"{progress}회차")))
     return rows
@@ -133,7 +74,7 @@ def _realized_block(app: App, stats: dict, cash_usd: float) -> list[str]:
 
     rows = [
         row("📊", "완료", code(f"{completed}회")),
-        *_cycle_progress_rows(stats),
+        *_cycle_progress_rows(app, stats),
     ]
     if pct_val is not None:
         rows.append(pnl_line_precise(realized, pct_val))

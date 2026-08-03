@@ -6,8 +6,6 @@ import asyncio
 import datetime
 import html
 import logging
-import re
-from zoneinfo import ZoneInfo
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest
@@ -15,6 +13,7 @@ from telegram.ext import ContextTypes
 
 from app import App
 from broker.toss_client import TossClient
+from core.clock import KST, NY
 from jobs.executor import JobExecutor
 from strategy.split_handler import apply_split, calc_adjustment, format_preview, parse_ratio
 from config.settings import SYMBOLS, google_sheets_issues
@@ -50,8 +49,26 @@ from tg.keyboards import (
     MAIN_CYCLES,
 )
 from tg.sender import TelegramSender
-from tg.format_helpers import dry_mode_reason, is_dry, sync_broker_dry_run
-from tg.ui import DIVIDER, badge_live, badge_on, code, dim, quote, row, section, usd
+from services.trading_context import (
+    dry_mode_reason,
+    is_dry,
+    resolve_available_cash,
+    sync_broker_dry_run,
+)
+from tg.ui import (
+    DIVIDER,
+    TELEGRAM_MAX_LEN as TELEGRAM_LIMIT,
+    badge_live,
+    badge_on,
+    code,
+    dim,
+    quote,
+    row,
+    section,
+    split_html,
+    strip_tags,
+    usd,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,8 +87,8 @@ class TelegramHandler:
         self.app = app
         self.executor = executor
         self.sender = sender
-        self.kst = ZoneInfo("Asia/Seoul")
-        self.ny_tz = ZoneInfo("America/New_York")
+        self.kst = KST
+        self.ny_tz = NY
 
     def _symbol(self, context: ContextTypes.DEFAULT_TYPE) -> str:
         return context.user_data.get("symbol") or self.app.runtime.default_symbol()
@@ -177,10 +194,9 @@ class TelegramHandler:
             await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
         except Exception:
             logger.exception("token detail HTML edit failed")
-            plain = html.unescape(text.replace("<blockquote>", "").replace("</blockquote>", ""))
-            for tag in ("<b>", "</b>", "<i>", "</i>", "<code>", "</code>"):
-                plain = plain.replace(tag, "")
-            await query.edit_message_text(plain[:4000], reply_markup=markup)
+            await query.edit_message_text(
+                strip_tags(text)[:4000], reply_markup=markup,
+            )
 
     async def _fetch_token_status(self) -> dict:
         """캐시 확인 → 없거나 만료면 1회 발급 (유효하면 재발급 안 함)."""
@@ -233,7 +249,8 @@ class TelegramHandler:
             return await self._deny(update)
         try:
             status = None if not self.app.settings.has_toss else await self._fetch_token_status()
-            text = format_toss_token_detail(self.app, status)
+            # 상세 화면은 공인 IP 조회(HTTP)를 포함한다.
+            text = await asyncio.to_thread(format_toss_token_detail, self.app, status)
             markup = token_keyboard() if self.app.settings.has_toss else None
             await update.message.reply_text(text, reply_markup=markup, parse_mode="HTML")
         except Exception as e:
@@ -418,10 +435,18 @@ class TelegramHandler:
                 reply_markup=self._main_menu_markup(),
             )
         try:
+            # 계좌 조회는 Toss HTTP 여러 번 → 이벤트 루프에서 돌리면 봇 전체가 멈춘다.
+            text = await asyncio.wait_for(
+                asyncio.to_thread(format_balance, self.app), timeout=45.0,
+            )
             await update.message.reply_text(
-                format_balance(self.app),
+                text,
                 reply_markup=self._main_menu_markup(),
                 parse_mode="HTML",
+            )
+        except asyncio.TimeoutError:
+            await update.message.reply_text(
+                "🚨 계좌 조회 시간 초과 — Toss API 지연, 잠시 후 다시 시도하세요.",
             )
         except Exception as e:
             logger.exception("Toss balance failed")
@@ -445,24 +470,15 @@ class TelegramHandler:
         return msg, markup
 
     def _split_telegram_text(self, text: str, limit: int = 4096) -> list[str]:
-        if len(text) <= limit:
-            return [text]
-        chunks: list[str] = []
-        rest = text
-        while rest:
-            if len(rest) <= limit:
-                chunks.append(rest)
-                break
-            cut = rest.rfind("\n", 0, limit)
-            if cut < limit // 2:
-                cut = limit
-            chunks.append(rest[:cut])
-            rest = rest[cut:].lstrip("\n")
-        return chunks
+        """태그 균형을 지키며 분할 — 구현은 render.html.split_html."""
+        return split_html(text, limit)
 
     async def _send_html_message(self, message, text: str, *, markup=None) -> None:
-        plain = re.sub(r"<[^>]+>", "", text)
-        for body, parse_mode in ((text[:4096], "HTML"), (plain[:4096], None)):
+        """HTML 로 보내고, 렌더 실패(BadRequest)나 지연 시 plain text 로 재시도."""
+        for body, parse_mode in (
+            (text[:TELEGRAM_LIMIT], "HTML"),
+            (strip_tags(text)[:TELEGRAM_LIMIT], None),
+        ):
             try:
                 await asyncio.wait_for(
                     message.reply_text(body, reply_markup=markup, parse_mode=parse_mode),
@@ -472,6 +488,13 @@ class TelegramHandler:
             except (asyncio.TimeoutError, BadRequest) as exc:
                 logger.warning("reply failed mode=%s: %s", parse_mode, exc)
         raise RuntimeError("Telegram 메시지 전송 실패")
+
+    async def _send_long_html(self, message, text: str, *, markup=None) -> None:
+        """4096자 초과 메시지를 나눠 전송 (마지막 조각에만 키보드)."""
+        chunks = self._split_telegram_text(text)
+        for i, chunk in enumerate(chunks):
+            mk = markup if i == len(chunks) - 1 else None
+            await self._send_html_message(message, chunk, markup=mk)
 
     async def cmd_plan(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._allowed(update):
@@ -504,10 +527,7 @@ class TelegramHandler:
             pass
 
         try:
-            chunks = self._split_telegram_text(msg)
-            for i, chunk in enumerate(chunks):
-                mk = markup if i == len(chunks) - 1 else None
-                await self._send_html_message(update.message, chunk, markup=mk)
+            await self._send_long_html(update.message, msg, markup=markup)
         except Exception as e:
             logger.exception("plan send failed")
             await update.message.reply_text(f"🚨 주문계획 표시 실패: {e}")
@@ -645,9 +665,9 @@ class TelegramHandler:
             return await self._deny(update)
         try:
             self._refresh_env()
-            await update.message.reply_text(
-                format_env_check(self.app.settings), parse_mode="HTML",
-            )
+            # 공인 IP 조회(HTTP)가 포함되므로 스레드에서 실행한다.
+            text = await asyncio.to_thread(format_env_check, self.app.settings)
+            await update.message.reply_text(text, parse_mode="HTML")
         except Exception as e:
             logger.exception("envcheck failed")
             await update.message.reply_text(f"🚨 환경 확인 실패: {e}")
@@ -729,7 +749,7 @@ class TelegramHandler:
             sym = self._symbol(context)
             try:
                 self._refresh_env()
-                text = format_env_check(self.app.settings)
+                text = await asyncio.to_thread(format_env_check, self.app.settings)
             except Exception as e:
                 logger.exception("envcheck callback failed")
                 text = f"🚨 환경 확인 실패: {html.escape(str(e))}"
@@ -907,8 +927,7 @@ class TelegramHandler:
 
     async def _execute_manual(self, chat_id: int, symbol: str, premium: int, context: ContextTypes.DEFAULT_TYPE):
         st = self.app.state.load(symbol)
-        pos = self._pos(symbol)
-        from tg.format_helpers import resolve_available_cash
+        pos = await asyncio.to_thread(self._pos, symbol)
         cash = resolve_available_cash(self.app, symbol, st)
         plan = self.app.strategy.get_plan_from_state(
             symbol, pos["current_price"], st, premium, available_cash=cash,
@@ -919,7 +938,7 @@ class TelegramHandler:
             await context.bot.send_message(chat_id, f"[{symbol}] 주문 없음")
             return
         is_live = self.app.settings.has_toss and not is_dry(self.app)
-        if is_live and not self.app.broker.is_us_loc_session_now():
+        if is_live and not await asyncio.to_thread(self.app.broker.is_us_loc_session_now):
             await context.bot.send_message(
                 chat_id,
                 "⏭️ 지금은 미국 프리마켓·정규장 시간이 아니에요. "

@@ -26,13 +26,16 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: pip install --no-cache-dir -r requirements.txt
+        run: pip install --no-cache-dir -r requirements-dev.txt
 
       - name: Syntax check (compileall)
         run: python -m compileall -q .
 
       - name: Import check
         run: python -c "import main; print('import main OK')"
+
+      - name: Architecture + unit tests (pytest)
+        run: python -m pytest
 
       - name: Formatter smoke test
         run: python scripts/smoke_formatters.py

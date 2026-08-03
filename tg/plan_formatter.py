@@ -2,62 +2,34 @@
 
 from __future__ import annotations
 
-import datetime
-import html as html_mod
-from zoneinfo import ZoneInfo
-
 from app import App
 from broker.toss_client import TossClient
-from tg.format_helpers import is_dry, resolve_available_cash, resolve_price, resolve_prices
+from core.clock import loc_auto_submit_kst, now_kst
+from services.market_data import resolve_price, resolve_prices
+from services.trading_context import (
+    is_dry,
+    resolve_available_cash,
+    sync_broker_dry_run,
+)
+from render.labels import short_order_label
+from strategy.session_fill import has_us_session_fill_in_state
 from tg.ui import (
     card,
     code,
     dim,
     empty,
+    esc,
     mode_label,
     section,
     side_icon,
     symbol_card,
     THIN,
 )
-from strategy.market_schedule import loc_auto_submit_kst
-from strategy.session_fill import has_us_session_fill_in_state
 
 
 def _short_label(desc: str) -> str:
-    """주문 설명을 짧은 라벨로."""
-    if desc.startswith("별 +") or "별지점" in desc or "후반전 별" in desc:
-        plus = desc.find("+")
-        pct_end = desc.find("%", plus)
-        if plus >= 0 and pct_end > plus:
-            return f"별 {desc[plus:pct_end + 1]}"
-        return "별지점"
-    if "평단" in desc and "별" not in desc:
-        return "평단"
-    if "큰수" in desc or "첫 진입" in desc:
-        return "큰수매수"
-    if "하단 방어" in desc or "방어" in desc:
-        for drop in (20, 30):
-            if f"-{drop}%" in desc:
-                return f"하단방어 −{drop}%"
-        return "하단방어"
-    if "첫매도 MOC" in desc or ("MOC" in desc and "리버스" in desc):
-        return "리버스 MOC"
-    if "LOC매도" in desc and "리버스" in desc:
-        return "리버스 매도"
-    if "쿼터매수" in desc and "리버스" in desc:
-        return "리버스 쿼터매수"
-    if "리버스 쿼터" in desc:
-        return "리버스 쿼터"
-    if "쿼터" in desc:
-        return "쿼터 매도"
-    if "익절" in desc:
-        return "익절 매도"
-    if "강제1회" in desc:
-        return "강제1회"
-    if "리버스" in desc and "매수" in desc:
-        return "리버스 별매수"
-    return desc.split("(")[0].strip()[:12]
+    """주문 설명을 짧은 라벨로 (구현은 render.labels 공용)."""
+    return short_order_label(desc, style="plan")
 
 
 def _order_formula(order: dict, plan: dict) -> str:
@@ -120,7 +92,7 @@ def _format_order_lines(orders: list[dict], plan: dict, side: str) -> list[str]:
         est = _order_est_usd(o)
         if idx > 1:
             lines.append(THIN)
-        lines.append(f"{idx}. {html_mod.escape(label)}")
+        lines.append(f"{idx}. {esc(label)}")
         lines.append(
             f"   💵 {code(f'${est:,.2f}')}  ·  "
             f"{dim(f'${price:.2f} × {qty}주')}"
@@ -197,11 +169,8 @@ def format_plan_block(
 
 
 def format_plans(app: App, symbols: list[str], premium: int) -> str:
-    from tg.format_helpers import sync_broker_dry_run
-
     sync_broker_dry_run(app)
-    kst = ZoneInfo("Asia/Seoul")
-    today = datetime.datetime.now(kst).strftime("%Y-%m-%d")
+    today = now_kst().strftime("%Y-%m-%d")
     us_close_date = TossClient.target_us_date_for_evening_loc()
     submit_kst = loc_auto_submit_kst(us_close_date)
     blocks = [

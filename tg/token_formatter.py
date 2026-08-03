@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import html
 import datetime
-from zoneinfo import ZoneInfo
+from core.clock import KST
 
 from config.toss_credentials import format_toss_credential_help, mask_credential
 from config.network import fetch_public_ip
-from tg.format_helpers import dry_mode_reason, is_dry
+from services.trading_context import dry_mode_reason, is_dry
 from tg.ui import dim, quote, section
 
 
@@ -27,7 +27,7 @@ def _format_remaining(seconds: int) -> str:
 def _format_expires_at(expires_at: datetime.datetime | None) -> str:
     if expires_at is None:
         return ""
-    kst = expires_at.astimezone(ZoneInfo("Asia/Seoul"))
+    kst = expires_at.astimezone(KST)
     return kst.strftime("%Y-%m-%d %H:%M")
 
 

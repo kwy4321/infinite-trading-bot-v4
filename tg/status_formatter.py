@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from app import App
-from tg.format_helpers import is_dry, resolve_price, resolve_prices
+from services.market_data import resolve_price, resolve_prices
+from services.trading_context import is_dry
 from tg.ui import (
     code,
     dim,

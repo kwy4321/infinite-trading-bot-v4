@@ -9,11 +9,14 @@ from pathlib import Path
 
 from dotenv import dotenv_values, load_dotenv
 
+from core.symbols import SYMBOL_UNIVERSE
+
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env", encoding="utf-8-sig")
 
 DATA_DIR = ROOT / "data" / "accounts" / "default"
-SYMBOLS = ("TQQQ", "SOXL")
+#: 종목 유니버스 — 정의는 core.symbols 에 있다 (활성 종목은 app.runtime.active_symbols()).
+SYMBOLS = SYMBOL_UNIVERSE
 SPLIT_OPTIONS = (20, 30, 40, 50, 60)
 PREMIUM_OPTIONS = (5, 10, 15, 20)
 TAKE_PROFIT_OPTIONS = (10, 15, 20, 25, 30)

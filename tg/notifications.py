@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from tg.ui import code, dim, side_icon
+from render.labels import short_order_label
+from tg.ui import bold, code, dim, esc, side_icon
 
 
 def _side_ko(side: str) -> str:
@@ -11,7 +12,7 @@ def _side_ko(side: str) -> str:
 
 def format_market_open(now_kst: str) -> str:
     return (
-        f"🔔 <b>미국 프리마켓</b>  <i>{now_kst} KST</i>\n"
+        f"🔔 {bold('미국 프리마켓')}  {dim(f'{now_kst} KST')}\n"
         f"{dim('18:00 계획 · 18:05 매수·매도 CLS 동시 접수. 체결은 종가 경매·새벽 sync 반영.')}"
     )
 
@@ -19,7 +20,7 @@ def format_market_open(now_kst: str) -> str:
 def format_market_open_start(now_kst: str, symbol_count: int) -> str:
     sym = f"{symbol_count}종목" if symbol_count else "—"
     return (
-        f"🔔 <b>프리장 LOC 접수</b>  <i>{now_kst} KST</i>\n"
+        f"🔔 {bold('프리장 LOC 접수')}  {dim(f'{now_kst} KST')}\n"
         f"CLS 주문 접수 · {code(sym)}"
     )
 
@@ -31,7 +32,7 @@ def format_market_open_report(
     total: int,
 ) -> str:
     """프리마켓 LOC — 종목별 접수 결과."""
-    header = f"🔔 <b>프리마켓 LOC 접수 완료</b>  <i>{now_kst}</i>"
+    header = f"🔔 {bold('프리마켓 LOC 접수 완료')}  {dim(now_kst)}"
     if total <= 0:
         return f"{header}\n{dim('오늘 예약할 주문 없음')}"
     body = "\n".join(symbol_lines)
@@ -42,7 +43,7 @@ def format_market_open_report(
 def format_market_close_start(now_kst: str, symbol_count: int) -> str:
     sym = f"{symbol_count}종목" if symbol_count else "—"
     return (
-        f"🔔 <b>미국 장 마감</b>  <i>{now_kst} KST</i>\n"
+        f"🔔 {bold('미국 장 마감')}  {dim(f'{now_kst} KST')}\n"
         f"LOC 주문 실행 · {code(sym)}"
     )
 
@@ -55,7 +56,7 @@ def format_market_close_report(
     filled: int,
 ) -> str:
     """장 마감 LOC — 종목별 결과 + 합계를 한 통으로."""
-    header = f"🔔 <b>장 마감 완료</b>  <i>{now_kst}</i>"
+    header = f"🔔 {bold('장 마감 완료')}  {dim(now_kst)}"
     if total <= 0:
         return f"{header}\n{dim('오늘 실행할 주문 없음')}"
     body = "\n".join(symbol_lines)
@@ -80,8 +81,8 @@ def format_order_submitted(
     kind = f"  {dim('LOC')}" if loc else ""
     oid = f"\n{dim('주문')} {code(order_id)}" if order_id else ""
     return (
-        f"📥 <b>{symbol}</b> {_side_ko(side)} <b>접수</b>{tag}{kind}\n"
-        f"{side_icon(side)} {label} · {code(f'{qty}주')}{oid}"
+        f"📥 {bold(symbol)} {_side_ko(side)} {bold('접수')}{tag}{kind}\n"
+        f"{side_icon(side)} {esc(label)} · {code(f'{qty}주')}{oid}"
     )
 
 
@@ -97,8 +98,8 @@ def format_order_filled(
     tag = f"  {dim('[DRY]')}" if dry else ""
     price_txt = code(f"${price:,.2f}") if price > 0 else code("—")
     return (
-        f"✅ <b>{symbol}</b> {_side_ko(side)} <b>체결</b>{tag}\n"
-        f"{side_icon(side)} {label} · {code(f'{qty:g}주')} @ {price_txt}"
+        f"✅ {bold(symbol)} {_side_ko(side)} {bold('체결')}{tag}\n"
+        f"{side_icon(side)} {esc(label)} · {code(f'{qty:g}주')} @ {price_txt}"
     )
 
 
@@ -110,36 +111,11 @@ def format_order_not_filled(
 ) -> str:
     st = status or "미체결"
     return (
-        f"⚠️ <b>{symbol}</b> {_side_ko(side)} {dim('미체결')}\n"
-        f"{label} · {dim(st)}"
+        f"⚠️ {bold(symbol)} {_side_ko(side)} {dim('미체결')}\n"
+        f"{esc(label)} · {dim(st)}"
     )
 
 
 def order_label(desc: str) -> str:
-    """주문 설명 → 짧은 라벨 (plan_formatter와 유사)."""
-    if desc.startswith("별 +") or "별지점" in desc:
-        plus = desc.find("+")
-        pct_end = desc.find("%", plus)
-        if plus >= 0 and pct_end > plus:
-            return f"별 {desc[plus:pct_end + 1]}"
-    if "평단" in desc and "별" not in desc:
-        return "평단"
-    if "큰수" in desc or "첫 진입" in desc:
-        return "큰수매수"
-    if "하단 방어" in desc:
-        for drop in (20, 30):
-            if f"-{drop}%" in desc:
-                return f"하단방어 −{drop}%"
-    if "첫매도 MOC" in desc or ("MOC" in desc and "리버스" in desc):
-        return "리버스 MOC"
-    if "LOC매도" in desc and "리버스" in desc:
-        return "리버스 매도"
-    if "쿼터매수" in desc and "리버스" in desc:
-        return "리버스 쿼터매수"
-    if "쿼터" in desc:
-        return "쿼터 매도"
-    if "익절" in desc:
-        return "익절"
-    if "리버스" in desc and "매수" in desc:
-        return "리버스 매수"
-    return desc.split("(")[0].strip()[:16]
+    """주문 설명 → 짧은 라벨 (구현은 render.labels 공용)."""
+    return short_order_label(desc, style="notify")

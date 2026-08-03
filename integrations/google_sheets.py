@@ -5,9 +5,10 @@ from __future__ import annotations
 import datetime
 import logging
 from typing import TYPE_CHECKING, Any, Callable
-from zoneinfo import ZoneInfo
 
 from config.settings import resolve_service_account_path
+from core.clock import KST
+from render.labels import mode_label
 from reporting.dashboard_data import (
     collect_completed_cycles,
     collect_monthly_rows,
@@ -17,14 +18,11 @@ from reporting.dashboard_data import (
     ledger_data_sources,
     prepare_ledger_for_export,
 )
-from tg.ui import mode_label
 
 if TYPE_CHECKING:
     from app import App
 
 logger = logging.getLogger(__name__)
-
-KST = ZoneInfo("Asia/Seoul")
 
 TAB_SUMMARY = "요약"
 TAB_TRADES = "매매내역"

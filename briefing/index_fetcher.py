@@ -10,12 +10,14 @@ import asyncio
 import datetime
 import logging
 from typing import TYPE_CHECKING
-from zoneinfo import ZoneInfo
 
 import requests
 
 from briefing.market_context import get_briefing_market_context
-from tg.ui import code, dim, pct, quote, section, trend_arrow
+from core.clock import NY as _NY
+from render.html import bold, code, dim, quote
+from render.labels import trend_arrow
+from render.numbers import pct, section
 
 if TYPE_CHECKING:
     from broker.toss_client import TossClient
@@ -28,7 +30,6 @@ _INDICES = (
     ("^IXIC", "나스닥 종합"),
     ("^SOX", "필라델피아 반도체"),
 )
-_NY = ZoneInfo("America/New_York")
 
 
 def _daily_closes(symbol: str) -> dict[str, float]:
@@ -101,7 +102,7 @@ def _build_sync(broker: "TossClient | None") -> str:
         header = section("미국 증시", "🇺🇸")
         holiday = ctx["holiday_label"] or "—"
         note = (
-            f"<b>{holiday}</b> 미국 정규장 <b>휴장</b>\n"
+            f"{bold(holiday)} 미국 정규장 {bold('휴장')}\n"
             f"{dim(f'아래는 직전 마감일 {session_label} 종가 기준입니다.')}"
         )
     else:

@@ -9,14 +9,12 @@ from __future__ import annotations
 
 import datetime
 from typing import TYPE_CHECKING
-from zoneinfo import ZoneInfo
+
+from core.clock import KST, NY, loc_auto_submit_kst
 
 if TYPE_CHECKING:
     from broker.toss_client import TossClient
     from cycles.cycle_tracker import CycleTracker
-
-KST = ZoneInfo("Asia/Seoul")
-NY = ZoneInfo("America/New_York")
 
 
 def parse_when(raw: str) -> datetime.datetime | None:
@@ -41,7 +39,6 @@ def us_session_date_from_when(raw: str) -> str | None:
 
 def regular_open_kst_fallback(us_date: str) -> datetime.datetime:
     """하위 호환 — KST 18:05 자동 접수 시각."""
-    from strategy.market_schedule import loc_auto_submit_kst
     return loc_auto_submit_kst(us_date)
 
 

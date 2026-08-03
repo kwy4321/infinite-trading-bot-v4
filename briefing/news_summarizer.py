@@ -15,7 +15,8 @@ import requests
 
 from briefing.index_fetcher import fetch_index_snapshot
 from config.settings import ROOT, Settings, resolve_summarizer_api_key
-from tg.ui import dim, quote, section
+from render.html import dim, quote
+from render.numbers import section
 
 if TYPE_CHECKING:
     from broker.toss_client import TossClient

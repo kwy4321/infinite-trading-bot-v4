@@ -6,75 +6,16 @@ import datetime
 import logging
 import time
 import uuid
-from zoneinfo import ZoneInfo
 
 import requests
 
 from broker.toss_auth import BASE_URL, TossAuth
 from broker.rate_limiter import RateLimiter
+from core.clock import KST, NY, loc_auto_submit_kst
+from core.money import holding_avg_price, holding_market_value, parse_money
 
 logger = logging.getLogger(__name__)
-KST = ZoneInfo("Asia/Seoul")
-NY = ZoneInfo("America/New_York")
 _FILLS_CACHE_MAX = 32
-
-
-def _money(val, currency: str = "usd") -> float:
-    """Parse Toss Price / amount fields (decimal strings or {krw, usd})."""
-    if val is None:
-        return 0.0
-    if isinstance(val, (int, float)):
-        return float(val)
-    if isinstance(val, str):
-        try:
-            return float(val)
-        except ValueError:
-            return 0.0
-    if isinstance(val, dict):
-        cur = currency.lower()
-        raw = val.get(cur)
-        if raw in (None, "") and cur == "usd":
-            raw = val.get("us")
-        if raw in (None, ""):
-            raw = val.get("krw") or val.get("kr")
-        if raw in (None, ""):
-            for key in ("total", "us", "kr"):
-                nested = val.get(key)
-                if isinstance(nested, dict):
-                    return _money(nested, currency)
-        if raw in (None, ""):
-            return 0.0
-        return float(raw)
-    return 0.0
-
-
-def cash_usd(buying: dict | None) -> float:
-    """Toss buyingPower 응답 → USD 현금."""
-    if not buying:
-        return 0.0
-    raw = buying.get("cashBuyingPower", buying.get("cash", buying))
-    return _money(raw, "usd") if isinstance(raw, dict) else float(raw or 0)
-
-
-def cash_krw(buying: dict | None) -> float:
-    if not buying:
-        return 0.0
-    raw = buying.get("cashBuyingPower", buying.get("cash", buying))
-    return _money(raw, "krw")
-
-
-def _pct(val) -> float | None:
-    if val is None:
-        return None
-    if isinstance(val, dict):
-        for key in ("rate", "rateAfterCost", "profitRate"):
-            if key in val and val[key] not in (None, ""):
-                return float(val[key]) * 100
-        return None
-    try:
-        return float(val) * 100
-    except (TypeError, ValueError):
-        return None
 
 
 class TossClient:
@@ -182,12 +123,9 @@ class TossClient:
         qty, avg, mkt = 0, 0.0, 0.0
         for item in items:
             if item.get("symbol", "").upper() == symbol.upper():
-                qty = int(float(item.get("quantity", 0)))
-                cost = item.get("cost", {})
-                avg = float(cost.get("averagePrice", 0) or item.get("averagePurchasePrice", 0) or 0)
-                mkt = _money(item.get("marketValue"), "usd")
-                if mkt == 0:
-                    mkt = float(item.get("lastPrice", 0) or 0) * qty
+                qty = int(parse_money(item.get("quantity")))
+                avg = holding_avg_price(item)
+                mkt = holding_market_value(item, "usd")
                 break
         price = self.get_price(symbol) if mkt == 0 and qty > 0 else (mkt / qty if qty else 0)
         return {"qty": qty, "avg_price": avg, "current_price": price}
@@ -797,7 +735,7 @@ class TossClient:
     def _market_status_from_calendar(self, day: dict) -> str:
         if not day.get("regularMarket"):
             return "closed"
-        now_kst = datetime.datetime.now(ZoneInfo("Asia/Seoul"))
+        now_kst = datetime.datetime.now(KST)
         checks = (
             ("day", day.get("dayMarket")),
             ("premarket", day.get("preMarket")),
@@ -810,7 +748,7 @@ class TossClient:
         return "off_hours"
 
     def _market_status_fallback(self) -> str:
-        now_ny = datetime.datetime.now(ZoneInfo("America/New_York"))
+        now_ny = datetime.datetime.now(NY)
         if now_ny.weekday() >= 5:
             return "closed"
         t = now_ny.time()
@@ -908,7 +846,6 @@ class TossClient:
 
     def get_us_regular_market_open_kst(self, us_date: str | None = None) -> datetime.datetime:
         """자동 LOC 접수 시각 — KST 18:05."""
-        from strategy.market_schedule import loc_auto_submit_kst
         us_date = us_date or self.target_us_date_for_evening_loc()
         return loc_auto_submit_kst(us_date)
 

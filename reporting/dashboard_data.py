@@ -2,20 +2,40 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import datetime
 import logging
 from typing import TYPE_CHECKING
-from zoneinfo import ZoneInfo
 
 from config.settings import DATA_DIR, SYMBOLS
-from tg.format_helpers import is_dry, resolve_price
-from tg.ui import mode_label
+from core.clock import KST
+from core.symbols import normalize_symbols
+from render.labels import mode_label
+from render.numbers import t_transition
+from services.account_service import fetch_account_snapshot
+from services.market_data import resolve_price
+from services.trading_context import is_dry
+from strategy.fill_reconciler import FillReconciler
 
 if TYPE_CHECKING:
     from app import App
 
 logger = logging.getLogger(__name__)
-KST = ZoneInfo("Asia/Seoul")
+
+
+def ledger_symbols(symbols=None) -> list[str]:
+    """원장(과거 기록) 범위 — 기본은 유니버스 전체.
+
+    지금 거래를 쉬는 종목이라도 과거 매매·완료 회차는 남아 있어야 하므로
+    기록 수집은 유니버스 기준이 기본이다. 화면 표시는 display_symbols() 를 쓴다.
+    """
+    picked = normalize_symbols(symbols)
+    return picked or list(SYMBOLS)
+
+
+def display_symbols(app: "App") -> list[str]:
+    """화면 표시 범위 — 지금 거래 중인 종목만 (미거래 종목 노출 방지)."""
+    return list(app.runtime.active_symbols())
 
 
 def _trade_row(symbol: str, tr: dict, *, cycle_no: int | None = None, cycle_status: str = "") -> dict:
@@ -108,11 +128,9 @@ def collect_portfolio_snapshot(app: "App", *, fetch_live_price: bool = False) ->
         "fx_rate": 0.0,
     }
     if fetch_live_price and not is_dry(app) and app.settings.has_toss:
-        try:
-            from tg.records_dashboard_formatter import _fetch_account
-            account = _fetch_account(app)
-        except Exception:
-            pass
+        snapshot = fetch_account_snapshot(app)
+        if snapshot.ok and not snapshot.dry:
+            account = snapshot.as_dict()
     return {
         "updated_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "dry_run": is_dry(app),
@@ -130,10 +148,9 @@ def collect_portfolio_snapshot(app: "App", *, fetch_live_price: bool = False) ->
 
 def prepare_ledger_for_export(
     app: "App", *, rebuild_broker: bool = True, broker_timeout_sec: float = 25.0,
+    symbols=None,
 ) -> dict:
     """fill_log·토스 체결 → cycles.current.trades 반영 (Sheets/대시보드 수집 전)."""
-    import concurrent.futures
-
     result: dict = {
         "synced_symbols": [],
         "fill_log_entries": 0,
@@ -143,8 +160,6 @@ def prepare_ledger_for_export(
     is_live = rebuild_broker and not is_dry(app) and app.settings.has_toss
 
     def _rebuild_one(symbol: str, fill_log: list, qty: int) -> int:
-        from strategy.fill_reconciler import FillReconciler
-
         st = app.state.load(symbol)
         order_ids = FillReconciler.collect_known_order_ids(app, symbol, st=st)
         broker_fills = app.broker.list_broker_fills(
@@ -154,7 +169,7 @@ def prepare_ledger_for_export(
             return 0
         return app.cycles.rebuild_trades_from_broker(symbol, broker_fills, fill_log, qty)
 
-    for symbol in SYMBOLS:
+    for symbol in ledger_symbols(symbols):
         st = app.state.load(symbol)
         fill_log = list(st.get("fill_log") or [])
         principal = float(st.get("principal") or 0) or 10000.0
@@ -194,14 +209,14 @@ def prepare_ledger_for_export(
     return result
 
 
-def ledger_data_sources(app: "App") -> dict:
+def ledger_data_sources(app: "App", *, symbols=None) -> dict:
     """로컬 데이터 파일 존재·건수 — 0건일 때 원인 확인용."""
     sources: dict = {
         "data_dir": str(DATA_DIR),
         "cycles_json": (DATA_DIR / "cycles.json").is_file(),
         "symbols": {},
     }
-    for symbol in SYMBOLS:
+    for symbol in ledger_symbols(symbols):
         state_path = DATA_DIR / f"{symbol}.json"
         st = app.state.load(symbol)
         sym = app.cycles.get_symbol_data(symbol)
@@ -215,9 +230,9 @@ def ledger_data_sources(app: "App") -> dict:
     return sources
 
 
-def collect_all_trades(app: "App") -> list[dict]:
+def collect_all_trades(app: "App", *, symbols=None) -> list[dict]:
     rows: list[dict] = []
-    for symbol in SYMBOLS:
+    for symbol in ledger_symbols(symbols):
         sym = app.cycles.get_symbol_data(symbol)
         st = app.state.load(symbol)
         fill_log = st.get("fill_log") or []
@@ -244,19 +259,8 @@ def collect_all_trades(app: "App") -> list[dict]:
 
 
 def _format_t_change(t_before, t_after) -> str:
-    try:
-        if t_before not in (None, "") and t_after not in (None, ""):
-            tb, ta = float(t_before), float(t_after)
-            if tb != ta:
-                return f"{tb:g} → {ta:g}"
-            return f"{ta:g}"
-        if t_after not in (None, ""):
-            return f"{float(t_after):g}"
-        if t_before not in (None, ""):
-            return f"{float(t_before):g}"
-    except (TypeError, ValueError):
-        pass
-    return "—"
+    """T 변화 — 'T ' 접두어 없는 시트용 표기 (render.t_transition 과 규칙 공유)."""
+    return t_transition(t_before, t_after).removeprefix("T ").replace("→", " → ")
 
 
 def _to_kst_date(when: str) -> str:
@@ -309,12 +313,10 @@ def _enrich_sheet_trade_rows(rows: list[dict]) -> None:
         r["seq"] = i
 
 
-def collect_sheet_trades(app: "App") -> list[dict]:
+def collect_sheet_trades(app: "App", *, symbols=None) -> list[dict]:
     """토스 체결 + T메타 — Sheets 매매내역 (연번·날짜·T·가격·수량·총액·손익)."""
-    from strategy.fill_reconciler import FillReconciler
-
     rows: list[dict] = []
-    for symbol in SYMBOLS:
+    for symbol in ledger_symbols(symbols):
         st = app.state.load(symbol)
         fill_log = list(st.get("fill_log") or [])
         sym = app.cycles.get_symbol_data(symbol)
@@ -360,9 +362,9 @@ def collect_sheet_trades(app: "App") -> list[dict]:
     return rows
 
 
-def collect_completed_cycles(app: "App") -> list[dict]:
+def collect_completed_cycles(app: "App", *, symbols=None) -> list[dict]:
     rows: list[dict] = []
-    for symbol in SYMBOLS:
+    for symbol in ledger_symbols(symbols):
         for c in app.cycles.get_symbol_data(symbol).get("completed") or []:
             rows.append({
                 "symbol": symbol,
@@ -382,10 +384,10 @@ def collect_completed_cycles(app: "App") -> list[dict]:
     return rows
 
 
-def collect_monthly_rows(app: "App", year: int | None = None) -> list[dict]:
+def collect_monthly_rows(app: "App", year: int | None = None, *, symbols=None) -> list[dict]:
     year = year or datetime.date.today().year
     rows: list[dict] = []
-    for symbol in (None, *SYMBOLS):
+    for symbol in (None, *ledger_symbols(symbols)):
         label = symbol or "전체"
         summary = app.cycles.monthly_summary(symbol, year)
         for month, info in sorted(summary.items()):

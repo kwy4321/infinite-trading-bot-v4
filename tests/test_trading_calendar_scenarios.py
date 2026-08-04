@@ -43,6 +43,9 @@ class CalendarBroker:
     """HTTP 없이 TossClient 캘린더 메서드만 검증."""
 
     dry_run = False
+    find_us_market_day = staticmethod(TossClient.find_us_market_day)
+    target_us_date_for_evening_loc = staticmethod(TossClient.target_us_date_for_evening_loc)
+    target_us_date_for_morning_job = staticmethod(TossClient.target_us_date_for_morning_job)
 
     def __init__(self, cal: dict):
         self._cal = cal
@@ -212,7 +215,7 @@ class TestSessionFillAcrossDays:
         order = {
             "qty": 2,
             "price": 50.0,
-            "action": "STAR_BUY",
+            "action": "BUY_FULL",
             "ordered_at": ordered,
             "desc": "별 매수",
         }

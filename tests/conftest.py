@@ -133,10 +133,10 @@ class FakeStrategy:
             "one_buy_amount": 250.0,
             "reverse_mode": False,
             "buy_orders": [
-                {"action": "STAR_BUY", "price": 55.0, "qty": 2, "desc": "별 +10%"},
+                {"action": "STAR_BUY", "price": 55.0, "qty": 2, "desc": "별 +10%", "side": "BUY"},
             ],
             "sell_orders": [
-                {"action": "TAKE_PROFIT", "price": 60.0, "qty": 5, "desc": "익절 +10%"},
+                {"action": "TAKE_PROFIT", "price": 60.0, "qty": 5, "desc": "익절 +10%", "side": "SELL"},
             ],
         }
 

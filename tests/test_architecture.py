@@ -204,3 +204,12 @@ def test_no_duplicate_money_parser():
     assert not offenders, (
         "금액 파싱 중복 정의 — core.money 를 import 하세요:\n" + "\n".join(offenders)
     )
+
+
+def test_run_for_symbol_is_dry_before_holdings_qty():
+    """18:05 LOC — resolve_holdings_qty 호출 전 is_dry 가 정의돼야 한다 (UnboundLocalError 방지)."""
+    text = (ROOT / "jobs" / "executor.py").read_text(encoding="utf-8")
+    start = text.index("async def run_for_symbol")
+    end = text.index("\n    def _target_us_date_for_phase", start)
+    body = text[start:end]
+    assert body.index("is_dry = self._is_dry()") < body.index("resolve_holdings_qty")

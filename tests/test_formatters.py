@@ -99,6 +99,19 @@ def test_help_block_is_valid_html():
     _assert_safe(help_block())
 
 
+def test_market_open_report_shows_errors_when_no_orders():
+    from tg.notifications import format_market_open_report
+
+    text = format_market_open_report(
+        "18:05:00",
+        ["🚨 [SOXL] 실행 실패: local variable 'is_dry'"],
+        ok=0,
+        total=0,
+    )
+    assert "SOXL" in text
+    assert "오늘 예약할 주문 없음" in text
+
+
 def test_formatters_stay_within_telegram_limit(fake_app):
     fake_app._dry = False
     for text in (

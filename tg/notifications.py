@@ -34,6 +34,9 @@ def format_market_open_report(
     """프리마켓 LOC — 종목별 접수 결과."""
     header = f"🔔 {bold('프리마켓 LOC 접수 완료')}  {dim(now_kst)}"
     if total <= 0:
+        if symbol_lines:
+            body = "\n".join(symbol_lines)
+            return f"{header}\n\n{body}\n\n{dim('오늘 예약할 주문 없음')}"
         return f"{header}\n{dim('오늘 예약할 주문 없음')}"
     body = "\n".join(symbol_lines)
     footer = f"접수 {code(str(ok))}/{code(str(total))}건 · {dim('체결은 종가 후 job4/sync 반영')}"

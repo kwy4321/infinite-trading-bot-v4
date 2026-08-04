@@ -465,6 +465,7 @@ class JobExecutor:
         if premium is None:
             premium = self.app.runtime.premium_default()
         st = self.app.state.load(symbol)
+        is_dry = self._is_dry()
         if phase in _LOC_PHASES and not force:
             us_date = self._target_us_date_for_phase(phase)
             if await self._already_traded_for_us_session(symbol, us_date, st=st):
@@ -499,7 +500,6 @@ class JobExecutor:
                 symbol, st.get("qty"), plan["holdings_qty"],
             )
         filtered = filter_orders_for_phase(plan, phase)
-        is_dry = self._is_dry()
         wait_fill = True
         if phase in _LOC_PHASES:
             if submit_at_open and not is_dry:

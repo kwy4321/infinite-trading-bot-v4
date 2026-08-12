@@ -38,6 +38,12 @@ def pnl_line_brief(amount_usd: float, pct_val: float) -> str:
     return pnl_line(amount_usd, pct_val)
 
 
+def realized_pnl_brief(amount_usd: float, pct_val: float) -> str:
+    """매도 실현손익 — ▲▼ 없이 '손익' 라벨만 (매수/매도 화살표와 구분)."""
+    sign = "+" if amount_usd >= 0 else ""
+    return f"{dim('손익')} {code(f'{sign}${amount_usd:,.2f}')} {pct(pct_val)}"
+
+
 def section(title: str, emoji: str = "") -> str:
     label = f"{emoji} {title}" if emoji else title
     return f"{bold(label)}\n{DIVIDER}"

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from app import App
-from cycles.cycle_tracker import CycleTracker
+from core.trade_pnl import sell_realized_pnl
 from render.html import dim, quote
-from render.numbers import section
+from render.labels import side_icon
+from render.numbers import realized_pnl_brief, section, t_transition
 from services.trading_context import is_dry
 from strategy.session_fill import us_session_date_from_when
 from tg.status_formatter import build_symbol_status_lines
@@ -45,6 +46,33 @@ def _trades_for_session(app: App, symbol: str, session_date: str) -> list[dict]:
     return out
 
 
+def _format_session_trades_line(session_label: str, trades: list[dict]) -> str:
+    """직전 미국 거래일 매매 — 종목 카드 맨 아래 한 줄."""
+    head = dim(f"직전 종가 LOC · {session_label} · ")
+    if not trades:
+        return head + dim("체결 없음")
+
+    parts: list[str] = []
+    for tr in trades:
+        side = str(tr.get("side") or "").upper()
+        side_txt = "매수" if side == "BUY" else "매도"
+        icon = side_icon(side, style="arrow")
+        qty = int(tr.get("qty") or 0)
+        price = float(tr.get("price") or 0)
+        part = f"{icon}{side_txt} {qty}주 @ ${price:,.2f}"
+        if side == "SELL":
+            pnl = sell_realized_pnl(tr)
+            if pnl:
+                part += f" · {realized_pnl_brief(pnl[0], pnl[1])}"
+        parts.append(part)
+
+    t_txt = t_transition(trades[0].get("t_before"), trades[-1].get("t_after"))
+    body = " · ".join(parts)
+    if t_txt and t_txt != "—":
+        body = f"{body} · {t_txt}"
+    return head + body
+
+
 def format_strategy_briefing(app: App, session_date: str, *, session_label: str = "") -> str:
     """무매 현황 + 직전 종가 LOC 체결 요약."""
     symbols = app.runtime.active_symbols()
@@ -58,15 +86,7 @@ def format_strategy_briefing(app: App, session_date: str, *, session_label: str 
     for sym in symbols:
         card = build_symbol_status_lines(app, sym, brief=True)
         trades = _trades_for_session(app, sym, session_date)
-        card.append("")
-        card.append(dim(f"직전 종가 LOC · {label}"))
-        if trades:
-            for tr in trades:
-                card.append(
-                    f"  {CycleTracker.format_trade_line(sym, tr).strip()}"
-                )
-        else:
-            card.append(f"  {dim('체결 없음')}")
+        card.append(_format_session_trades_line(label, trades))
         lines.append(quote(*card))
 
     if is_dry(app):

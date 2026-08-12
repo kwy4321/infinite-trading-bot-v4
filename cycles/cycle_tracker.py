@@ -14,9 +14,10 @@ from typing import Optional, Union
 from config.json_io import load_json, save_json
 from config.settings import SYMBOLS, get_settings
 from core.clock import KST
+from core.trade_pnl import sell_profit_fields, sell_realized_pnl
 from render.html import bold, dim, quote
 from render.labels import month_bar, side_icon, trend_arrow
-from render.numbers import pnl_line, signed_usd_text, t_transition
+from render.numbers import pnl_line, realized_pnl_brief, signed_usd_text, t_transition
 
 CYCLES_FILE = "cycles.json"
 DEFAULT_DATA = os.path.join("data", "accounts", "default")
@@ -173,6 +174,7 @@ class CycleTracker:
         order_id: str | None = None,
         fill_id: str | None = None,
         filled_at: str | None = None,
+        avg_before: float | None = None,
     ) -> None:
         """현재 회차 매매 내역 기록 (체결 동기화·봇 주문 공통)."""
         data = self._load_all()
@@ -184,7 +186,7 @@ class CycleTracker:
         when = filled_at or datetime.datetime.now(KST).isoformat(timespec="seconds")
         if side.upper() == "BUY" and not trades:
             cur["started_at"] = _trade_date_display(when)
-        trades.append({
+        row = {
             "symbol": symbol.upper(),
             "side": side.upper(),
             "qty": int(qty),
@@ -201,7 +203,13 @@ class CycleTracker:
             "ordered_at": when,
             "filled_at": when,
             "at": when,
-        })
+        }
+        if avg_before is not None and side.upper() == "SELL":
+            row["avg_before"] = round(float(avg_before), 4)
+            row.update(sell_profit_fields(
+                price=float(price), qty=int(qty), avg_before=float(avg_before),
+            ))
+        trades.append(row)
         cur["trades"] = self._dedupe_trades(trades)[-100:]
         self._save_all(data)
 
@@ -897,9 +905,14 @@ class CycleTracker:
             amt_txt = f"${exec_price:,.2f} · 합 ${total_usd:,.2f}"
         else:
             amt_txt = f"${exec_price:,.2f}"
+        pnl_txt = ""
+        if side == "SELL":
+            pnl = sell_realized_pnl(tr)
+            if pnl:
+                pnl_txt = f" · {realized_pnl_brief(pnl[0], pnl[1])}"
         return (
             f"{prefix}{when} · {bold(sym)} · {side_part} · "
-            f"{bold(qty)}주 · {amt_txt} · {t_txt}"
+            f"{bold(qty)}주 · {amt_txt}{pnl_txt} · {t_txt}"
         )
 
     @classmethod

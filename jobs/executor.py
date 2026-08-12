@@ -667,7 +667,7 @@ class JobExecutor:
         try:
             from integrations.google_sheets import sync_ledger
             result = await asyncio.wait_for(
-                asyncio.to_thread(sync_ledger, self.app, rebuild_broker=True),
+                asyncio.to_thread(sync_ledger, self.app, rebuild_broker=False),
                 timeout=120.0,
             )
             if result.get("ok"):

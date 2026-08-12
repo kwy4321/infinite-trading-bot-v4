@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from config.settings import DATA_DIR, SYMBOLS
 from core.clock import KST
 from core.symbols import normalize_symbols
+from core.trade_pnl import sell_realized_pnl
 from render.labels import mode_label
 from render.numbers import t_transition
 from services.account_service import fetch_account_snapshot
@@ -54,7 +55,9 @@ def _trade_row(symbol: str, tr: dict, *, cycle_no: int | None = None, cycle_stat
         "t_before": tr.get("t_before", ""),
         "t_after": tr.get("t_after", ""),
         "avg_after": tr.get("avg_after", ""),
+        "avg_before": tr.get("avg_before", ""),
         "qty_after": tr.get("qty_after", ""),
+        "pnl_usd": tr.get("profit_usd"),
         "source": tr.get("source", ""),
         "order_id": tr.get("order_id", ""),
         "note": tr.get("note", ""),
@@ -159,16 +162,17 @@ def prepare_ledger_for_export(
     }
     is_live = rebuild_broker and not is_dry(app) and app.settings.has_toss
 
-    def _rebuild_one(symbol: str, fill_log: list, qty: int) -> int:
+    def _rebuild_one(symbol: str, fill_log: list, qty: int) -> tuple[str, int]:
         st = app.state.load(symbol)
         order_ids = FillReconciler.collect_known_order_ids(app, symbol, st=st)
         broker_fills = app.broker.list_broker_fills(
             symbol, days=365, max_orders=500, extra_order_ids=order_ids,
         )
         if not broker_fills:
-            return 0
-        return app.cycles.rebuild_trades_from_broker(symbol, broker_fills, fill_log, qty)
+            return symbol, 0
+        return symbol, app.cycles.rebuild_trades_from_broker(symbol, broker_fills, fill_log, qty)
 
+    rebuild_jobs: list[tuple[str, list, int]] = []
     for symbol in ledger_symbols(symbols):
         st = app.state.load(symbol)
         fill_log = list(st.get("fill_log") or [])
@@ -184,18 +188,7 @@ def prepare_ledger_for_export(
             app.cycles.ensure_current(symbol, principal)
 
         if is_live and qty > 0:
-            try:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    fut = pool.submit(_rebuild_one, symbol, fill_log, qty)
-                    n = fut.result(timeout=broker_timeout_sec)
-                if n:
-                    result["broker_symbols"].append(symbol)
-            except concurrent.futures.TimeoutError:
-                logger.warning("broker rebuild timeout %s", symbol)
-                result["errors"].append(f"{symbol}: broker timeout")
-            except Exception as exc:
-                logger.exception("broker rebuild failed %s", symbol)
-                result["errors"].append(f"{symbol}: {exc}")
+            rebuild_jobs.append((symbol, fill_log, qty))
 
         if fill_log:
             app.cycles.sync_trades_from_fill_log(symbol, fill_log, principal)
@@ -205,6 +198,26 @@ def prepare_ledger_for_export(
 
         if fill_log or qty > 0 or has_trades:
             result["synced_symbols"].append(symbol)
+
+    if rebuild_jobs:
+        workers = min(4, len(rebuild_jobs))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                pool.submit(_rebuild_one, sym, fl, q): sym
+                for sym, fl, q in rebuild_jobs
+            }
+            for fut in concurrent.futures.as_completed(futures):
+                sym = futures[fut]
+                try:
+                    _, n = fut.result(timeout=broker_timeout_sec)
+                    if n:
+                        result["broker_symbols"].append(sym)
+                except concurrent.futures.TimeoutError:
+                    logger.warning("broker rebuild timeout %s", sym)
+                    result["errors"].append(f"{sym}: broker timeout")
+                except Exception as exc:
+                    logger.exception("broker rebuild failed %s", sym)
+                    result["errors"].append(f"{sym}: {exc}")
 
     return result
 
@@ -295,8 +308,20 @@ def _enrich_sheet_trade_rows(rows: list[dict]) -> None:
             r["date"] = _to_kst_date(r.get("datetime") or "")
 
             if side == "SELL" and running_qty > 0:
-                sell_qty = min(qty, running_qty)
-                r["pnl_usd"] = round((price - running_avg) * sell_qty, 2)
+                stored = sell_realized_pnl({
+                    "side": "SELL",
+                    "qty": qty,
+                    "price": price,
+                    "profit_usd": r.get("pnl_usd"),
+                    "avg_before": r.get("avg_before"),
+                    "avg_after": r.get("avg_after"),
+                    "qty_after": r.get("qty_after"),
+                })
+                if stored:
+                    r["pnl_usd"] = stored[0]
+                else:
+                    sell_qty = min(qty, running_qty)
+                    r["pnl_usd"] = round((price - running_avg) * sell_qty, 2)
                 running_qty = max(0, running_qty - qty)
                 if running_qty == 0:
                     running_avg = 0.0
@@ -314,30 +339,14 @@ def _enrich_sheet_trade_rows(rows: list[dict]) -> None:
 
 
 def collect_sheet_trades(app: "App", *, symbols=None) -> list[dict]:
-    """토스 체결 + T메타 — Sheets 매매내역 (연번·날짜·T·가격·수량·총액·손익)."""
+    """cycles·fill_log 기반 Sheets 매매내역 (prepare_ledger_for_export 후 호출)."""
     rows: list[dict] = []
     for symbol in ledger_symbols(symbols):
         st = app.state.load(symbol)
         fill_log = list(st.get("fill_log") or [])
         sym = app.cycles.get_symbol_data(symbol)
-        qty = int(st.get("qty") or 0)
         cur = sym.get("current")
-
-        current_trades: list[dict] = []
-        if not is_dry(app) and app.settings.has_toss:
-            try:
-                order_ids = FillReconciler.collect_known_order_ids(app, symbol, st=st)
-                broker_fills = app.broker.list_broker_fills(
-                    symbol, days=365, max_orders=500, extra_order_ids=order_ids,
-                )
-                if broker_fills and qty > 0:
-                    current_trades = app.cycles.display_trades_from_broker(
-                        symbol, broker_fills, sym, fill_log, qty,
-                    )
-            except Exception:
-                logger.exception("sheet broker trades %s", symbol)
-        if not current_trades:
-            current_trades = app.cycles._collect_trades(sym, symbol, fill_log)
+        current_trades = app.cycles._collect_trades(sym, symbol, fill_log)
 
         cycle_no = (cur or {}).get("cycle_no", "")
         for tr in current_trades:

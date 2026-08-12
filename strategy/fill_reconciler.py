@@ -7,6 +7,7 @@ import logging
 import math
 from typing import TYPE_CHECKING
 
+from core.trade_pnl import sell_profit_fields
 from strategy.strategy_v40 import InfiniteStrategyV40, REVERSE_BUY
 
 if TYPE_CHECKING:
@@ -420,6 +421,7 @@ class FillReconciler:
 
     def _apply_fill(self, symbol: str, st: dict, fill: dict, premium: int) -> dict:
         t_before = float(st.get("T", 0.0))
+        avg_before = float(st.get("avg_price", 0.0))
         side = fill["side"]
         order = {
             "qty": int(fill["qty"]),
@@ -474,6 +476,13 @@ class FillReconciler:
             "ordered_at": fill.get("ordered_at") or fill.get("filled_at"),
             "at": fill.get("ordered_at") or fill.get("filled_at") or datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         }
+        if side == "SELL" and avg_before > 0:
+            entry["avg_before"] = round(avg_before, 4)
+            entry.update(sell_profit_fields(
+                price=float(order["price"]),
+                qty=int(order["qty"]),
+                avg_before=avg_before,
+            ))
         if fill.get("order_id"):
             entry["order_id"] = fill["order_id"]
         self._append_fill_log(st, entry)

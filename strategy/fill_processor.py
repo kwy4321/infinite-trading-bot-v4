@@ -63,6 +63,7 @@ class FillProcessor:
         if action == REVERSE_SELL_FIRST:
             state["reverse_first_day"] = False
 
+        avg_before = float(state["avg_price"])
         state["qty"] = max(0, int(state["qty"]) - qty)
         if state["qty"] == 0:
             state["avg_price"] = 0.0
@@ -73,15 +74,18 @@ class FillProcessor:
         state["last_t_qty"] = int(state["qty"])
 
         with cycles.batch():
-            completed = cycles.record_sell(symbol, usd, t_after, state["qty"], state["principal"])
             cycles.record_trade(
                 symbol, side="SELL", qty=qty, price=price, action=action,
                 t_before=t_before,
                 t_after=t_after if state["qty"] > 0 else 0.0,
                 avg_after=state["avg_price"], qty_after=int(state["qty"]),
+                avg_before=avg_before,
                 source=source, note=note or order.get("desc", ""),
                 fill_id=order.get("fill_id"),
                 filled_at=order.get("ordered_at") or order.get("filled_at"),
                 order_id=order.get("order_id"),
+            )
+            completed = cycles.record_sell(
+                symbol, usd, t_after, state["qty"], state["principal"],
             )
         return state, completed

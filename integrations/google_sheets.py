@@ -24,6 +24,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_GSPREAD_CLIENTS: dict[str, Any] = {}
+
 TAB_SUMMARY = "요약"
 TAB_TRADES = "매매내역"
 TAB_CYCLES = "완료회차"
@@ -303,6 +305,312 @@ def _pad_rows(rows: list[list], ncol: int) -> list[list]:
     return [list(r) + [""] * (ncol - len(r)) for r in rows]
 
 
+def _authorize_gspread(settings) -> Any:
+    """서비스 계정 gspread 클라이언트 — 경로별 1회 생성 후 재사용."""
+    import gspread
+    from google.oauth2.service_account import Credentials
+
+    path = resolve_service_account_path(settings.google_service_account_json)
+    if path is None:
+        raise FileNotFoundError("Google service account JSON not found")
+    key = str(path.resolve())
+    cached = _GSPREAD_CLIENTS.get(key)
+    if cached is not None:
+        return cached
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds = Credentials.from_service_account_file(str(path), scopes=scopes)
+    _GSPREAD_CLIENTS[key] = gspread.authorize(creds)
+    return _GSPREAD_CLIENTS[key]
+
+
+def _compact_signed_fmt(fmt: str | None) -> bool:
+    return bool(fmt and fmt.endswith("_compact"))
+
+
+def _sheet_rule_counts(metadata: dict) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for sheet in metadata.get("sheets") or []:
+        props = sheet.get("properties") or {}
+        title = props.get("title")
+        if title:
+            counts[str(title)] = len(sheet.get("conditionalFormats") or [])
+    return counts
+
+
+def _delete_conditional_format_requests(sheet_id: int, rule_count: int) -> list[dict]:
+    return [
+        {"deleteConditionalFormatRule": {"sheetId": sheet_id, "index": idx}}
+        for idx in range(rule_count - 1, -1, -1)
+    ]
+
+
+def _header_format_request(sheet_id: int, *, header_rows: int, ncol: int) -> dict:
+    return {
+        "repeatCell": {
+            "range": {
+                "sheetId": sheet_id,
+                "startRowIndex": 0,
+                "endRowIndex": header_rows,
+                "startColumnIndex": 0,
+                "endColumnIndex": max(ncol, 1),
+            },
+            "cell": {
+                "userEnteredFormat": {
+                    "textFormat": {"bold": True, "fontSize": 10},
+                    "backgroundColor": {"red": 0.85, "green": 0.92, "blue": 0.98},
+                    "horizontalAlignment": "CENTER",
+                },
+            },
+            "fields": (
+                "userEnteredFormat.textFormat,"
+                "userEnteredFormat.backgroundColor,"
+                "userEnteredFormat.horizontalAlignment"
+            ),
+        },
+    }
+
+
+def _reset_body_text_format_request(
+    sheet_id: int, *, start_row: int, end_row: int, ncol: int,
+) -> dict | None:
+    if end_row <= start_row:
+        return None
+    return {
+        "repeatCell": {
+            "range": {
+                "sheetId": sheet_id,
+                "startRowIndex": start_row,
+                "endRowIndex": end_row,
+                "startColumnIndex": 0,
+                "endColumnIndex": max(ncol, 1),
+            },
+            "cell": {
+                "userEnteredFormat": {
+                    "textFormat": {
+                        "foregroundColor": {"red": 0.0, "green": 0.0, "blue": 0.0},
+                        "bold": False,
+                    },
+                },
+            },
+            "fields": "userEnteredFormat.textFormat",
+        },
+    }
+
+
+def _signed_conditional_format_requests(
+    sheet_id: int,
+    columns: list[Column],
+    *,
+    header_rows: int,
+    nrows: int,
+) -> list[dict]:
+    """손익·수익률 열 — 셀별 repeatCell 대신 열 단위 조건부 서식 (2규칙/열)."""
+    from gspread.utils import rowcol_to_a1
+
+    requests: list[dict] = []
+    body_rows = max(nrows - header_rows, 0)
+    if body_rows <= 0:
+        return requests
+
+    for c_idx, (_, _, fmt) in enumerate(columns):
+        if fmt not in SIGNED_FORMATS:
+            continue
+        col = rowcol_to_a1(1, c_idx + 1)[:-1]
+        anchor = f"{col}{header_rows + 1}"
+        if _compact_signed_fmt(fmt):
+            patterns = (("^\\+", COLOR_PROFIT), ("^\\-", COLOR_LOSS))
+        else:
+            patterns = (("^📈", COLOR_PROFIT), ("^📉", COLOR_LOSS))
+        for pattern, color in patterns:
+            requests.append({
+                "addConditionalFormatRule": {
+                    "rule": {
+                        "ranges": [{
+                            "sheetId": sheet_id,
+                            "startRowIndex": header_rows,
+                            "endRowIndex": nrows,
+                            "startColumnIndex": c_idx,
+                            "endColumnIndex": c_idx + 1,
+                        }],
+                        "booleanRule": {
+                            "condition": {
+                                "type": "CUSTOM_FORMULA",
+                                "values": [{
+                                    "userEnteredValue": f'=REGEXMATCH({anchor},"{pattern}")',
+                                }],
+                            },
+                            "format": {
+                                "textFormat": {
+                                    "foregroundColor": color,
+                                    "bold": True,
+                                },
+                            },
+                        },
+                    },
+                    "index": 0,
+                },
+            })
+    return requests
+
+
+def _summary_conditional_format_requests(sheet_id: int, *, nrows: int) -> list[dict]:
+    """요약 시트 B열 — +/- compact 값만 색상."""
+    if nrows <= 1:
+        return []
+    requests: list[dict] = []
+    for pattern, color in (("^\\+", COLOR_PROFIT), ("^\\-", COLOR_LOSS)):
+        requests.append({
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [{
+                        "sheetId": sheet_id,
+                        "startRowIndex": 1,
+                        "endRowIndex": nrows,
+                        "startColumnIndex": 1,
+                        "endColumnIndex": 2,
+                    }],
+                    "booleanRule": {
+                        "condition": {
+                            "type": "CUSTOM_FORMULA",
+                            "values": [{
+                                "userEnteredValue": f'=REGEXMATCH(B2,"{pattern}")',
+                            }],
+                        },
+                        "format": {
+                            "textFormat": {
+                                "foregroundColor": color,
+                                "bold": True,
+                            },
+                        },
+                    },
+                },
+                "index": 0,
+            },
+        })
+    return requests
+
+
+def _summary_layout_requests(
+    sheet_id: int, *, nrows: int, section_at: list[int],
+) -> list[dict]:
+    requests: list[dict] = [
+        {
+            "updateDimensionProperties": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "dimension": "COLUMNS",
+                    "startIndex": 0,
+                    "endIndex": 1,
+                },
+                "properties": {"pixelSize": 88},
+                "fields": "pixelSize",
+            },
+        },
+        {
+            "updateDimensionProperties": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "dimension": "COLUMNS",
+                    "startIndex": 1,
+                    "endIndex": 2,
+                },
+                "properties": {"pixelSize": 168},
+                "fields": "pixelSize",
+            },
+        },
+        {
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": 0,
+                    "endRowIndex": max(nrows, 1),
+                    "startColumnIndex": 0,
+                    "endColumnIndex": 2,
+                },
+                "cell": {
+                    "userEnteredFormat": {
+                        "wrapStrategy": "WRAP",
+                        "verticalAlignment": "MIDDLE",
+                        "textFormat": {"fontSize": 10},
+                    },
+                },
+                "fields": (
+                    "userEnteredFormat.wrapStrategy,"
+                    "userEnteredFormat.verticalAlignment,"
+                    "userEnteredFormat.textFormat.fontSize"
+                ),
+            },
+        },
+        {
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": 0,
+                    "endRowIndex": 1,
+                    "startColumnIndex": 0,
+                    "endColumnIndex": 2,
+                },
+                "cell": {
+                    "userEnteredFormat": {
+                        "textFormat": {"bold": True, "fontSize": 12},
+                        "backgroundColor": {"red": 0.93, "green": 0.94, "blue": 0.97},
+                    },
+                },
+                "fields": "userEnteredFormat.textFormat,userEnteredFormat.backgroundColor",
+            },
+        },
+        {
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": 2,
+                    "endRowIndex": 5,
+                    "startColumnIndex": 0,
+                    "endColumnIndex": 1,
+                },
+                "cell": {
+                    "userEnteredFormat": {
+                        "textFormat": {"bold": True, "fontSize": 10},
+                    },
+                },
+                "fields": "userEnteredFormat.textFormat",
+            },
+        },
+        {
+            "updateSheetProperties": {
+                "properties": {
+                    "sheetId": sheet_id,
+                    "gridProperties": {"frozenRowCount": 1},
+                },
+                "fields": "gridProperties.frozenRowCount",
+            },
+        },
+    ]
+    for idx in section_at:
+        requests.append({
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": idx,
+                    "endRowIndex": idx + 1,
+                    "startColumnIndex": 0,
+                    "endColumnIndex": 2,
+                },
+                "cell": {
+                    "userEnteredFormat": {
+                        "textFormat": {"bold": True, "fontSize": 11},
+                        "backgroundColor": {"red": 0.85, "green": 0.92, "blue": 0.98},
+                    },
+                },
+                "fields": "userEnteredFormat.textFormat,userEnteredFormat.backgroundColor",
+            },
+        })
+    return requests
+
+
 def _build_summary_rows(
     app: "App",
     snapshot: dict,
@@ -361,18 +669,7 @@ class GoogleSheetsLedger:
         return self.settings.has_google_sheets
 
     def _client(self):
-        import gspread
-        from google.oauth2.service_account import Credentials
-
-        path = resolve_service_account_path(self.settings.google_service_account_json)
-        if path is None:
-            raise FileNotFoundError("Google service account JSON not found")
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive",
-        ]
-        creds = Credentials.from_service_account_file(str(path), scopes=scopes)
-        return gspread.authorize(creds)
+        return _authorize_gspread(self.settings)
 
     @staticmethod
     def _get_or_add_worksheet(spreadsheet, title: str, rows: int, cols: int):
@@ -383,218 +680,46 @@ class GoogleSheetsLedger:
         except gspread.WorksheetNotFound:
             return spreadsheet.add_worksheet(title=title, rows=max(rows, 10), cols=max(cols, 2))
 
-    @staticmethod
-    def _style_worksheet(ws, *, header_rows: int = 1, ncol: int = 1) -> None:
-        try:
-            from gspread.utils import rowcol_to_a1
-
-            end = rowcol_to_a1(header_rows, max(ncol, 1))
-            ws.format(
-                f"A1:{end}",
-                {
-                    "textFormat": {"bold": True, "fontSize": 10},
-                    "backgroundColor": {"red": 0.85, "green": 0.92, "blue": 0.98},
-                    "horizontalAlignment": "CENTER",
-                },
-            )
-            ws.freeze(rows=header_rows)
-        except Exception:
-            logger.debug("sheet format skipped", exc_info=True)
-
-    @staticmethod
-    def _apply_signed_colors(
+    def _apply_sheet_formats(
+        self,
         spreadsheet,
         ws,
-        sign_grid: list[list[float | None]],
-        columns: list[Column],
+        requests: list[dict],
         *,
-        header_rows: int = 1,
+        rule_count: int = 0,
     ) -> None:
-        """손익·수익률 — 이득 빨강, 손실 파랑."""
-        if not sign_grid:
+        if not requests and rule_count <= 0:
             return
+        batch = _delete_conditional_format_requests(ws.id, rule_count) + requests
         try:
-            sheet_id = ws.id
-            requests = []
-            for r_idx, signs in enumerate(sign_grid):
-                for c_idx, (sign, (_, _, fmt)) in enumerate(zip(signs, columns)):
-                    if fmt not in SIGNED_FORMATS or sign is None or sign == 0:
-                        continue
-                    color = COLOR_PROFIT if sign > 0 else COLOR_LOSS
-                    row_i = header_rows + r_idx
-                    requests.append({
-                        "repeatCell": {
-                            "range": {
-                                "sheetId": sheet_id,
-                                "startRowIndex": row_i,
-                                "endRowIndex": row_i + 1,
-                                "startColumnIndex": c_idx,
-                                "endColumnIndex": c_idx + 1,
-                            },
-                            "cell": {
-                                "userEnteredFormat": {
-                                    "textFormat": {
-                                        "foregroundColor": color,
-                                        "bold": True,
-                                    },
-                                },
-                            },
-                            "fields": "userEnteredFormat.textFormat",
-                        },
-                    })
-            if requests:
-                spreadsheet.batch_update({"requests": requests})
+            spreadsheet.batch_update({"requests": batch})
         except Exception:
-            logger.debug("signed colors skipped", exc_info=True)
-
-    @staticmethod
-    def _style_table_header(ws, row_0idx: int, ncol: int) -> None:
-        try:
-            from gspread.utils import rowcol_to_a1
-
-            r = row_0idx + 1
-            ws.format(
-                f"{rowcol_to_a1(r, 1)}:{rowcol_to_a1(r, max(ncol, 1))}",
-                {
-                    "textFormat": {"bold": True, "fontSize": 9},
-                    "backgroundColor": {"red": 0.85, "green": 0.92, "blue": 0.98},
-                    "horizontalAlignment": "CENTER",
-                },
-            )
-        except Exception:
-            logger.debug("table header format skipped", exc_info=True)
-
-    @staticmethod
-    def _apply_vertical_signed_colors(
-        spreadsheet,
-        ws,
-        sign_at: list[tuple[int, float | None]],
-    ) -> None:
-        """2열 요약 — 값 열(B) 손익 색상."""
-        if not sign_at:
-            return
-        try:
-            sheet_id = ws.id
-            requests = []
-            for row_0idx, sign in sign_at:
-                if sign is None or sign == 0:
-                    continue
-                color = COLOR_PROFIT if sign > 0 else COLOR_LOSS
-                requests.append({
-                    "repeatCell": {
-                        "range": {
-                            "sheetId": sheet_id,
-                            "startRowIndex": row_0idx,
-                            "endRowIndex": row_0idx + 1,
-                            "startColumnIndex": 1,
-                            "endColumnIndex": 2,
-                        },
-                        "cell": {
-                            "userEnteredFormat": {
-                                "textFormat": {
-                                    "foregroundColor": color,
-                                    "bold": True,
-                                },
-                            },
-                        },
-                        "fields": "userEnteredFormat.textFormat",
-                    },
-                })
-            if requests:
-                spreadsheet.batch_update({"requests": requests})
-        except Exception:
-            logger.debug("vertical signed colors skipped", exc_info=True)
-
-    @staticmethod
-    def _apply_summary_layout(
-        spreadsheet,
-        ws,
-        *,
-        nrows: int,
-        section_at: list[int],
-    ) -> None:
-        """요약 시트 — 2열 세로 (모바일)."""
-        try:
-            sheet_id = ws.id
-            spreadsheet.batch_update({
-                "requests": [
-                    {
-                        "updateDimensionProperties": {
-                            "range": {
-                                "sheetId": sheet_id,
-                                "dimension": "COLUMNS",
-                                "startIndex": 0,
-                                "endIndex": 1,
-                            },
-                            "properties": {"pixelSize": 88},
-                            "fields": "pixelSize",
-                        },
-                    },
-                    {
-                        "updateDimensionProperties": {
-                            "range": {
-                                "sheetId": sheet_id,
-                                "dimension": "COLUMNS",
-                                "startIndex": 1,
-                                "endIndex": 2,
-                            },
-                            "properties": {"pixelSize": 168},
-                            "fields": "pixelSize",
-                        },
-                    },
-                ],
-            })
-            from gspread.utils import rowcol_to_a1
-
-            end = rowcol_to_a1(max(nrows, 1), 2)
-            ws.format(
-                f"A1:{end}",
-                {
-                    "wrapStrategy": "WRAP",
-                    "verticalAlignment": "MIDDLE",
-                    "textFormat": {"fontSize": 10},
-                },
-            )
-            ws.format(
-                "A1:B1",
-                {
-                    "textFormat": {"bold": True, "fontSize": 12},
-                    "backgroundColor": {"red": 0.93, "green": 0.94, "blue": 0.97},
-                },
-            )
-            ws.format(
-                "A3:A5",
-                {"textFormat": {"bold": True, "fontSize": 10}},
-            )
-            for idx in section_at:
-                r = idx + 1
-                ws.format(
-                    f"A{r}:B{r}",
-                    {
-                        "textFormat": {"bold": True, "fontSize": 11},
-                        "backgroundColor": {"red": 0.85, "green": 0.92, "blue": 0.98},
-                    },
-                )
-            ws.freeze(rows=1)
-        except Exception:
-            logger.debug("summary layout skipped", exc_info=True)
+            logger.debug("sheet format batch skipped", exc_info=True)
 
     def _write_summary_tab(
         self,
         spreadsheet,
         snapshot: dict,
         status_rows: list[dict],
+        *,
+        rule_count: int = 0,
     ) -> None:
-        rows, sign_at, section_at = _build_summary_rows(
+        rows, _sign_at, section_at = _build_summary_rows(
             self.app, snapshot, status_rows,
         )
         ws = self._get_or_add_worksheet(spreadsheet, TAB_SUMMARY, len(rows) + 5, 2)
         ws.clear()
         ws.update(values=rows, range_name="A1", value_input_option="USER_ENTERED")
-        self._apply_summary_layout(
-            spreadsheet, ws, nrows=len(rows), section_at=section_at,
+        reset = _reset_body_text_format_request(
+            ws.id, start_row=1, end_row=len(rows), ncol=2,
         )
-        self._apply_vertical_signed_colors(spreadsheet, ws, sign_at)
+        format_requests = _summary_layout_requests(
+            ws.id, nrows=len(rows), section_at=section_at,
+        )
+        format_requests.extend(_summary_conditional_format_requests(ws.id, nrows=len(rows)))
+        if reset:
+            format_requests.insert(0, reset)
+        self._apply_sheet_formats(spreadsheet, ws, format_requests, rule_count=rule_count)
 
     def _write_table_tab(
         self,
@@ -602,17 +727,40 @@ class GoogleSheetsLedger:
         title: str,
         items: list[dict],
         columns: list[Column],
+        *,
+        rule_count: int = 0,
     ) -> None:
         if not items:
-            self._write_tab(spreadsheet, title, [["⚠️ 데이터 없음", ""]])
+            self._write_tab(spreadsheet, title, [["⚠️ 데이터 없음", ""]], rule_count=rule_count)
             return
-        rows, sign_grid = _rows_table(items, columns)
+        rows, _sign_grid = _rows_table(items, columns)
         ncol = max(len(r) for r in rows)
         ws = self._get_or_add_worksheet(spreadsheet, title, len(rows) + 5, ncol)
         ws.clear()
         ws.update(values=rows, range_name="A1", value_input_option="USER_ENTERED")
-        self._style_worksheet(ws, header_rows=1, ncol=ncol)
-        self._apply_signed_colors(spreadsheet, ws, sign_grid, columns)
+        reset = _reset_body_text_format_request(
+            ws.id, start_row=1, end_row=len(rows), ncol=ncol,
+        )
+        format_requests = [
+            _header_format_request(ws.id, header_rows=1, ncol=ncol),
+            {
+                "updateSheetProperties": {
+                    "properties": {
+                        "sheetId": ws.id,
+                        "gridProperties": {"frozenRowCount": 1},
+                    },
+                    "fields": "gridProperties.frozenRowCount",
+                },
+            },
+        ]
+        format_requests.extend(
+            _signed_conditional_format_requests(
+                ws.id, columns, header_rows=1, nrows=len(rows),
+            ),
+        )
+        if reset:
+            format_requests.insert(0, reset)
+        self._apply_sheet_formats(spreadsheet, ws, format_requests, rule_count=rule_count)
 
     def _write_tab(
         self,
@@ -621,6 +769,7 @@ class GoogleSheetsLedger:
         rows: list[list],
         *,
         header_rows: int = 1,
+        rule_count: int = 0,
     ) -> None:
         if not rows:
             rows = [["(데이터 없음)", ""]]
@@ -628,8 +777,14 @@ class GoogleSheetsLedger:
         ws = self._get_or_add_worksheet(spreadsheet, title, len(rows) + 5, ncol)
         ws.clear()
         ws.update(values=rows, range_name="A1", value_input_option="USER_ENTERED")
-        if header_rows:
-            self._style_worksheet(ws, header_rows=header_rows, ncol=ncol)
+        if not header_rows:
+            return
+        self._apply_sheet_formats(
+            spreadsheet,
+            ws,
+            [_header_format_request(ws.id, header_rows=header_rows, ncol=ncol)],
+            rule_count=rule_count,
+        )
 
     @staticmethod
     def _remove_extra_tabs(spreadsheet) -> None:
@@ -659,11 +814,25 @@ class GoogleSheetsLedger:
             if not sid:
                 return {"ok": False, "message": "GOOGLE_SPREADSHEET_ID 또는 GOOGLE_SHEETS_URL 확인"}
             spreadsheet = client.open_by_key(sid)
+            metadata = spreadsheet.fetch_sheet_metadata()
+            rule_counts = _sheet_rule_counts(metadata)
 
-            self._write_summary_tab(spreadsheet, snapshot, status_rows)
-            self._write_table_tab(spreadsheet, TAB_TRADES, trades, TRADES_COLUMNS)
-            self._write_table_tab(spreadsheet, TAB_CYCLES, cycles, CYCLES_COLUMNS)
-            self._write_table_tab(spreadsheet, TAB_MONTHLY, monthly, MONTHLY_COLUMNS)
+            self._write_summary_tab(
+                spreadsheet, snapshot, status_rows,
+                rule_count=rule_counts.get(TAB_SUMMARY, 0),
+            )
+            self._write_table_tab(
+                spreadsheet, TAB_TRADES, trades, TRADES_COLUMNS,
+                rule_count=rule_counts.get(TAB_TRADES, 0),
+            )
+            self._write_table_tab(
+                spreadsheet, TAB_CYCLES, cycles, CYCLES_COLUMNS,
+                rule_count=rule_counts.get(TAB_CYCLES, 0),
+            )
+            self._write_table_tab(
+                spreadsheet, TAB_MONTHLY, monthly, MONTHLY_COLUMNS,
+                rule_count=rule_counts.get(TAB_MONTHLY, 0),
+            )
             self._remove_extra_tabs(spreadsheet)
 
             msg = f"Sheets 동기화 완료 — 매매 {len(trades)}건 · 완료회차 {len(cycles)}건"

@@ -125,6 +125,9 @@ def test_records_dashboard_output_is_valid_html(fake_app, dry):
     fake_app._dry = dry
     text = format_records_dashboard(fake_app)
     assert "대시보드" in text
+    if not dry:
+        assert "미실현 손익" in text
+        assert "평가 손익" not in text
     _assert_safe(text)
 
 

@@ -312,6 +312,16 @@ class CycleTracker:
             "unrealized_usd": unrealized, "max_T": cur.get("max_T", 0.0),
         }
 
+    @staticmethod
+    def realized_from_sell_trades(trades: list[dict]) -> float:
+        """진행 중 회차 매도 체결의 실현손익 합 — 완료 회차 profit_usd 와 중복 없음."""
+        total = 0.0
+        for tr in trades or []:
+            pnl = sell_realized_pnl(tr)
+            if pnl is not None:
+                total += pnl[0]
+        return round(total, 2)
+
     def monthly_summary(self, symbol: Optional[str] = None, year: Optional[int] = None) -> dict:
         year = year or datetime.date.today().year
         data = self._load_all()
@@ -367,6 +377,9 @@ class CycleTracker:
             progress = self.cycle_progress(sym, trading=is_trading, qty=qty)
             cur = s.get("current")
             sym_realized = sum(c.get("profit_usd", 0.0) for c in s.get("completed", []))
+            if cur:
+                sym_realized += self.realized_from_sell_trades(cur.get("trades") or [])
+            sym_realized = round(sym_realized, 2)
             sym_completed = len(s.get("completed", []))
             if is_trading:
                 realized_usd += sym_realized

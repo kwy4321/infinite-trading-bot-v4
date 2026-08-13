@@ -108,7 +108,7 @@ def _kpis(snapshot: dict) -> None:
 
     items = [
         _kpi_item("총 자산", _usd(total), f"₩{krw:,.0f}" if krw else ""),
-        _kpi_item("평가 손익", _usd(unreal, True), "", _cls(unreal)),
+        _kpi_item("미실현 손익", _usd(unreal, True), "", _cls(unreal)),
         _kpi_item("실현 수익", _usd(realized, True), f"완료 {snapshot.get('completed_cycles', 0)}회", _cls(realized)),
         _kpi_item("진행 회차", str(snapshot.get("active_cycles", 0)), f"예수금 {_usd(cash)}" if cash else ""),
     ]

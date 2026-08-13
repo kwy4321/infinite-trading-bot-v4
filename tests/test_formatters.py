@@ -87,6 +87,27 @@ def test_balance_output_is_valid_html(fake_app, dry):
     _assert_safe(text)
 
 
+def test_balance_holding_shows_cost_eval_and_return_pct(fake_app):
+    from tg.balance_formatter import _holding_rows
+
+    fake_app._dry = False
+    rows = _holding_rows({
+        "symbol": "TQQQ",
+        "quantity": 10,
+        "averagePurchasePrice": 42.0,
+        "lastPrice": 43.5,
+        "marketValue": {"usd": "435.0"},
+    })
+    joined = "\n".join(rows)
+    assert "매입금액" in joined
+    assert "$420.00" in joined
+    assert "평가금액" in joined
+    assert "$435.00" in joined
+    assert "수익률" in joined
+    assert "+3.57%" in joined
+    _assert_safe(joined)
+
+
 @pytest.mark.parametrize("dry", [True, False])
 def test_records_dashboard_output_is_valid_html(fake_app, dry):
     fake_app._dry = dry

@@ -78,7 +78,9 @@ def main() -> None:
         "marketValue": {"usd": "435.0"},
     })
     assert rows, "holding rows empty"
-    assert "수량" in rows[1], rows
+    assert "매입금액" in rows[1], rows
+    assert "평가금액" in rows[2], rows
+    assert "수익률" in rows[3], rows
 
     status = format_status(_mock_app())
     assert "무매 현황" in status, status[:200]

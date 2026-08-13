@@ -37,32 +37,45 @@ def _summary_rows(acct: AccountSnapshot) -> list[str]:
     return rows
 
 
+def _pct_display(pct_val: float | None) -> str:
+    if pct_val is None:
+        return "—"
+    sign = "+" if pct_val > 0 else ""
+    return code(f"{sign}{pct_val:.2f}%")
+
+
 def _holding_rows(holding: Holding | dict) -> list[str]:
     """보유 1종목 표시. dict 도 받아 기존 호출부·테스트와 호환한다."""
     if isinstance(holding, dict):
-        from core.money import holding_avg_price, holding_market_value, parse_money
+        from core.money import holding_avg_price, holding_market_value, holding_unrealized, parse_money
 
         sym = str(holding.get("symbol", "?")).upper()
         qty = parse_money(holding.get("quantity"))
         avg = holding_avg_price(holding)
         mkt_usd = holding_market_value(holding, "usd")
         mkt_krw = holding_market_value(holding, "krw")
+        cost_usd = round(qty * avg, 2) if qty > 0 and avg > 0 else 0.0
+        _, unreal_pct = holding_unrealized(holding)
+        if unreal_pct is None and cost_usd > 0:
+            unreal_pct = round((mkt_usd - cost_usd) / cost_usd * 100, 2)
     else:
         sym = holding.symbol
-        qty = holding.qty
-        avg = holding.avg_price
         mkt_usd = holding.market_value_usd
         mkt_krw = holding.market_value_krw
+        cost_usd = holding.cost_usd
+        unreal_pct = holding.unrealized_pct
+        if unreal_pct is None and cost_usd > 0:
+            unreal_pct = round((mkt_usd - cost_usd) / cost_usd * 100, 2)
 
-    eval_row = row("💰", "평가", usd(mkt_usd))
+    eval_row = row("💰", "평가금액", usd(mkt_usd))
     if mkt_krw > 0:
-        eval_row = row("💰", "평가", f"{usd(mkt_usd)}  ·  {krw(mkt_krw)}")
+        eval_row = row("💰", "평가금액", f"{usd(mkt_usd)}  ·  {krw(mkt_krw)}")
 
     return [
         symbol_card(sym),
-        row("📊", "수량", code(f"{qty:g}주")),
-        row("📐", "평단", usd(avg)),
+        row("🛒", "매입금액", usd(cost_usd)),
         eval_row,
+        row("📈", "수익률", _pct_display(unreal_pct)),
     ]
 
 

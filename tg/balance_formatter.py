@@ -22,16 +22,20 @@ from tg.ui import (
 
 
 def _summary_rows(acct: AccountSnapshot) -> list[str]:
-    rows = [row("🇺🇸", "총 자산", usd(acct.total_usd))]
     total_krw = acct.total_krw_or_converted()
-    if total_krw > 0:
-        rows.append(row("🇰🇷", "총 자산", krw(total_krw)))
+    rows = [row("💼", "총 자산", krw(total_krw))]
+
+    rows.append(row("💵", "달러", usd(acct.cash_usd)))
     if acct.cash_krw > 0:
-        rows.append(
-            row("💵", "예수금", f"{usd(acct.cash_usd)}  ·  {krw(acct.cash_krw)}"),
-        )
-    else:
-        rows.append(row("💵", "예수금", usd(acct.cash_usd)))
+        rows.append(row("🇰🇷", "원화", krw(acct.cash_krw)))
+
+    stock_val = usd(acct.stock_usd)
+    if acct.stock_krw > 0:
+        stock_val = f"{usd(acct.stock_usd)}  ·  {krw(acct.stock_krw)}"
+    elif acct.fx_rate > 0 and acct.stock_usd > 0:
+        stock_val = f"{usd(acct.stock_usd)}  ·  {krw(acct.stock_usd * acct.fx_rate)}"
+    rows.append(row("📊", "주식 보유", stock_val))
+
     if acct.fx_rate > 0:
         rows.append(row("💱", "환율", code(f"$1 = ₩{acct.fx_rate:,.2f}")))
     return rows
@@ -47,13 +51,19 @@ def _pct_display(pct_val: float | None) -> str:
 def _holding_rows(holding: Holding | dict) -> list[str]:
     """보유 1종목 표시. dict 도 받아 기존 호출부·테스트와 호환한다."""
     if isinstance(holding, dict):
-        from core.money import holding_avg_price, holding_market_value, holding_unrealized, parse_money
+        from core.money import (
+            holding_avg_price,
+            holding_close_value_krw,
+            holding_close_value_usd,
+            holding_unrealized,
+            parse_money,
+        )
 
         sym = str(holding.get("symbol", "?")).upper()
         qty = parse_money(holding.get("quantity"))
         avg = holding_avg_price(holding)
-        mkt_usd = holding_market_value(holding, "usd")
-        mkt_krw = holding_market_value(holding, "krw")
+        mkt_usd = holding_close_value_usd(holding)
+        mkt_krw = holding_close_value_krw(holding, fx=0.0)
         cost_usd = round(qty * avg, 2) if qty > 0 and avg > 0 else 0.0
         _, unreal_pct = holding_unrealized(holding)
         if unreal_pct is None and cost_usd > 0:

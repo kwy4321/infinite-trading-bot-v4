@@ -80,11 +80,17 @@ def test_account_snapshot_aggregates_live(fake_app):
     snap = fetch_account_snapshot(fake_app)
     assert snap.ok and not snap.dry
     assert snap.cash_usd == 600.0
+    assert snap.cash_krw == 800000.0
+    assert snap.stock_usd == 600.0
+    assert snap.stock_krw == 800000.0
     assert snap.total_usd == 1200.0
+    assert snap.total_krw == 2410000.0
     assert snap.fx_rate == 1350.0
     assert snap.unrealized_usd == 100.0
     assert snap.unrealized_pct == 20.0
     assert [h.symbol for h in snap.holdings] == ["TQQQ"]
+    assert snap.holdings[0].last_price == 60.0
+    assert snap.holdings[0].market_value_usd == 600.0
 
 
 def test_account_snapshot_survives_broker_failure(fake_app):

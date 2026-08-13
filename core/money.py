@@ -102,15 +102,35 @@ def holding_avg_price(item: dict) -> float:
 
 
 def holding_market_value(item: dict, currency: str = "usd") -> float:
-    """보유 종목 항목 → 평가금액. marketValue 없으면 수량 × 현재가."""
+    """보유 종목 항목 → API marketValue. 없으면 종가×수량."""
     mkt = parse_money(item.get("marketValue"), currency)
     if mkt > 0:
         return mkt
     if currency.lower() != "usd":
         return 0.0
-    qty = parse_money(item.get("quantity"), "usd")
+    qty = parse_money(item.get("quantity"))
     last = parse_money(item.get("lastPrice"), "usd")
-    return round(qty * last, 4) if qty and last else 0.0
+    return round(qty * last, 2) if qty > 0 and last > 0 else 0.0
+
+
+def holding_close_value_usd(item: dict) -> float:
+    """보유 종목 → 종가(lastPrice) × 수량. 없으면 marketValue 폴백."""
+    qty = parse_money(item.get("quantity"))
+    last = parse_money(item.get("lastPrice"), "usd")
+    if qty > 0 and last > 0:
+        return round(qty * last, 2)
+    return holding_market_value(item, "usd")
+
+
+def holding_close_value_krw(item: dict, *, fx: float = 0.0) -> float:
+    """보유 종목 → 종가 기준 원화 평가. API krw 없으면 USD×환율."""
+    mkt_krw = holding_market_value(item, "krw")
+    if mkt_krw > 0:
+        return mkt_krw
+    usd = holding_close_value_usd(item)
+    if usd > 0 and fx > 0:
+        return round(usd * fx, 0)
+    return 0.0
 
 
 def holding_unrealized(item: dict) -> tuple[float, float | None]:

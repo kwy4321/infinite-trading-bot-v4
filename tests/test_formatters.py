@@ -108,6 +108,18 @@ def test_balance_holding_shows_cost_eval_and_return_pct(fake_app):
     _assert_safe(joined)
 
 
+def test_balance_summary_shows_krw_total_and_breakdown(fake_app):
+    fake_app._dry = False
+    text = format_balance(fake_app)
+    assert "총 자산" in text
+    assert "₩2,410,000" in text
+    assert "달러" in text
+    assert "원화" in text
+    assert "주식 보유" in text
+    assert text.count("총 자산") == 1
+    _assert_safe(text)
+
+
 @pytest.mark.parametrize("dry", [True, False])
 def test_records_dashboard_output_is_valid_html(fake_app, dry):
     fake_app._dry = dry

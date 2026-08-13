@@ -14,7 +14,8 @@ from core.money import (
     cash_krw,
     cash_usd,
     holding_avg_price,
-    holding_market_value,
+    holding_close_value_krw,
+    holding_close_value_usd,
     holding_unrealized,
     parse_money,
 )
@@ -86,15 +87,25 @@ class AccountSnapshot:
         }
 
 
-def _holding(item: dict) -> Holding:
+def _holding(item: dict, *, fx: float = 0.0) -> Holding:
+    qty = parse_money(item.get("quantity"))
+    last = parse_money(item.get("lastPrice"), "usd")
+    avg = holding_avg_price(item)
+    mkt_usd = holding_close_value_usd(item)
+    mkt_krw = holding_close_value_krw(item, fx=fx)
+
     unreal_usd, unreal_pct = holding_unrealized(item)
+    if qty > 0 and avg > 0 and last > 0:
+        unreal_usd = round((last - avg) * qty, 2)
+        unreal_pct = round((last - avg) / avg * 100, 2)
+
     return Holding(
         symbol=normalize_symbol(item.get("symbol")) or "?",
-        qty=parse_money(item.get("quantity")),
-        avg_price=holding_avg_price(item),
-        last_price=parse_money(item.get("lastPrice"), "usd"),
-        market_value_usd=holding_market_value(item, "usd"),
-        market_value_krw=holding_market_value(item, "krw"),
+        qty=qty,
+        avg_price=avg,
+        last_price=last,
+        market_value_usd=mkt_usd,
+        market_value_krw=mkt_krw,
         unrealized_usd=unreal_usd,
         unrealized_pct=unreal_pct,
     )
@@ -117,25 +128,24 @@ def fetch_account_snapshot(app: App) -> AccountSnapshot:
         broker = app.broker
         cash_usd_val = cash_usd(broker.get_buying_power("USD"))
         cash_krw_val = cash_krw(broker.get_buying_power("KRW"))
+        fx = _fx_rate(app)
 
         overview = broker.get_holdings_overview() or {}
-        holdings = tuple(_holding(i) for i in overview.get("items", []))
+        holdings = tuple(_holding(i, fx=fx) for i in overview.get("items", []))
 
-        stock_usd = sum(h.market_value_usd for h in holdings)
-        stock_krw = sum(h.market_value_krw for h in holdings)
+        stock_usd = round(sum(h.market_value_usd for h in holdings), 2)
+        stock_krw = round(sum(h.market_value_krw for h in holdings), 0)
         cost_usd = sum(h.cost_usd for h in holdings)
         unreal_usd = sum(h.unrealized_usd for h in holdings)
 
-        total_usd = parse_money(overview.get("totalEvaluationAmount"), "usd")
-        total_krw = parse_money(overview.get("totalEvaluationAmount"), "krw")
-        if total_usd <= 0:
-            total_usd = cash_usd_val + stock_usd
-        if total_krw <= 0 and cash_krw_val > 0:
-            total_krw = cash_krw_val + stock_krw
-
-        fx = _fx_rate(app)
+        total_usd = round(cash_usd_val + stock_usd, 2)
+        stock_krw_part = stock_krw
+        if stock_krw_part <= 0 and fx > 0 and stock_usd > 0:
+            stock_krw_part = round(stock_usd * fx, 0)
+        cash_usd_krw = round(cash_usd_val * fx, 0) if fx > 0 and cash_usd_val > 0 else 0.0
+        total_krw = round(cash_krw_val + cash_usd_krw + stock_krw_part, 0)
         if total_krw <= 0 and fx > 0 and total_usd > 0:
-            total_krw = total_usd * fx
+            total_krw = round(total_usd * fx, 0)
 
         return AccountSnapshot(
             cash_usd=cash_usd_val,

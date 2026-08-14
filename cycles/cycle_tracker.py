@@ -76,22 +76,29 @@ class CycleTracker:
         os.makedirs(self.data_dir, exist_ok=True)
 
     def batch(self):
-        """여러 cycle 갱신을 cycles.json 1회 저장으로 묶는다."""
+        """여러 cycle 갱신을 cycles.json 1회 읽기·1회 저장으로 묶는다.
+
+        중첩 호출은 바깥 배치에 합류한다 (안쪽에서 먼저 닫아버리면 바깥 갱신이
+        파일에 반영되지 않는다).
+        """
 
         @contextmanager
         def _ctx():
             with self._lock:
-                self._batch_data = self._load_all()
-                self._batch_dirty = False
+                nested = self._batch_data is not None
+                if not nested:
+                    self._batch_data = self._load_all()
+                    self._batch_dirty = False
             try:
                 yield
             finally:
-                with self._lock:
-                    if self._batch_dirty and self._batch_data is not None:
-                        self._trim_completed(self._batch_data)
-                        save_json(Path(self.path), self._batch_data, compact=True)
-                    self._batch_data = None
-                    self._batch_dirty = False
+                if not nested:
+                    with self._lock:
+                        if self._batch_dirty and self._batch_data is not None:
+                            self._trim_completed(self._batch_data)
+                            save_json(Path(self.path), self._batch_data, compact=True)
+                        self._batch_data = None
+                        self._batch_dirty = False
 
         return _ctx()
 

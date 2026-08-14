@@ -16,8 +16,6 @@ from render.numbers import t_transition
 from services.account_service import fetch_account_snapshot
 from services.market_data import resolve_price
 from services.trading_context import is_dry
-from strategy.fill_reconciler import FillReconciler
-
 if TYPE_CHECKING:
     from app import App
 
@@ -149,11 +147,36 @@ def collect_portfolio_snapshot(app: "App", *, fetch_live_price: bool = False) ->
     }
 
 
+BROKER_LOOKBACK_MAX_DAYS = 365
+BROKER_LOOKBACK_MIN_DAYS = 30
+BROKER_LOOKBACK_MARGIN_DAYS = 7
+
+
+def broker_lookback_days(symbol_data: dict) -> int:
+    """현재 회차를 덮는 최소 조회 일수.
+
+    보유 수량을 설명하는 체결은 모두 회차 시작 이후에 있다. 1년치를 훑으면
+    토스 주문내역 API 를 페이지 단위로 여러 번 왕복하게 되므로 회차 길이에
+    여유(margin)만 더해 조회한다.
+    """
+    started = str(((symbol_data or {}).get("current") or {}).get("started_at") or "")[:10]
+    try:
+        start = datetime.date.fromisoformat(started)
+    except ValueError:
+        return BROKER_LOOKBACK_MIN_DAYS
+    span = (datetime.date.today() - start).days + BROKER_LOOKBACK_MARGIN_DAYS
+    return max(BROKER_LOOKBACK_MIN_DAYS, min(span, BROKER_LOOKBACK_MAX_DAYS))
+
+
 def prepare_ledger_for_export(
-    app: "App", *, rebuild_broker: bool = True, broker_timeout_sec: float = 25.0,
+    app: "App", *, rebuild_broker: bool = False, broker_timeout_sec: float = 25.0,
     symbols=None,
 ) -> dict:
-    """fill_log·토스 체결 → cycles.current.trades 반영 (Sheets/대시보드 수집 전)."""
+    """fill_log → cycles 반영. 토스 재조회는 기본 생략 — 장부 쓰기의 병목이다.
+
+    실계좌 체결 반영은 /sync (run_cycle_sync) 가 담당한다. 여기서 다시
+    주문 목록을 훑으면 ORDER_HISTORY 초당 4회 제한에 걸려 수십 초가 된다.
+    """
     result: dict = {
         "synced_symbols": [],
         "fill_log_entries": 0,
@@ -162,63 +185,63 @@ def prepare_ledger_for_export(
     }
     is_live = rebuild_broker and not is_dry(app) and app.settings.has_toss
 
-    def _rebuild_one(symbol: str, fill_log: list, qty: int) -> tuple[str, int]:
-        st = app.state.load(symbol)
-        order_ids = FillReconciler.collect_known_order_ids(app, symbol, st=st)
+    def _rebuild_one(symbol: str, fill_log: list, qty: int, days: int) -> tuple[str, int]:
+        # extra_order_ids 를 넘기지 않는다. tracked_orders·과거 체결 ID 를
+        # 단건 조회하면 건당 250ms 가 쌓인다. CLOSED 목록 + fill_log 로 충분하다.
         broker_fills = app.broker.list_broker_fills(
-            symbol, days=365, max_orders=500, extra_order_ids=order_ids,
-            known_fills=fill_log,
+            symbol, days=days, max_orders=100, known_fills=fill_log,
         )
         if not broker_fills:
             return symbol, 0
         return symbol, app.cycles.rebuild_trades_from_broker(symbol, broker_fills, fill_log, qty)
 
-    rebuild_jobs: list[tuple[str, list, int]] = []
-    for symbol in ledger_symbols(symbols):
-        st = app.state.load(symbol)
-        fill_log = list(st.get("fill_log") or [])
-        principal = float(st.get("principal") or 0) or 10000.0
-        qty = int(st.get("qty") or 0)
-        sym = app.cycles.get_symbol_data(symbol)
-        has_trades = bool((sym.get("current") or {}).get("trades"))
+    with app.cycles.batch():
+        rebuild_jobs: list[tuple[str, list, int, int]] = []
+        for symbol in ledger_symbols(symbols):
+            st = app.state.load(symbol)
+            fill_log = list(st.get("fill_log") or [])
+            principal = float(st.get("principal") or 0) or 10000.0
+            qty = int(st.get("qty") or 0)
+            sym = app.cycles.get_symbol_data(symbol)
+            has_trades = bool((sym.get("current") or {}).get("trades"))
 
-        if fill_log:
-            result["fill_log_entries"] += len(fill_log)
+            if fill_log:
+                result["fill_log_entries"] += len(fill_log)
 
-        if fill_log or qty > 0 or has_trades:
-            app.cycles.ensure_current(symbol, principal)
+            if fill_log or qty > 0 or has_trades:
+                app.cycles.ensure_current(symbol, principal)
 
-        if is_live and qty > 0:
-            rebuild_jobs.append((symbol, fill_log, qty))
+            if is_live and qty > 0:
+                rebuild_jobs.append((symbol, fill_log, qty, broker_lookback_days(sym)))
 
-        if fill_log:
-            app.cycles.sync_trades_from_fill_log(symbol, fill_log, principal)
+            if fill_log:
+                app.cycles.sync_trades_from_fill_log(symbol, fill_log, principal)
 
-        app.cycles.backfill_trade_t_metadata(symbol)
-        app.cycles.dedupe_symbol_trades(symbol)
+            app.cycles.backfill_trade_t_metadata(symbol)
+            app.cycles.dedupe_symbol_trades(symbol)
 
-        if fill_log or qty > 0 or has_trades:
-            result["synced_symbols"].append(symbol)
+            if fill_log or qty > 0 or has_trades:
+                result["synced_symbols"].append(symbol)
 
-    if rebuild_jobs:
-        workers = min(4, len(rebuild_jobs))
-        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {
-                pool.submit(_rebuild_one, sym, fl, q): sym
-                for sym, fl, q in rebuild_jobs
-            }
-            for fut in concurrent.futures.as_completed(futures):
-                sym = futures[fut]
-                try:
-                    _, n = fut.result(timeout=broker_timeout_sec)
-                    if n:
-                        result["broker_symbols"].append(sym)
-                except concurrent.futures.TimeoutError:
-                    logger.warning("broker rebuild timeout %s", sym)
-                    result["errors"].append(f"{sym}: broker timeout")
-                except Exception as exc:
-                    logger.exception("broker rebuild failed %s", sym)
-                    result["errors"].append(f"{sym}: {exc}")
+        if rebuild_jobs:
+            workers = min(4, len(rebuild_jobs))
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {
+                    pool.submit(_rebuild_one, sym, fl, q, d): sym
+                    for sym, fl, q, d in rebuild_jobs
+                }
+                for fut in concurrent.futures.as_completed(futures):
+                    sym = futures[fut]
+                    try:
+                        _, n = fut.result(timeout=broker_timeout_sec)
+                        if n:
+                            result["broker_symbols"].append(sym)
+                    except concurrent.futures.TimeoutError:
+                        logger.warning("broker rebuild timeout %s", sym)
+                        result["errors"].append(f"{sym}: broker timeout")
+                    except Exception as exc:
+                        logger.exception("broker rebuild failed %s", sym)
+                        result["errors"].append(f"{sym}: {exc}")
 
     return result
 
@@ -358,10 +381,7 @@ def collect_sheet_trades(app: "App", *, symbols=None) -> list[dict]:
             ))
 
         for c in sym.get("completed") or []:
-            c_trades = list(c.get("trades") or [])
-            if c_trades:
-                app.cycles._recompute_t_metadata(c_trades)
-            for tr in c_trades:
+            for tr in c.get("trades") or []:
                 rows.append(_trade_row(
                     symbol, tr,
                     cycle_no=c.get("cycle_no"),

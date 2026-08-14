@@ -875,7 +875,7 @@ class GoogleSheetsLedger:
             calls += 1
         return calls
 
-    def sync_all(self, *, rebuild_broker: bool = True) -> dict:
+    def sync_all(self, *, rebuild_broker: bool = False) -> dict:
         if not self.enabled:
             return {"ok": False, "message": "Google Sheets 비활성 (GOOGLE_SHEETS_ENABLED/ID/JSON 확인)"}
 
@@ -941,5 +941,5 @@ class GoogleSheetsLedger:
         return self.settings.google_sheets_link
 
 
-def sync_ledger(app: "App", *, rebuild_broker: bool = True) -> dict:
+def sync_ledger(app: "App", *, rebuild_broker: bool = False) -> dict:
     return GoogleSheetsLedger(app).sync_all(rebuild_broker=rebuild_broker)

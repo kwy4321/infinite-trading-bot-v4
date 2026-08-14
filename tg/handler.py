@@ -312,7 +312,7 @@ class TelegramHandler:
 
     async def _complete_ledger_sync_ui(self, msg, markup) -> None:
         try:
-            result = await self._sync_ledger(rebuild_broker=True)
+            result = await self._sync_ledger(rebuild_broker=False)
             status = self._format_sheets_result(result, brief=True)
         except Exception as exc:
             logger.exception("ledger sync failed")

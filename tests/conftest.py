@@ -77,8 +77,32 @@ class FakeCycles:
             "next_cycle_no": 4,
         }
 
+    def batch(self):
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _ctx():
+            yield
+
+        return _ctx()
+
     def get_symbol_data(self, symbol: str) -> dict:
         return self.symbol_data
+
+    def ensure_current(self, symbol, principal):
+        return self.symbol_data["current"]
+
+    def sync_trades_from_fill_log(self, symbol, fill_log, principal):
+        return None
+
+    def backfill_trade_t_metadata(self, symbol):
+        return 0
+
+    def dedupe_symbol_trades(self, symbol):
+        return 0
+
+    def rebuild_trades_from_broker(self, symbol, broker_fills, fill_log, qty):
+        return len(broker_fills)
 
     def available_cash(self, symbol: str, principal: float) -> float:
         cur = self.symbol_data["current"]
@@ -175,6 +199,11 @@ class FakeBroker:
 
     def get_us_market_status(self):
         return "regular"
+
+    def list_broker_fills(self, symbol, **kwargs):
+        self.fills_calls = getattr(self, "fills_calls", [])
+        self.fills_calls.append({"symbol": symbol, **kwargs})
+        return []
 
 
 class FakeSettings:

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import datetime
 import logging
+import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
 from config.settings import resolve_service_account_path
@@ -330,16 +332,6 @@ def _compact_signed_fmt(fmt: str | None) -> bool:
     return bool(fmt and fmt.endswith("_compact"))
 
 
-def _sheet_rule_counts(metadata: dict) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for sheet in metadata.get("sheets") or []:
-        props = sheet.get("properties") or {}
-        title = props.get("title")
-        if title:
-            counts[str(title)] = len(sheet.get("conditionalFormats") or [])
-    return counts
-
-
 def _delete_conditional_format_requests(sheet_id: int, rule_count: int) -> list[dict]:
     return [
         {"deleteConditionalFormatRule": {"sheetId": sheet_id, "index": idx}}
@@ -611,6 +603,156 @@ def _summary_layout_requests(
     return requests
 
 
+def _freeze_request(sheet_id: int, header_rows: int) -> dict:
+    return {
+        "updateSheetProperties": {
+            "properties": {
+                "sheetId": sheet_id,
+                "gridProperties": {"frozenRowCount": max(header_rows, 0)},
+            },
+            "fields": "gridProperties.frozenRowCount",
+        },
+    }
+
+
+@dataclass
+class _TabPlan:
+    """탭 1개의 최종 값·서식 — 네트워크 호출 전에 로컬에서 모두 만든다."""
+
+    title: str
+    values: list[list]
+    columns: list[Column] | None = None
+    section_at: list[int] | None = None
+    header_rows: int = 1
+
+    @property
+    def ncol(self) -> int:
+        return max((len(r) for r in self.values), default=1)
+
+    @property
+    def nrows(self) -> int:
+        return len(self.values)
+
+
+def _sheet_index(metadata: dict) -> dict[str, dict]:
+    """탭 이름 → {id, rows, cols, rules}. 메타데이터 1회 조회로 전부 해결한다."""
+    index: dict[str, dict] = {}
+    for sheet in metadata.get("sheets") or []:
+        props = sheet.get("properties") or {}
+        title = props.get("title")
+        if not title:
+            continue
+        grid = props.get("gridProperties") or {}
+        index[str(title)] = {
+            "id": props.get("sheetId"),
+            "rows": int(grid.get("rowCount") or 0),
+            "cols": int(grid.get("columnCount") or 0),
+            "rules": len(sheet.get("conditionalFormats") or []),
+        }
+    return index
+
+
+def _structure_requests(
+    index: dict[str, dict], plans: list[_TabPlan], removed: tuple[str, ...],
+) -> list[dict]:
+    """탭 생성·삭제·그리드 확장 — 값 쓰기 전에 한 번의 batch_update 로 처리."""
+    requests: list[dict] = []
+    for title in removed:
+        info = index.get(title)
+        if info and info.get("id") is not None:
+            requests.append({"deleteSheet": {"sheetId": info["id"]}})
+
+    for plan in plans:
+        need_rows = max(plan.nrows + 5, 10)
+        need_cols = max(plan.ncol, 2)
+        info = index.get(plan.title)
+        if info is None:
+            requests.append({
+                "addSheet": {
+                    "properties": {
+                        "title": plan.title,
+                        "gridProperties": {
+                            "rowCount": need_rows,
+                            "columnCount": need_cols,
+                        },
+                    },
+                },
+            })
+            continue
+        if info["rows"] < need_rows or info["cols"] < need_cols:
+            requests.append({
+                "updateSheetProperties": {
+                    "properties": {
+                        "sheetId": info["id"],
+                        "gridProperties": {
+                            "rowCount": max(info["rows"], need_rows),
+                            "columnCount": max(info["cols"], need_cols),
+                        },
+                    },
+                    "fields": "gridProperties.rowCount,gridProperties.columnCount",
+                },
+            })
+    return requests
+
+
+def _index_added_sheets(index: dict[str, dict], replies: list | None) -> None:
+    """addSheet 응답의 새 sheetId 반영 — 추가 조회 없이 서식까지 이어서 보낸다."""
+    for reply in replies or []:
+        props = ((reply or {}).get("addSheet") or {}).get("properties") or {}
+        title = props.get("title")
+        if not title:
+            continue
+        grid = props.get("gridProperties") or {}
+        index[str(title)] = {
+            "id": props.get("sheetId"),
+            "rows": int(grid.get("rowCount") or 0),
+            "cols": int(grid.get("columnCount") or 0),
+            "rules": 0,
+        }
+
+
+def _tab_format_requests(plan: _TabPlan, sheet_id: int, rule_count: int) -> list[dict]:
+    """탭 1개의 서식 요청 — 모든 탭 분을 모아 batch_update 한 번에 보낸다."""
+    requests = _delete_conditional_format_requests(sheet_id, rule_count)
+    reset = _reset_body_text_format_request(
+        sheet_id, start_row=plan.header_rows, end_row=plan.nrows, ncol=plan.ncol,
+    )
+    if reset:
+        requests.append(reset)
+
+    if plan.section_at is not None:
+        requests.extend(
+            _summary_layout_requests(
+                sheet_id, nrows=plan.nrows, section_at=plan.section_at,
+            ),
+        )
+        requests.extend(
+            _summary_conditional_format_requests(sheet_id, nrows=plan.nrows),
+        )
+        return requests
+
+    requests.append(
+        _header_format_request(sheet_id, header_rows=plan.header_rows, ncol=plan.ncol),
+    )
+    requests.append(_freeze_request(sheet_id, plan.header_rows))
+    if plan.columns:
+        requests.extend(
+            _signed_conditional_format_requests(
+                sheet_id, plan.columns,
+                header_rows=plan.header_rows, nrows=plan.nrows,
+            ),
+        )
+    return requests
+
+
+def _table_plan(title: str, items: list[dict], columns: list[Column]) -> _TabPlan:
+    if not items:
+        return _TabPlan(title=title, values=[["⚠️ 데이터 없음", ""]])
+    rows, _sign_grid = _rows_table(items, columns)
+    ncol = max(len(r) for r in rows)
+    return _TabPlan(title=title, values=_pad_rows(rows, ncol), columns=columns)
+
+
 def _build_summary_rows(
     app: "App",
     snapshot: dict,
@@ -671,169 +813,100 @@ class GoogleSheetsLedger:
     def _client(self):
         return _authorize_gspread(self.settings)
 
-    @staticmethod
-    def _get_or_add_worksheet(spreadsheet, title: str, rows: int, cols: int):
-        import gspread
-
-        try:
-            return spreadsheet.worksheet(title)
-        except gspread.WorksheetNotFound:
-            return spreadsheet.add_worksheet(title=title, rows=max(rows, 10), cols=max(cols, 2))
-
-    def _apply_sheet_formats(
+    def _build_plans(
         self,
-        spreadsheet,
-        ws,
-        requests: list[dict],
-        *,
-        rule_count: int = 0,
-    ) -> None:
-        if not requests and rule_count <= 0:
-            return
-        batch = _delete_conditional_format_requests(ws.id, rule_count) + requests
-        try:
-            spreadsheet.batch_update({"requests": batch})
-        except Exception:
-            logger.debug("sheet format batch skipped", exc_info=True)
-
-    def _write_summary_tab(
-        self,
-        spreadsheet,
         snapshot: dict,
         status_rows: list[dict],
-        *,
-        rule_count: int = 0,
-    ) -> None:
-        rows, _sign_at, section_at = _build_summary_rows(
+        trades: list[dict],
+        cycles: list[dict],
+        monthly: list[dict],
+    ) -> list[_TabPlan]:
+        summary_rows, _sign_at, section_at = _build_summary_rows(
             self.app, snapshot, status_rows,
         )
-        ws = self._get_or_add_worksheet(spreadsheet, TAB_SUMMARY, len(rows) + 5, 2)
-        ws.clear()
-        ws.update(values=rows, range_name="A1", value_input_option="USER_ENTERED")
-        reset = _reset_body_text_format_request(
-            ws.id, start_row=1, end_row=len(rows), ncol=2,
-        )
-        format_requests = _summary_layout_requests(
-            ws.id, nrows=len(rows), section_at=section_at,
-        )
-        format_requests.extend(_summary_conditional_format_requests(ws.id, nrows=len(rows)))
-        if reset:
-            format_requests.insert(0, reset)
-        self._apply_sheet_formats(spreadsheet, ws, format_requests, rule_count=rule_count)
-
-    def _write_table_tab(
-        self,
-        spreadsheet,
-        title: str,
-        items: list[dict],
-        columns: list[Column],
-        *,
-        rule_count: int = 0,
-    ) -> None:
-        if not items:
-            self._write_tab(spreadsheet, title, [["⚠️ 데이터 없음", ""]], rule_count=rule_count)
-            return
-        rows, _sign_grid = _rows_table(items, columns)
-        ncol = max(len(r) for r in rows)
-        ws = self._get_or_add_worksheet(spreadsheet, title, len(rows) + 5, ncol)
-        ws.clear()
-        ws.update(values=rows, range_name="A1", value_input_option="USER_ENTERED")
-        reset = _reset_body_text_format_request(
-            ws.id, start_row=1, end_row=len(rows), ncol=ncol,
-        )
-        format_requests = [
-            _header_format_request(ws.id, header_rows=1, ncol=ncol),
-            {
-                "updateSheetProperties": {
-                    "properties": {
-                        "sheetId": ws.id,
-                        "gridProperties": {"frozenRowCount": 1},
-                    },
-                    "fields": "gridProperties.frozenRowCount",
-                },
-            },
-        ]
-        format_requests.extend(
-            _signed_conditional_format_requests(
-                ws.id, columns, header_rows=1, nrows=len(rows),
+        return [
+            _TabPlan(
+                title=TAB_SUMMARY,
+                values=_pad_rows(summary_rows, 2),
+                section_at=section_at,
             ),
-        )
-        if reset:
-            format_requests.insert(0, reset)
-        self._apply_sheet_formats(spreadsheet, ws, format_requests, rule_count=rule_count)
-
-    def _write_tab(
-        self,
-        spreadsheet,
-        title: str,
-        rows: list[list],
-        *,
-        header_rows: int = 1,
-        rule_count: int = 0,
-    ) -> None:
-        if not rows:
-            rows = [["(데이터 없음)", ""]]
-        ncol = max(len(r) for r in rows)
-        ws = self._get_or_add_worksheet(spreadsheet, title, len(rows) + 5, ncol)
-        ws.clear()
-        ws.update(values=rows, range_name="A1", value_input_option="USER_ENTERED")
-        if not header_rows:
-            return
-        self._apply_sheet_formats(
-            spreadsheet,
-            ws,
-            [_header_format_request(ws.id, header_rows=header_rows, ncol=ncol)],
-            rule_count=rule_count,
-        )
+            _table_plan(TAB_TRADES, trades, TRADES_COLUMNS),
+            _table_plan(TAB_CYCLES, cycles, CYCLES_COLUMNS),
+            _table_plan(TAB_MONTHLY, monthly, MONTHLY_COLUMNS),
+        ]
 
     @staticmethod
-    def _remove_extra_tabs(spreadsheet) -> None:
-        for name in REMOVED_TABS:
-            try:
-                ws = spreadsheet.worksheet(name)
-                spreadsheet.del_worksheet(ws)
-            except Exception:
-                pass
+    def _push_plans(spreadsheet, plans: list[_TabPlan]) -> int:
+        """탭 전체를 배치로 반영. 반환값은 소비한 API 왕복 횟수."""
+        calls = 1
+        index = _sheet_index(spreadsheet.fetch_sheet_metadata())
+
+        structure = _structure_requests(index, plans, REMOVED_TABS)
+        if structure:
+            replies = (spreadsheet.batch_update({"requests": structure}) or {}).get("replies")
+            _index_added_sheets(index, replies)
+            for title in REMOVED_TABS:
+                index.pop(title, None)
+            calls += 1
+
+        spreadsheet.values_batch_clear(
+            body={"ranges": [f"'{p.title}'" for p in plans]},
+        )
+        spreadsheet.values_batch_update(body={
+            "valueInputOption": "USER_ENTERED",
+            "data": [
+                {"range": f"'{p.title}'!A1", "values": p.values}
+                for p in plans
+            ],
+        })
+        calls += 2
+
+        format_requests: list[dict] = []
+        for plan in plans:
+            info = index.get(plan.title) or {}
+            sheet_id = info.get("id")
+            if sheet_id is None:
+                continue
+            format_requests.extend(
+                _tab_format_requests(plan, sheet_id, int(info.get("rules") or 0)),
+            )
+        if format_requests:
+            spreadsheet.batch_update({"requests": format_requests})
+            calls += 1
+        return calls
 
     def sync_all(self, *, rebuild_broker: bool = True) -> dict:
         if not self.enabled:
             return {"ok": False, "message": "Google Sheets 비활성 (GOOGLE_SHEETS_ENABLED/ID/JSON 확인)"}
 
         try:
+            started = time.monotonic()
             prep = prepare_ledger_for_export(self.app, rebuild_broker=rebuild_broker)
+            after_prep = time.monotonic()
+
             snapshot = collect_portfolio_snapshot(self.app, fetch_live_price=False)
             trades = collect_sheet_trades(self.app)
             cycles = collect_completed_cycles(self.app)
             monthly = collect_monthly_rows(self.app)
             sources = ledger_data_sources(self.app)
-
             status_rows = collect_sheet_symbol_status(self.app)
+            plans = self._build_plans(snapshot, status_rows, trades, cycles, monthly)
+            after_collect = time.monotonic()
 
-            client = self._client()
             sid = self.settings.resolved_spreadsheet_id
             if not sid:
                 return {"ok": False, "message": "GOOGLE_SPREADSHEET_ID 또는 GOOGLE_SHEETS_URL 확인"}
-            spreadsheet = client.open_by_key(sid)
-            metadata = spreadsheet.fetch_sheet_metadata()
-            rule_counts = _sheet_rule_counts(metadata)
+            spreadsheet = self._client().open_by_key(sid)
+            api_calls = self._push_plans(spreadsheet, plans)
+            after_push = time.monotonic()
 
-            self._write_summary_tab(
-                spreadsheet, snapshot, status_rows,
-                rule_count=rule_counts.get(TAB_SUMMARY, 0),
-            )
-            self._write_table_tab(
-                spreadsheet, TAB_TRADES, trades, TRADES_COLUMNS,
-                rule_count=rule_counts.get(TAB_TRADES, 0),
-            )
-            self._write_table_tab(
-                spreadsheet, TAB_CYCLES, cycles, CYCLES_COLUMNS,
-                rule_count=rule_counts.get(TAB_CYCLES, 0),
-            )
-            self._write_table_tab(
-                spreadsheet, TAB_MONTHLY, monthly, MONTHLY_COLUMNS,
-                rule_count=rule_counts.get(TAB_MONTHLY, 0),
-            )
-            self._remove_extra_tabs(spreadsheet)
+            timing = {
+                "prep_sec": round(after_prep - started, 2),
+                "collect_sec": round(after_collect - after_prep, 2),
+                "sheets_sec": round(after_push - after_collect, 2),
+                "total_sec": round(after_push - started, 2),
+                "api_calls": api_calls,
+            }
 
             msg = f"Sheets 동기화 완료 — 매매 {len(trades)}건 · 완료회차 {len(cycles)}건"
             if len(trades) == 0 and len(cycles) == 0:
@@ -844,7 +917,13 @@ class GoogleSheetsLedger:
                 )
             elif prep.get("broker_symbols"):
                 msg += f" · 토스체결 {','.join(prep['broker_symbols'])} 반영"
-            logger.info(msg)
+            msg += f" · {timing['total_sec']}초"
+
+            logger.info(
+                "%s (준비 %.2fs · 수집 %.2fs · 시트 %.2fs · API %d회)",
+                msg, timing["prep_sec"], timing["collect_sec"],
+                timing["sheets_sec"], api_calls,
+            )
             return {
                 "ok": True,
                 "message": msg,
@@ -852,6 +931,7 @@ class GoogleSheetsLedger:
                 "cycles": len(cycles),
                 "prep": prep,
                 "sources": sources,
+                "timing": timing,
             }
         except Exception as exc:
             logger.exception("google sheets sync failed")

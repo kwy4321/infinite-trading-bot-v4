@@ -280,7 +280,9 @@ class TelegramHandler:
         if result.get("ok"):
             if brief:
                 rev = git_rev()
-                return f"✅ Google Sheets 동기화 완료 ({rev})"
+                took = (result.get("timing") or {}).get("total_sec")
+                elapsed = f" · {took}초" if took is not None else ""
+                return f"✅ Google Sheets 동기화 완료{elapsed} ({rev})"
             msg = result.get("message") or "Sheets 동기화 완료"
             return f"✅ {msg}"
         msg = result.get("message") or "Sheets 동기화 실패"

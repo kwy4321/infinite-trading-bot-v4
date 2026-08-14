@@ -145,6 +145,7 @@ class FillReconciler:
         try:
             fills = self.app.broker.list_broker_fills(
                 symbol, days=90, max_orders=200, extra_order_ids=order_ids,
+                known_fills=st.get("fill_log"),
             )
         except Exception:
             logger.exception("list_broker_fills failed %s", symbol)
@@ -606,6 +607,7 @@ class FillReconciler:
             try:
                 fills = self.app.broker.list_broker_fills(
                     symbol, days=90, max_orders=200, extra_order_ids=order_ids,
+                    known_fills=st.get("fill_log"),
                 )
             except Exception:
                 logger.exception("refresh fill dates failed %s", symbol)

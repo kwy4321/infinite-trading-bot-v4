@@ -280,9 +280,19 @@ class TelegramHandler:
         if result.get("ok"):
             if brief:
                 rev = git_rev()
-                took = (result.get("timing") or {}).get("total_sec")
-                elapsed = f" · {took}초" if took is not None else ""
-                return f"✅ Google Sheets 동기화 완료{elapsed} ({rev})"
+                timing = result.get("timing") or {}
+                took = timing.get("total_sec")
+                if took is None:
+                    return f"✅ Google Sheets 동기화 완료 ({rev})"
+                line = f"✅ Google Sheets 동기화 완료 · {took}초 ({rev})"
+                # 느릴 때만 구간을 덧붙인다 — 어디를 손볼지 바로 보이도록.
+                if took >= 5:
+                    line += (
+                        f"\n· 토스 {timing.get('prep_sec')}초"
+                        f" · 집계 {timing.get('collect_sec')}초"
+                        f" · 시트 {timing.get('sheets_sec')}초"
+                    )
+                return line
             msg = result.get("message") or "Sheets 동기화 완료"
             return f"✅ {msg}"
         msg = result.get("message") or "Sheets 동기화 실패"

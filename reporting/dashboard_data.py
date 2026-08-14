@@ -167,6 +167,7 @@ def prepare_ledger_for_export(
         order_ids = FillReconciler.collect_known_order_ids(app, symbol, st=st)
         broker_fills = app.broker.list_broker_fills(
             symbol, days=365, max_orders=500, extra_order_ids=order_ids,
+            known_fills=fill_log,
         )
         if not broker_fills:
             return symbol, 0

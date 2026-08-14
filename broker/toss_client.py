@@ -16,6 +16,11 @@ from core.money import holding_avg_price, holding_market_value, parse_money
 
 logger = logging.getLogger(__name__)
 _FILLS_CACHE_MAX = 32
+_ORDER_CACHE_MAX = 512
+# 종료된 주문은 내용이 다시 바뀌지 않으므로 단건 조회 결과를 재사용해도 안전하다.
+_TERMINAL_ORDER_STATUS = frozenset({
+    "FILLED", "CANCELED", "CANCELLED", "REJECTED", "EXPIRED",
+})
 
 
 class TossClient:
@@ -29,6 +34,7 @@ class TossClient:
         self._calendar_cache: dict | None = None
         self._calendar_cache_at: float = 0.0
         self._fills_cache: dict[str, tuple[float, list]] = {}
+        self._order_cache: dict[str, dict] = {}
 
     def _headers(self, with_account: bool = False) -> dict:
         h = {"Authorization": f"Bearer {self.auth.get_token()}"}
@@ -460,6 +466,51 @@ class TossClient:
             and (fill.get("ordered_at") or fill.get("filled_at"))
         )
 
+    def _order_detail_cached(self, order_id: str) -> dict:
+        """단건 주문 조회 — 종료된 주문은 1회만 조회하고 재사용한다."""
+        cached = self._order_cache.get(order_id)
+        if cached is not None:
+            return cached
+        detail = self.get_order(order_id)
+        if str(detail.get("status") or "").upper() in _TERMINAL_ORDER_STATUS:
+            if len(self._order_cache) >= _ORDER_CACHE_MAX:
+                self._order_cache.pop(next(iter(self._order_cache)), None)
+            self._order_cache[order_id] = detail
+        return detail
+
+    @staticmethod
+    def _fill_from_log_entry(entry: dict) -> dict | None:
+        """로컬 fill_log 항목 → 체결 레코드. 단건 조회 왕복을 대신한다."""
+        oid = str(entry.get("order_id") or "").strip()
+        try:
+            qty = int(float(entry.get("qty") or 0))
+            price = float(entry.get("price") or 0)
+        except (TypeError, ValueError):
+            return None
+        when = str(
+            entry.get("ordered_at") or entry.get("filled_at") or entry.get("at") or "",
+        )
+        if not oid or qty <= 0 or price <= 0 or not when:
+            return None
+        return {
+            "order_id": oid,
+            "symbol": str(entry.get("symbol") or "").upper(),
+            "side": str(entry.get("side") or "").upper(),
+            "qty": qty,
+            "price": round(price, 2),
+            "ordered_at": str(entry.get("ordered_at") or when),
+            "filled_at": str(entry.get("filled_at") or when),
+        }
+
+    @classmethod
+    def _index_known_fills(cls, entries, symbol: str) -> dict[str, dict]:
+        index: dict[str, dict] = {}
+        for entry in entries or []:
+            record = cls._fill_from_log_entry(entry)
+            if record and record["symbol"] in ("", symbol):
+                index[record["order_id"]] = record
+        return index
+
     def _enrich_fill_from_order(self, fill: dict, symbol: str | None = None) -> dict | None:
         """단건 조회로 averageFilledPrice 확정 — CLOSED에 체결가가 없을 때만."""
         if self._fill_record_complete(fill):
@@ -468,7 +519,7 @@ class TossClient:
         if not oid:
             return fill
         try:
-            detail = self.get_order(oid)
+            detail = self._order_detail_cached(oid)
             refined = self._detail_to_fill(detail, symbol)
             if refined:
                 return refined
@@ -514,8 +565,14 @@ class TossClient:
         days: int = 90,
         max_orders: int = 200,
         extra_order_ids: list[str] | None = None,
+        known_fills: list[dict] | None = None,
     ) -> list[dict]:
-        """체결 주문 — CLOSED 목록 + 알려진 orderId 단건 조회 fallback."""
+        """체결 주문 — CLOSED 목록 기준.
+
+        ``known_fills`` 는 로컬 fill_log 다. 이미 기록이 있는 주문은 단건 조회를
+        건너뛴다. 조회 API 는 초당 4회로 묶여 있어서, 누적 체결 수만큼 왕복이
+        늘면 동기화가 통째로 느려진다.
+        """
         sym = symbol.upper()
         id_key = ",".join(sorted(str(x) for x in (extra_order_ids or []) if x))
         cache_key = f"{sym}:{id_key}"
@@ -565,6 +622,8 @@ class TossClient:
                     oid = self._collect_order_id(order)
                     if oid and oid not in seen and oid not in pending_oids:
                         pending_oids.append(oid)
+            if fills:
+                break
 
         if not fills:
             for params in (
@@ -594,12 +653,17 @@ class TossClient:
                 if fills:
                     break
 
+        local_by_oid = self._index_known_fills(known_fills, sym)
         for oid in list(pending_oids) + list(extra_order_ids or []):
             oid = str(oid or "").strip()
             if not oid or oid in seen:
                 continue
+            local = local_by_oid.get(oid)
+            if local is not None:
+                add_fill(local)
+                continue
             try:
-                detail = self.get_order(oid)
+                detail = self._order_detail_cached(oid)
                 add_fill(self._detail_to_fill(detail, symbol))
             except Exception:
                 logger.exception("get_order fill fetch failed %s", oid)

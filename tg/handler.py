@@ -14,6 +14,7 @@ from telegram.ext import ContextTypes
 from app import App
 from broker.toss_client import TossClient
 from core.clock import KST, NY
+from core.trade_pnl import principal_after_graduation
 from jobs.executor import JobExecutor
 from strategy.split_handler import apply_split, calc_adjustment, format_preview, parse_ratio
 from config.settings import SYMBOLS, google_sheets_issues
@@ -605,6 +606,7 @@ class TelegramHandler:
         st["qty"] = 0
         st["avg_price"] = 0.0
         st["T"] = 0.0
+        st["principal"] = principal_after_graduation(completed)
         self.app.state.save(symbol, st)
         await update.message.reply_text(
             self.app.cycles.format_graduation_message(completed, symbol),

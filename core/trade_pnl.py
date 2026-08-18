@@ -50,3 +50,10 @@ def sell_profit_fields(
     pnl = round((price - avg_before) * qty, 2)
     pct = round((price - avg_before) / avg_before * 100, 2)
     return {"profit_usd": pnl, "profit_pct": pct}
+
+
+def principal_after_graduation(completed: dict) -> float:
+    """회차 졸업 시 다음 회차 복리 원금."""
+    return max(0.0, round(
+        float(completed.get("principal", 0)) + float(completed.get("profit_usd", 0)), 2,
+    ))

@@ -1,5 +1,7 @@
 """체결 반영 → T값·수량·회차 금액."""
 
+from core.trade_pnl import principal_after_graduation
+
 from strategy.strategy_v40 import (
     REVERSE_BUY,
     REVERSE_SELL,
@@ -88,4 +90,6 @@ class FillProcessor:
             completed = cycles.record_sell(
                 symbol, usd, t_after, state["qty"], state["principal"],
             )
+        if completed:
+            state["principal"] = principal_after_graduation(completed)
         return state, completed

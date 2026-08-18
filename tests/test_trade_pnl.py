@@ -7,7 +7,7 @@ import re
 import pytest
 
 from briefing.strategy_briefing import format_strategy_briefing
-from core.trade_pnl import sell_profit_fields, sell_realized_pnl
+from core.trade_pnl import principal_after_graduation, sell_profit_fields, sell_realized_pnl
 from cycles.cycle_tracker import CycleTracker
 from render.numbers import realized_pnl_brief
 from strategy.fill_processor import FillProcessor
@@ -119,3 +119,57 @@ def test_cycle_total_profit_equals_sum_of_sell_pnls(tmp_path):
         if tr.get("side") == "SELL" and sell_realized_pnl(tr)
     ]
     assert completed["profit_usd"] == pytest.approx(sum(sell_pnls), abs=0.01)
+
+
+def test_quarter_sell_does_not_change_principal_until_graduation(tmp_path):
+    """진행 중 쿼터손절은 원금 유지 — 졸업 시 회차 손익 반영."""
+    cycles = CycleTracker(data_dir=tmp_path)
+    processor = FillProcessor()
+    state = {
+        "T": 4.0,
+        "qty": 20,
+        "avg_price": 50.0,
+        "principal": 10000.0,
+        "split_count": 40,
+    }
+    cycles.ensure_current("TQQQ", state["principal"])
+    processor.apply_sell_fill(
+        state,
+        {"qty": 5, "price": 45.0, "action": "SELL_QUARTER"},
+        cycles,
+        "TQQQ",
+    )
+    assert state["principal"] == 10000.0
+
+
+def test_graduation_compounds_principal(tmp_path):
+    cycles = CycleTracker(data_dir=tmp_path)
+    processor = FillProcessor()
+    state = {
+        "T": 0.0,
+        "qty": 0,
+        "avg_price": 0.0,
+        "principal": 10000.0,
+        "split_count": 40,
+    }
+    cycles.ensure_current("TQQQ", state["principal"])
+    processor.apply_buy_fill(
+        state,
+        {"qty": 10, "price": 50.0, "action": "BUY_FULL"},
+        cycles,
+        "TQQQ",
+    )
+    processor.apply_sell_fill(
+        state,
+        {"qty": 10, "price": 55.0, "action": "TAKE_PROFIT"},
+        cycles,
+        "TQQQ",
+    )
+    assert state["principal"] == 10050.0
+    completed = cycles.get_symbol_data("TQQQ")["completed"][-1]
+    assert state["principal"] == principal_after_graduation(completed)
+
+
+def test_principal_after_graduation_helper():
+    completed = {"principal": 10000.0, "profit_usd": -125.0}
+    assert principal_after_graduation(completed) == 9875.0

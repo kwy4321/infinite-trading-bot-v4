@@ -15,7 +15,7 @@ from render.labels import mode_label
 from render.numbers import t_transition
 from services.account_service import fetch_account_snapshot
 from services.market_data import resolve_price
-from services.trading_context import is_dry
+from services.trading_context import is_dry, resolve_available_cash
 if TYPE_CHECKING:
     from app import App
 
@@ -109,7 +109,7 @@ def collect_sheet_symbol_status(app: "App") -> list[dict]:
         plan_price = float(row.get("current_price") or avg or 0)
         plan = app.strategy.get_plan_from_state(
             symbol, plan_price, st, premium,
-            available_cash=max(0.0, float(st.get("principal", 0))),
+            available_cash=resolve_available_cash(app, symbol, st),
         )
         row["star_price"] = float(plan.get("star_price") or 0)
         row["star_pct"] = float(plan.get("star_pct") or 0)

@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+import time
 import xml.etree.ElementTree as ET
 from typing import TYPE_CHECKING
 
@@ -148,47 +149,74 @@ def _summarize_openai(api_key: str, model: str, prompt: str) -> str | None:
 
 _GEMINI_MODELS = (
     "gemini-2.5-flash",
-    "gemini-3.5-flash",
-    "gemini-flash-latest",
     "gemini-2.0-flash",
+    "gemini-flash-latest",
+    "gemini-2.5-flash-lite",
 )
+_GEMINI_TRANSIENT_HTTP = frozenset({408, 429, 500, 502, 503, 504})
+_GEMINI_RETRY_PER_MODEL = 3
+_GEMINI_RETRY_BASE_SEC = 1.5
+
+
+def _gemini_http_is_transient(status: int) -> bool:
+    return status in _GEMINI_TRANSIENT_HTTP
 
 
 def _summarize_gemini(api_key: str, model: str, prompt: str) -> tuple[str | None, str]:
     models: list[str] = []
-    if model:
+    if model and model not in _GEMINI_MODELS:
         models.append(model)
     for m in _GEMINI_MODELS:
         if m not in models:
             models.append(m)
 
     last_err = ""
+    transient_only = True
     for m in models:
         url = (
             "https://generativelanguage.googleapis.com/v1beta/models/"
             f"{m}:generateContent?key={api_key}"
         )
-        try:
-            resp = requests.post(
-                url,
-                json={"contents": [{"parts": [{"text": prompt}]}]},
-                timeout=45,
-            )
-            if resp.status_code != 200:
+        for attempt in range(_GEMINI_RETRY_PER_MODEL):
+            try:
+                resp = requests.post(
+                    url,
+                    json={"contents": [{"parts": [{"text": prompt}]}]},
+                    timeout=45,
+                )
+                if resp.status_code == 200:
+                    parts = resp.json()["candidates"][0]["content"]["parts"]
+                    text = "".join(p.get("text", "") for p in parts).strip()
+                    if text:
+                        return text, ""
+                    last_err = f"{m}: empty response"
+                    transient_only = False
+                    break
                 detail = resp.text[:200].replace("\n", " ")
-                logger.warning("Gemini %s HTTP %s: %s", m, resp.status_code, detail)
+                logger.warning(
+                    "Gemini %s HTTP %s (try %s/%s): %s",
+                    m, resp.status_code, attempt + 1, _GEMINI_RETRY_PER_MODEL, detail,
+                )
                 last_err = f"{m}: HTTP {resp.status_code}"
                 if resp.status_code in (400, 403, 404):
-                    continue
+                    transient_only = False
+                    break
+                if _gemini_http_is_transient(resp.status_code):
+                    if attempt + 1 < _GEMINI_RETRY_PER_MODEL:
+                        time.sleep(_GEMINI_RETRY_BASE_SEC * (2 ** attempt))
+                        continue
+                    break
+                transient_only = False
                 return None, last_err
-            parts = resp.json()["candidates"][0]["content"]["parts"]
-            text = "".join(p.get("text", "") for p in parts).strip()
-            if text:
-                return text, ""
-            last_err = f"{m}: empty response"
-        except Exception as exc:
-            logger.warning("Gemini %s 실패: %s", m, exc)
-            last_err = f"{m}: {exc}"
+            except Exception as exc:
+                logger.warning("Gemini %s 실패 (try %s/%s): %s", m, attempt + 1, _GEMINI_RETRY_PER_MODEL, exc)
+                last_err = f"{m}: {exc}"
+                if attempt + 1 < _GEMINI_RETRY_PER_MODEL:
+                    time.sleep(_GEMINI_RETRY_BASE_SEC * (2 ** attempt))
+                    continue
+                break
+    if transient_only and last_err:
+        return None, f"{last_err} (Google 일시 과부하 — 키 문제 아님)"
     return None, last_err or "all models failed"
 
 
@@ -267,6 +295,11 @@ def _build_sync(
             return rendered
 
     if api_key and gem_err:
+        if "HTTP 503" in gem_err or "HTTP 502" in gem_err or "HTTP 429" in gem_err or "일시 과부하" in gem_err:
+            return dim(
+                f"💡 AI 시황 일시 중단 (Google 서버 과부하) — "
+                f"{html.escape(gem_err)} · 잠시 후 /briefing 재시도"
+            )
         return dim(
             f"💡 AI 키는 인식됨 ({html.escape(key_src)}) — Gemini 호출 실패: "
             f"{html.escape(gem_err)} · /envcheck"

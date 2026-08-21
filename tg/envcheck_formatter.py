@@ -64,6 +64,12 @@ def format_env_check(settings: Settings) -> str:
             3,
             quote(row("📂", "env 파일", code(found))),
         )
+    if summ_key:
+        lines.append("")
+        lines.append(quote(
+            "· HTTP 503/502/429 = Google 일시 과부하 (API 키 문제 아님)",
+            "· 몇 분 후 /briefing 재시도",
+        ))
     if not summ_key:
         lines.append("")
         lines.append(section("AI 키 해결", "🛠"))

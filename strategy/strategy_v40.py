@@ -184,14 +184,6 @@ class InfiniteStrategyV40:
             return 0.0
         return round(current_price * (1.0 + premium_pct / 100.0), 2)
 
-    def calc_defense_buy_price(
-        self, avg_price: float, current_price: float, drop_pct: int,
-    ) -> float:
-        base = avg_price if avg_price > 0 else current_price
-        if base <= 0:
-            return 0.0
-        return round(base * (1.0 - drop_pct / 100.0), 2)
-
     def get_take_profit_pct(self, ticker: str) -> float:
         return self.TAKE_PROFIT_PCT.get(ticker, 15.0)
 
@@ -473,11 +465,6 @@ class InfiniteStrategyV40:
             self._append_buy(plan, avg_price, half, "BUY_HALF", f"평단 (${avg_price:.2f})")
         if normal_star > 0:
             self._append_star_buy(plan, normal_star, star_pct, one_buy)
-
-        if avg_price > 0 and one_buy > 0:
-            for drop in (20, 30):
-                fp = self.calc_defense_buy_price(avg_price, current_price, drop)
-                self._append_buy(plan, fp, one_buy * 0.5, "BUY_HALF", f"하단 방어(-{drop}%)")
 
         self._append_sell_orders(plan, avg_price, qty, normal_star, take_profit_pct)
         return plan
